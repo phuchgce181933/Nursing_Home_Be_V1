@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\ADMIN\\\\Desktop\\\\Nursing_Home_Be_V1\\\\controllers\")",
+      "Bash(Select-Object Name, Length)"
+    ]
+  }
+}

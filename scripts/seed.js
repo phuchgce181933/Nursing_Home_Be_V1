@@ -5,77 +5,78 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/user');
 const StaffProfile = require('../models/staffProfile');
 const Resident = require('../models/resident');
-
 const connectDB = require('../config/db');
+
+const SEED_EMAILS = [
+  'admin@test.com',
+  'manager@test.com',
+  'doctor@test.com',
+  'nurse@test.com',
+  'family@test.com',
+];
+const SEED_STAFF_CODES = ['ADM001', 'MGR001', 'DOC001', 'NUR001'];
 
 const seed = async () => {
   await connectDB();
 
   console.log('Clearing old seed data...');
-  await User.deleteMany({ email: { $in: ['admin@test.com', 'doctor@test.com', 'nurse@test.com', 'family@test.com'] } });
-  await StaffProfile.deleteMany({ staffCode: { $in: ['DOC001', 'NUR001', 'ADM001'] } });
+  await User.deleteMany({ email: { $in: SEED_EMAILS } });
+  await StaffProfile.deleteMany({ staffCode: { $in: SEED_STAFF_CODES } });
   await Resident.deleteMany({ residentCode: 'RES001' });
 
   const passwordHash = await bcrypt.hash('password123', 10);
 
   console.log('Creating users...');
-  const admin = await User.create({
-    fullName: 'Admin Test',
-    email: 'admin@test.com',
-    username: 'admin_test',
-    passwordHash,
-    role: 'admin',
-    isActive: true,
-  });
-
-  const doctor = await User.create({
-    fullName: 'Bác sĩ Nguyễn Văn A',
-    email: 'doctor@test.com',
-    username: 'doctor_test',
-    passwordHash,
-    role: 'doctor',
-    isActive: true,
-  });
-
-  const nurse = await User.create({
-    fullName: 'Điều dưỡng Trần Thị B',
-    email: 'nurse@test.com',
-    username: 'nurse_test',
-    passwordHash,
-    role: 'nurse',
-    isActive: true,
-  });
-
-  const family = await User.create({
-    fullName: 'Gia đình Lê Văn C',
-    email: 'family@test.com',
-    username: 'family_test',
-    passwordHash,
-    role: 'family',
-    isActive: true,
-  });
+  const [admin, manager, doctor, nurse, family] = await User.insertMany([
+    {
+      fullName: 'Admin Hệ Thống',
+      email: 'admin@test.com',
+      username: 'admin_test',
+      passwordHash,
+      role: 'admin',
+      isActive: true,
+    },
+    {
+      fullName: 'Quản Lý Nguyễn Văn B',
+      email: 'manager@test.com',
+      username: 'manager_test',
+      passwordHash,
+      role: 'manager',
+      isActive: true,
+    },
+    {
+      fullName: 'Bác sĩ Nguyễn Văn A',
+      email: 'doctor@test.com',
+      username: 'doctor_test',
+      passwordHash,
+      role: 'doctor',
+      isActive: true,
+    },
+    {
+      fullName: 'Điều dưỡng Trần Thị B',
+      email: 'nurse@test.com',
+      username: 'nurse_test',
+      passwordHash,
+      role: 'nurse',
+      isActive: true,
+    },
+    {
+      fullName: 'Gia đình Lê Văn C',
+      email: 'family@test.com',
+      username: 'family_test',
+      passwordHash,
+      role: 'family',
+      isActive: true,
+    },
+  ]);
 
   console.log('Creating staff profiles...');
-  const adminProfile = await StaffProfile.create({
-    userId: admin._id,
-    staffCode: 'ADM001',
-    specialty: 'Administration',
-    roleCategory: 'admin',
-  });
-
-  const doctorProfile = await StaffProfile.create({
-    userId: doctor._id,
-    staffCode: 'DOC001',
-    specialty: 'General Medicine',
-    roleCategory: 'doctor',
-  });
-
-  const nurseProfile = await StaffProfile.create({
-    userId: nurse._id,
-    staffCode: 'NUR001',
-    specialty: 'Care Nursing',
-    roleCategory: 'nurse',
-  });
+  const [, , doctorProfile, nurseProfile] = await StaffProfile.insertMany([
+    { userId: admin._id,   staffCode: 'ADM001', roleCategory: 'admin',   specialty: 'Administration' },
+    { userId: manager._id, staffCode: 'MGR001', roleCategory: 'manager', specialty: 'Operations Management' },
+    { userId: doctor._id,  staffCode: 'DOC001', roleCategory: 'doctor',  specialty: 'General Medicine' },
+    { userId: nurse._id,   staffCode: 'NUR001', roleCategory: 'nurse',   specialty: 'Care Nursing' },
+  ]);
 
   console.log('Creating resident...');
   const resident = await Resident.create({
@@ -96,6 +97,7 @@ const seed = async () => {
   console.log('========================================');
   console.log('\n--- Tài khoản test (password: password123) ---');
   console.log(`Admin   : admin@test.com`);
+  console.log(`Manager : manager@test.com`);
   console.log(`Doctor  : doctor@test.com`);
   console.log(`Nurse   : nurse@test.com`);
   console.log(`Family  : family@test.com`);

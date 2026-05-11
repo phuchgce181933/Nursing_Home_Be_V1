@@ -3,7 +3,8 @@ const express = require('express');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const connectDB = require('./config/db');
-
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./config/swagger");
 // import all models through index to ensure schemas are registered
 const models = require('./models');
 
@@ -12,6 +13,19 @@ const app = express();
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(cookieParser());
+
+// Swagger docs setup
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec)
+);
+
+// Routes
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/care-appointments', require('./routes/careAppointments'));
+app.use('/api/care-notes', require('./routes/careNotes'));
+app.use('/api/family', require('./routes/familyPortal'));
 
 // connect DB and create collections
 const initDB = async () => {
@@ -35,13 +49,6 @@ const initDB = async () => {
 };
 
 initDB();
-
-// ─── Routes ───────────────────────────────────────────────────────────────────
-
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/care-appointments', require('./routes/careAppointments'));
-app.use('/api/care-notes', require('./routes/careNotes'));
-app.use('/api/family', require('./routes/familyPortal'));
 
 app.get('/', (req, res) => {
   res.json({ message: 'Nursing Home API running' });

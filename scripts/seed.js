@@ -1,3 +1,4 @@
+// file này chỉ để nạp dữ liệu mẫu ban đầu vào database, không dùng để chạy server
 require('dotenv').config();
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');

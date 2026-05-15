@@ -1,5 +1,5 @@
+//Ghi lịch sử hoạt động hệ thống (Audit Log)
 const AuditLog = require('../models/auditLog');
-
 const createAuditLog = async ({ actorUserId, actorRole, action, module, targetEntityType, targetEntityId, beforeData, afterData, metadata, req }) => {
   try {
     await AuditLog.create({

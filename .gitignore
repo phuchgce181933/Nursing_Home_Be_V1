@@ -3,10 +3,19 @@ node_modules/
 
 # Environment variables
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+
+# IDE / Editor
+.vscode/
+.idea/
+*.iml
+
+# Claude config
+.claude/
+
+# Build / Binary
+bin/
 
 # Logs
 logs/
@@ -15,41 +24,16 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# IDE / Editor
-.vscode/
-.idea/
-*.iml
-
 # OS files
 .DS_Store
 Thumbs.db
 
-# Build / Cache
-dist/
-build/
+# Cache / Coverage
 coverage/
 .cache/
+dist/
+build/
 
 # Temporary files
 tmp/
 temp/
-
-# Package lock (nếu không muốn đẩy)
-# package-lock.json
-
-# Uploads / generated files
-uploads/
-public/uploads/
-
-# Claude / AI tool configs
-.claude/
-
-# Optional
-*.bak
-*.swp

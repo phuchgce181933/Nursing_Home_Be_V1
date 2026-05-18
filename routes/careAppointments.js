@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   createAppointment,
   listAppointments,
+  getMyAppointments,
   getDailySchedule,
   getWeeklySchedule,
   getAppointment,
@@ -31,18 +32,33 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [residentId, scheduledStartAt, scheduledEndAt]
  *             properties:
  *               residentId:
  *                 type: string
- *               type:
+ *               scheduledStartAt:
  *                 type: string
- *               startTime:
+ *                 format: date-time
+ *               scheduledEndAt:
  *                 type: string
- *               endTime:
+ *                 format: date-time
+ *               appointmentType:
+ *                 type: string
+ *               doctorStaffId:
+ *                 type: string
+ *               nurseStaffId:
+ *                 type: string
+ *               notes:
  *                 type: string
  *     responses:
  *       201:
  *         description: Appointment created
+ *       400:
+ *         description: Validation error or resident not admitted
+ *       404:
+ *         description: Resident or staff not found
+ *       409:
+ *         description: Schedule conflict
  */
 router.post('/', protect, authorize(...STAFF_ROLES), createAppointment);
 
@@ -50,24 +66,96 @@ router.post('/', protect, authorize(...STAFF_ROLES), createAppointment);
  * @swagger
  * /api/care-appointments:
  *   get:
- *     summary: List all care appointments
+ *     summary: List all care appointments (with filters)
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
  *     parameters:
  *       - in: query
+ *         name: residentId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: doctorStaffId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: nurseStaffId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [scheduled, in_progress, completed, cancelled]
+ *       - in: query
+ *         name: appointmentType
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
  *         name: page
  *         schema:
- *           type: number
+ *           type: integer
  *       - in: query
  *         name: limit
  *         schema:
- *           type: number
+ *           type: integer
  *     responses:
  *       200:
  *         description: List of appointments
  */
 router.get('/', protect, authorize(...STAFF_ROLES), listAppointments);
+
+/**
+ * @swagger
+ * /api/care-appointments/my:
+ *   get:
+ *     summary: Get my own appointments (doctor or nurse only)
+ *     description: Returns appointments where the logged-in doctor or nurse is assigned. Sorted by scheduledStartAt ascending.
+ *     tags: [Care Appointments]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [scheduled, in_progress, completed, cancelled]
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: My appointment list
+ *       404:
+ *         description: Staff profile not found
+ */
+router.get('/my', protect, authorize('doctor', 'nurse'), getMyAppointments);
 
 /**
  * @swagger
@@ -80,6 +168,12 @@ router.get('/', protect, authorize(...STAFF_ROLES), listAppointments);
  *     parameters:
  *       - in: query
  *         name: date
+ *         description: Date to view (ISO 8601). Defaults to today.
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: residentId
  *         schema:
  *           type: string
  *     responses:
@@ -92,13 +186,19 @@ router.get('/daily', protect, authorize(...STAFF_ROLES), getDailySchedule);
  * @swagger
  * /api/care-appointments/weekly:
  *   get:
- *     summary: Get weekly schedule
+ *     summary: Get weekly schedule (Mon–Sun of the given date)
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
  *     parameters:
  *       - in: query
- *         name: startDate
+ *         name: date
+ *         description: Any date within the desired week (ISO 8601). Defaults to current week.
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: residentId
  *         schema:
  *           type: string
  *     responses:
@@ -124,6 +224,8 @@ router.get('/weekly', protect, authorize(...STAFF_ROLES), getWeeklySchedule);
  *     responses:
  *       200:
  *         description: Appointment details
+ *       404:
+ *         description: Appointment not found
  */
 router.get('/:id', protect, authorize(...STAFF_ROLES), getAppointment);
 
@@ -131,7 +233,7 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getAppointment);
  * @swagger
  * /api/care-appointments/{id}:
  *   put:
- *     summary: Update appointment
+ *     summary: Update appointment time/type/notes (not allowed on completed or cancelled)
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
@@ -146,9 +248,24 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getAppointment);
  *         application/json:
  *           schema:
  *             type: object
+ *             properties:
+ *               scheduledStartAt:
+ *                 type: string
+ *                 format: date-time
+ *               scheduledEndAt:
+ *                 type: string
+ *                 format: date-time
+ *               appointmentType:
+ *                 type: string
+ *               notes:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Appointment updated
+ *       400:
+ *         description: Cannot edit completed/cancelled appointment or schedule conflict
+ *       404:
+ *         description: Appointment not found
  */
 router.put('/:id', protect, authorize(...STAFF_ROLES), updateAppointment);
 
@@ -156,7 +273,7 @@ router.put('/:id', protect, authorize(...STAFF_ROLES), updateAppointment);
  * @swagger
  * /api/care-appointments/{id}:
  *   delete:
- *     summary: Delete appointment
+ *     summary: Delete appointment (not allowed while in_progress)
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
@@ -169,6 +286,10 @@ router.put('/:id', protect, authorize(...STAFF_ROLES), updateAppointment);
  *     responses:
  *       200:
  *         description: Appointment deleted
+ *       400:
+ *         description: Cannot delete in-progress appointment
+ *       404:
+ *         description: Appointment not found
  */
 router.delete('/:id', protect, authorize('admin', 'manager', 'doctor'), deleteAppointment);
 
@@ -176,7 +297,13 @@ router.delete('/:id', protect, authorize('admin', 'manager', 'doctor'), deleteAp
  * @swagger
  * /api/care-appointments/{id}/status:
  *   put:
- *     summary: Update appointment status
+ *     summary: Update appointment status (enforces valid transitions)
+ *     description: |
+ *       Allowed transitions:
+ *       - scheduled → in_progress | cancelled
+ *       - in_progress → completed | cancelled
+ *       - completed → (terminal)
+ *       - cancelled → (terminal)
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
@@ -192,12 +319,18 @@ router.delete('/:id', protect, authorize('admin', 'manager', 'doctor'), deleteAp
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [status]
  *             properties:
  *               status:
  *                 type: string
+ *                 enum: [scheduled, in_progress, completed, cancelled]
  *     responses:
  *       200:
  *         description: Status updated
+ *       400:
+ *         description: Invalid status transition
+ *       404:
+ *         description: Appointment not found
  */
 router.put('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
 
@@ -205,7 +338,7 @@ router.put('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
  * @swagger
  * /api/care-appointments/{id}/assign-doctor:
  *   put:
- *     summary: Assign doctor to appointment
+ *     summary: Assign doctor to appointment (staff must have roleCategory = doctor)
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
@@ -222,19 +355,24 @@ router.put('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
  *           schema:
  *             type: object
  *             properties:
- *               doctorId:
+ *               doctorStaffId:
  *                 type: string
+ *                 description: StaffProfile _id. Leave empty to unassign.
  *     responses:
  *       200:
  *         description: Doctor assigned
+ *       400:
+ *         description: Staff is not a doctor, or appointment is completed/cancelled
+ *       404:
+ *         description: Appointment or staff profile not found
  */
-router.put('/:id/assign-doctor', protect, authorize(...STAFF_ROLES), assignDoctor);
+router.put('/:id/assign-doctor', protect, authorize('admin', 'manager'), assignDoctor);
 
 /**
  * @swagger
  * /api/care-appointments/{id}/assign-nurse:
  *   put:
- *     summary: Assign nurse to appointment
+ *     summary: Assign nurse to appointment (staff must have roleCategory = nurse)
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
@@ -251,19 +389,25 @@ router.put('/:id/assign-doctor', protect, authorize(...STAFF_ROLES), assignDocto
  *           schema:
  *             type: object
  *             properties:
- *               nurseId:
+ *               nurseStaffId:
  *                 type: string
+ *                 description: StaffProfile _id. Leave empty to unassign.
  *     responses:
  *       200:
  *         description: Nurse assigned
+ *       400:
+ *         description: Staff is not a nurse, or appointment is completed/cancelled
+ *       404:
+ *         description: Appointment or staff profile not found
  */
-router.put('/:id/assign-nurse', protect, authorize(...STAFF_ROLES), assignNurse);
+router.put('/:id/assign-nurse', protect, authorize('admin', 'manager'), assignNurse);
 
 /**
  * @swagger
  * /api/care-appointments/{id}/reminder:
  *   post:
- *     summary: Send appointment reminder
+ *     summary: Send appointment reminder (only for scheduled appointments)
+ *     description: Sends in-app notifications to assigned doctor, nurse, and family members.
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
@@ -275,7 +419,11 @@ router.put('/:id/assign-nurse', protect, authorize(...STAFF_ROLES), assignNurse)
  *           type: string
  *     responses:
  *       200:
- *         description: Reminder sent
+ *         description: Reminders sent
+ *       400:
+ *         description: Appointment is not in scheduled status
+ *       404:
+ *         description: Appointment not found
  */
 router.post('/:id/reminder', protect, authorize(...STAFF_ROLES), sendReminder);
 

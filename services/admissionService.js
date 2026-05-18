@@ -1,0 +1,199 @@
+const ServiceError = require('./serviceError');
+const admissionRepo = require('../repositories/admissionRepository');
+const { GENDERS, BLOOD_TYPES } = require('../models/enums');
+const { createAuditLog } = require('../utils/auditLog');
+
+const generateRequestCode = async () => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const code = `REQ${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    const exists = await admissionRepo.findByRequestCode(code);
+    if (!exists) return code;
+  }
+  throw new ServiceError('Unable to generate request code', 500);
+};
+
+const normalizeStringArray = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  return [String(value).trim()].filter(Boolean);
+};
+
+const buildApplicant = (applicant, relationshipToRequester) => {
+  const fullName =
+    typeof applicant?.fullName === 'string'
+      ? applicant.fullName.trim()
+      : applicant?.fullName != null
+        ? String(applicant.fullName).trim()
+        : '';
+
+  if (!fullName) {
+    const receivedKeys =
+      applicant && typeof applicant === 'object' && !Array.isArray(applicant)
+        ? Object.keys(applicant).join(', ') || '(empty object)'
+        : typeof applicant;
+    throw new ServiceError(
+      `applicant.fullName is required. Received applicant keys: ${receivedKeys}. Send JSON body with Content-Type: application/json.`,
+      400
+    );
+  }
+
+  const relationship = (applicant.relationshipToRequester || relationshipToRequester)?.trim();
+  if (!relationship) {
+    throw new ServiceError('applicant.relationshipToRequester is required', 400);
+  }
+
+  if (applicant.gender && !GENDERS.includes(applicant.gender)) {
+    throw new ServiceError(`applicant.gender must be one of: ${GENDERS.join(', ')}`, 400);
+  }
+  if (applicant.bloodType && !BLOOD_TYPES.includes(applicant.bloodType)) {
+    throw new ServiceError(`applicant.bloodType must be one of: ${BLOOD_TYPES.join(', ')}`, 400);
+  }
+
+  const dateOfBirth = applicant.dateOfBirth ? new Date(applicant.dateOfBirth) : undefined;
+  if (applicant.dateOfBirth && Number.isNaN(dateOfBirth?.getTime())) {
+    throw new ServiceError('applicant.dateOfBirth is invalid', 400);
+  }
+
+  return {
+    fullName,
+    dateOfBirth,
+    gender: applicant.gender || 'unknown',
+    citizenId: applicant.citizenId?.trim(),
+    bloodType: applicant.bloodType || 'unknown',
+    personalAddress: applicant.personalAddress?.trim(),
+    relationshipToRequester: relationship,
+    allergies: normalizeStringArray(applicant.allergies),
+    chronicConditions: normalizeStringArray(applicant.chronicConditions),
+    initialHealthCondition: applicant.initialHealthCondition?.trim(),
+  };
+};
+
+const submitAdmissionRequest = async (user, body, req) => {
+  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
+    throw new ServiceError(
+      'Request body is empty or not parsed. Use POST with Header Content-Type: application/json and Body type raw → JSON.',
+      400
+    );
+  }
+
+  const {
+    residentId,
+    applicant,
+    relationshipToRequester,
+    preferredAdmissionDate,
+    reasonForAdmission,
+    notes,
+    requestedByPhone,
+  } = body;
+
+  if (!residentId && (!applicant || typeof applicant !== 'object')) {
+    throw new ServiceError('applicant object is required in request body', 400);
+  }
+
+  let resolvedApplicant;
+  let resolvedResidentId = residentId || null;
+
+  if (resolvedResidentId) {
+    const resident = await admissionRepo.assertFamilyResidentAccess(user._id, resolvedResidentId);
+    if (!resident) {
+      throw new ServiceError('Access denied: resident is not linked to your account', 403);
+    }
+    if (resident.residencyStatus === 'admitted') {
+      throw new ServiceError('This resident is already admitted', 400);
+    }
+
+    const activeForResident = await admissionRepo.findActiveAdmission({ residentId: resolvedResidentId });
+    if (activeForResident) {
+      throw new ServiceError('An active admission request already exists for this resident', 409);
+    }
+
+    resolvedApplicant = buildApplicant(
+      applicant || {
+        fullName: resident.fullName,
+        dateOfBirth: resident.dateOfBirth,
+        gender: resident.gender,
+        citizenId: resident.citizenId,
+        bloodType: resident.bloodType,
+        personalAddress: resident.personalAddress,
+        allergies: resident.allergies,
+        chronicConditions: resident.chronicConditions,
+        initialHealthCondition: resident.initialHealthCondition,
+        relationshipToRequester,
+      },
+      relationshipToRequester
+    );
+  } else {
+    resolvedApplicant = buildApplicant(applicant, relationshipToRequester);
+
+    const duplicateFilter = {
+      familyAccountId: user._id,
+      'applicant.fullName': resolvedApplicant.fullName,
+    };
+    if (resolvedApplicant.citizenId) {
+      duplicateFilter['applicant.citizenId'] = resolvedApplicant.citizenId;
+    }
+    const activeDuplicate = await admissionRepo.findActiveAdmission(duplicateFilter);
+    if (activeDuplicate) {
+      throw new ServiceError('You already have a pending admission request for this person', 409);
+    }
+  }
+
+  let preferredDate;
+  if (preferredAdmissionDate) {
+    preferredDate = new Date(preferredAdmissionDate);
+    if (Number.isNaN(preferredDate.getTime())) {
+      throw new ServiceError('preferredAdmissionDate is invalid', 400);
+    }
+  }
+
+  const requestCode = await generateRequestCode();
+  const admission = await admissionRepo.createAdmission({
+    requestCode,
+    residentId: resolvedResidentId,
+    familyAccountId: user._id,
+    applicant: resolvedApplicant,
+    preferredAdmissionDate: preferredDate,
+    reasonForAdmission: reasonForAdmission?.trim(),
+    requestedByName: user.fullName,
+    requestedByPhone: requestedByPhone?.trim() || user.phone,
+    notes: notes?.trim(),
+    status: 'new_request',
+    eligibilityStatus: 'pending',
+  });
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'SUBMIT_ADMISSION_REQUEST',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    afterData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      applicantName: admission.applicant?.fullName,
+    },
+    req,
+  });
+
+  return {
+    message: 'Admission request submitted successfully',
+    admission: {
+      _id: admission._id,
+      requestCode: admission.requestCode,
+      status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
+      residentId: admission.residentId,
+      applicant: admission.applicant,
+      preferredAdmissionDate: admission.preferredAdmissionDate,
+      reasonForAdmission: admission.reasonForAdmission,
+      requestedByName: admission.requestedByName,
+      requestedByPhone: admission.requestedByPhone,
+      requestedAt: admission.requestedAt,
+      notes: admission.notes,
+      createdAt: admission.createdAt,
+    },
+  };
+};
+
+module.exports = { submitAdmissionRequest };

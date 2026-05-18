@@ -11,7 +11,26 @@ const models = require('./models');
 const app = express();
 
 app.use(morgan('dev'));
-app.use(express.json());
+app.use(
+  express.json({
+    limit: '1mb',
+    type: (req) => (req.headers['content-type'] || '').toLowerCase().includes('json'),
+  })
+);
+app.use(
+  express.text({
+    limit: '1mb',
+    type: (req) => {
+      if (!['POST', 'PUT', 'PATCH'].includes(req.method)) return false;
+      const ct = (req.headers['content-type'] || '').toLowerCase();
+      if (ct.includes('text/plain')) return true;
+      if (!ct) return true;
+      return false;
+    },
+  })
+);
+app.use(require('./middleware/parseJsonBody'));
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // Swagger docs setup
@@ -26,6 +45,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
 app.use('/api/family', require('./routes/familyPortal'));
+app.use('/api/family/admission-requests', require('./routes/familyAdmissions'));
 
 // connect DB and create collections
 const initDB = async () => {

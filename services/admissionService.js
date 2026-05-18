@@ -1,7 +1,41 @@
 const ServiceError = require('./serviceError');
 const admissionRepo = require('../repositories/admissionRepository');
-const { GENDERS, BLOOD_TYPES } = require('../models/enums');
+const { GENDERS, BLOOD_TYPES, ADMISSION_STATUSES } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
+
+const parsePagination = (query) => {
+  const pageNum = Math.max(1, parseInt(query.page || 1, 10));
+  const limitNum = Math.min(100, Math.max(1, parseInt(query.limit || 20, 10)));
+  const skip = (pageNum - 1) * limitNum;
+  return { pageNum, limitNum, skip };
+};
+
+const formatAdmission = (admission) => ({
+  _id: admission._id,
+  requestCode: admission.requestCode,
+  status: admission.status,
+  eligibilityStatus: admission.eligibilityStatus,
+  residentId: admission.residentId?._id || admission.residentId || null,
+  resident: admission.residentId?.residentCode
+    ? {
+        _id: admission.residentId._id,
+        residentCode: admission.residentId.residentCode,
+        fullName: admission.residentId.fullName,
+        residencyStatus: admission.residentId.residencyStatus,
+      }
+    : null,
+  applicant: admission.applicant,
+  preferredAdmissionDate: admission.preferredAdmissionDate,
+  reasonForAdmission: admission.reasonForAdmission,
+  requestedByName: admission.requestedByName,
+  requestedByPhone: admission.requestedByPhone,
+  requestedAt: admission.requestedAt,
+  cancelledAt: admission.cancelledAt,
+  cancellationReason: admission.cancellationReason,
+  notes: admission.notes,
+  createdAt: admission.createdAt,
+  updatedAt: admission.updatedAt,
+});
 
 const generateRequestCode = async () => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -178,22 +212,116 @@ const submitAdmissionRequest = async (user, body, req) => {
 
   return {
     message: 'Admission request submitted successfully',
-    admission: {
-      _id: admission._id,
-      requestCode: admission.requestCode,
-      status: admission.status,
-      eligibilityStatus: admission.eligibilityStatus,
-      residentId: admission.residentId,
-      applicant: admission.applicant,
-      preferredAdmissionDate: admission.preferredAdmissionDate,
-      reasonForAdmission: admission.reasonForAdmission,
-      requestedByName: admission.requestedByName,
-      requestedByPhone: admission.requestedByPhone,
-      requestedAt: admission.requestedAt,
-      notes: admission.notes,
-      createdAt: admission.createdAt,
-    },
+    admission: formatAdmission(admission),
   };
 };
 
-module.exports = { submitAdmissionRequest };
+const listAdmissionHistory = async (user, query) => {
+  const filter = {};
+
+  if (query.status) {
+    if (!ADMISSION_STATUSES.includes(query.status)) {
+      throw new ServiceError(`status must be one of: ${ADMISSION_STATUSES.join(', ')}`, 400);
+    }
+    filter.status = query.status;
+  }
+
+  if (query.from || query.to) {
+    filter.requestedAt = {};
+    if (query.from) {
+      const from = new Date(query.from);
+      if (Number.isNaN(from.getTime())) throw new ServiceError('from date is invalid', 400);
+      filter.requestedAt.$gte = from;
+    }
+    if (query.to) {
+      const to = new Date(query.to);
+      if (Number.isNaN(to.getTime())) throw new ServiceError('to date is invalid', 400);
+      filter.requestedAt.$lte = to;
+    }
+  }
+
+  if (query.search) {
+    const term = query.search.trim();
+    filter.$or = [
+      { requestCode: { $regex: term, $options: 'i' } },
+      { 'applicant.fullName': { $regex: term, $options: 'i' } },
+      { 'applicant.citizenId': { $regex: term, $options: 'i' } },
+    ];
+  }
+
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const sort = { requestedAt: -1 };
+
+  const [data, total] = await Promise.all([
+    admissionRepo.findByFamily(user._id, filter, { sort, skip, limit: limitNum }),
+    admissionRepo.countByFamily(user._id, filter),
+  ]);
+
+  return {
+    data: data.map(formatAdmission),
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages: Math.ceil(total / limitNum) || 1,
+  };
+};
+
+const getAdmissionRequest = async (user, admissionId) => {
+  const admission = await admissionRepo.findByIdForFamily(admissionId, user._id);
+  if (!admission) {
+    throw new ServiceError('Admission request not found', 404);
+  }
+  await admission.populate('residentId', 'residentCode fullName residencyStatus');
+  return { admission: formatAdmission(admission) };
+};
+
+const cancelAdmissionRequest = async (user, admissionId, body, req) => {
+  const admission = await admissionRepo.findByIdForFamily(admissionId, user._id);
+  if (!admission) {
+    throw new ServiceError('Admission request not found', 404);
+  }
+
+  if (admission.status === 'cancelled') {
+    throw new ServiceError('This admission request is already cancelled', 400);
+  }
+
+  if (admission.status === 'checked_in') {
+    throw new ServiceError('Cannot cancel an admission request that has already been checked in', 400);
+  }
+
+  if (!admissionRepo.CANCELLABLE_STATUSES.includes(admission.status)) {
+    throw new ServiceError(`Cannot cancel request with status: ${admission.status}`, 400);
+  }
+
+  const cancellationReason = body?.cancellationReason?.trim() || body?.reason?.trim() || '';
+
+  const updated = await admissionRepo.updateAdmission(admission._id, {
+    status: 'cancelled',
+    cancelledAt: new Date(),
+    cancellationReason: cancellationReason || undefined,
+  });
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'CANCEL_ADMISSION_REQUEST',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    beforeData: { requestCode: admission.requestCode, status: admission.status },
+    afterData: { requestCode: updated.requestCode, status: updated.status, cancellationReason },
+    req,
+  });
+
+  return {
+    message: 'Admission request cancelled successfully',
+    admission: formatAdmission(updated),
+  };
+};
+
+module.exports = {
+  submitAdmissionRequest,
+  listAdmissionHistory,
+  getAdmissionRequest,
+  cancelAdmissionRequest,
+};

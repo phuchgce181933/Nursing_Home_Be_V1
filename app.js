@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const bodyParser = require('body-parser');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const connectDB = require('./config/db');
@@ -12,13 +13,13 @@ const app = express();
 
 app.use(morgan('dev'));
 app.use(
-  express.json({
+  bodyParser.json({
     limit: '1mb',
     type: (req) => (req.headers['content-type'] || '').toLowerCase().includes('json'),
   })
 );
 app.use(
-  express.text({
+  bodyParser.text({
     limit: '1mb',
     type: (req) => {
       if (!['POST', 'PUT', 'PATCH'].includes(req.method)) return false;
@@ -44,8 +45,7 @@ app.use(
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
-app.use('/api/family', require('./routes/familyPortal'));
-app.use('/api/family/admission-requests', require('./routes/familyAdmissions'));
+app.use('/api/family', require('./routes/familyIndex'));
 
 // connect DB and create collections
 const initDB = async () => {

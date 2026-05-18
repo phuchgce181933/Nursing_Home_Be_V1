@@ -1,14 +1,118 @@
 const express = require('express');
 const router = express.Router();
-const { submitAdmissionRequest } = require('../controllers/admissionController');
+const {
+  submitAdmissionRequest,
+  listAdmissionRequests,
+  getAdmissionRequest,
+  cancelAdmissionRequest,
+} = require('../controllers/admissionController');
 const { protect, authorize } = require('../middleware/auth');
+
+router.use(protect, authorize('family'));
+
+/**
+ * @swagger
+ * /api/family/admission-requests:
+ *   get:
+ *     summary: View admission request history (Family)
+ *     tags: [Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [new_request, consulting, assessing, contracting, checked_in, cancelled]
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Paginated admission request history
+ */
+router.get('/', listAdmissionRequests);
+
+/**
+ * @swagger
+ * /api/family/admission-requests/{admissionId}:
+ *   get:
+ *     summary: Get admission request detail (Family)
+ *     tags: [Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: admissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Admission request detail
+ *       404:
+ *         description: Not found
+ */
+router.get('/:admissionId', getAdmissionRequest);
+
+/**
+ * @swagger
+ * /api/family/admission-requests/{admissionId}/cancel:
+ *   patch:
+ *     summary: Cancel admission request (Family)
+ *     tags: [Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: admissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               cancellationReason:
+ *                 type: string
+ *               reason:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Request cancelled
+ *       400:
+ *         description: Cannot cancel
+ *       404:
+ *         description: Not found
+ */
+router.patch('/:admissionId/cancel', cancelAdmissionRequest);
 
 /**
  * @swagger
  * /api/family/admission-requests:
  *   post:
  *     summary: Submit admission request (Family)
- *     description: Family submits a new admission or residency request for a relative.
  *     tags: [Admission Management]
  *     security:
  *       - BearerAuth: []
@@ -23,7 +127,6 @@ const { protect, authorize } = require('../middleware/auth');
  *             properties:
  *               residentId:
  *                 type: string
- *                 description: Optional — existing resident linked to family account
  *               applicant:
  *                 type: object
  *                 required:
@@ -37,24 +140,7 @@ const { protect, authorize } = require('../middleware/auth');
  *                     format: date
  *                   gender:
  *                     type: string
- *                     enum: [male, female, other, unknown]
- *                   citizenId:
- *                     type: string
- *                   bloodType:
- *                     type: string
- *                   personalAddress:
- *                     type: string
  *                   relationshipToRequester:
- *                     type: string
- *                   allergies:
- *                     type: array
- *                     items:
- *                       type: string
- *                   chronicConditions:
- *                     type: array
- *                     items:
- *                       type: string
- *                   initialHealthCondition:
  *                     type: string
  *               preferredAdmissionDate:
  *                 type: string
@@ -68,13 +154,7 @@ const { protect, authorize } = require('../middleware/auth');
  *     responses:
  *       201:
  *         description: Admission request created
- *       400:
- *         description: Validation error
- *       403:
- *         description: Access denied
- *       409:
- *         description: Duplicate active request
  */
-router.post('/', protect, authorize('family'), submitAdmissionRequest);
+router.post('/', submitAdmissionRequest);
 
 module.exports = router;

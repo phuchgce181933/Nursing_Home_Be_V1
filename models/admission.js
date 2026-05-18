@@ -45,6 +45,8 @@ const admissionSchema = new Schema(
     contractSignedAt: { type: Date },
     checkInAt: { type: Date },
     status: { type: String, enum: ADMISSION_STATUSES, default: 'new_request', index: true },
+    cancelledAt: { type: Date },
+    cancellationReason: { type: String, trim: true },
     notes: { type: String, trim: true },
   },
   { timestamps: true }

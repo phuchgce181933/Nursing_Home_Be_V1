@@ -47,6 +47,9 @@ const admissionSchema = new Schema(
     status: { type: String, enum: ADMISSION_STATUSES, default: 'new_request', index: true },
     cancelledAt: { type: Date },
     cancellationReason: { type: String, trim: true },
+    rejectionReason: { type: String, trim: true },
+    rejectedAt: { type: Date },
+    approvedAt: { type: Date },
     notes: { type: String, trim: true },
   },
   { timestamps: true }

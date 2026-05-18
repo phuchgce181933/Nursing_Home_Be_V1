@@ -4,6 +4,8 @@ const { ADMISSION_STATUSES } = require('../models/enums');
 
 const ACTIVE_ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracting'];
 const CANCELLABLE_STATUSES = [...ACTIVE_ADMISSION_STATUSES];
+const APPROVABLE_STATUSES = ['new_request', 'consulting', 'assessing', 'contracting'];
+const REJECTABLE_STATUSES = ['new_request', 'consulting', 'assessing'];
 
 const findActiveAdmission = (filter) =>
   Admission.findOne({ ...filter, status: { $in: ACTIVE_ADMISSION_STATUSES } });
@@ -38,9 +40,27 @@ const assertFamilyResidentAccess = async (userId, residentId) => {
   return resident;
 };
 
+// ── Admin queries (không giới hạn theo familyAccountId) ──────────────────────
+const findAll = (filter, { sort, skip, limit }) =>
+  Admission.find(filter)
+    .sort(sort)
+    .skip(skip)
+    .limit(limit)
+    .populate('residentId', 'residentCode fullName residencyStatus')
+    .populate('familyAccountId', 'fullName email phone');
+
+const countAll = (filter) => Admission.countDocuments(filter);
+
+const findByIdForAdmin = (id) =>
+  Admission.findById(id)
+    .populate('residentId', 'residentCode fullName residencyStatus')
+    .populate('familyAccountId', 'fullName email phone');
+
 module.exports = {
   ACTIVE_ADMISSION_STATUSES,
   CANCELLABLE_STATUSES,
+  APPROVABLE_STATUSES,
+  REJECTABLE_STATUSES,
   ADMISSION_STATUSES,
   findActiveAdmission,
   createAdmission,
@@ -51,4 +71,7 @@ module.exports = {
   countByFamily,
   updateAdmission,
   assertFamilyResidentAccess,
+  findAll,
+  countAll,
+  findByIdForAdmin,
 };

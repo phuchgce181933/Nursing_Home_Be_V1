@@ -10,32 +10,48 @@ const parsePagination = (query) => {
   return { pageNum, limitNum, skip };
 };
 
-const formatAdmission = (admission) => ({
-  _id: admission._id,
-  requestCode: admission.requestCode,
-  status: admission.status,
-  eligibilityStatus: admission.eligibilityStatus,
-  residentId: admission.residentId?._id || admission.residentId || null,
-  resident: admission.residentId?.residentCode
-    ? {
-        _id: admission.residentId._id,
-        residentCode: admission.residentId.residentCode,
-        fullName: admission.residentId.fullName,
-        residencyStatus: admission.residentId.residencyStatus,
-      }
-    : null,
-  applicant: admission.applicant,
-  preferredAdmissionDate: admission.preferredAdmissionDate,
-  reasonForAdmission: admission.reasonForAdmission,
-  requestedByName: admission.requestedByName,
-  requestedByPhone: admission.requestedByPhone,
-  requestedAt: admission.requestedAt,
-  cancelledAt: admission.cancelledAt,
-  cancellationReason: admission.cancellationReason,
-  notes: admission.notes,
-  createdAt: admission.createdAt,
-  updatedAt: admission.updatedAt,
-});
+const formatAdmission = (admission, { includeFamily = false } = {}) => {
+  const base = {
+    _id: admission._id,
+    requestCode: admission.requestCode,
+    status: admission.status,
+    eligibilityStatus: admission.eligibilityStatus,
+    residentId: admission.residentId?._id || admission.residentId || null,
+    resident: admission.residentId?.residentCode
+      ? {
+          _id: admission.residentId._id,
+          residentCode: admission.residentId.residentCode,
+          fullName: admission.residentId.fullName,
+          residencyStatus: admission.residentId.residencyStatus,
+        }
+      : null,
+    applicant: admission.applicant,
+    preferredAdmissionDate: admission.preferredAdmissionDate,
+    reasonForAdmission: admission.reasonForAdmission,
+    requestedByName: admission.requestedByName,
+    requestedByPhone: admission.requestedByPhone,
+    requestedAt: admission.requestedAt,
+    cancelledAt: admission.cancelledAt,
+    cancellationReason: admission.cancellationReason,
+    rejectionReason: admission.rejectionReason,
+    rejectedAt: admission.rejectedAt,
+    approvedAt: admission.approvedAt,
+    notes: admission.notes,
+    createdAt: admission.createdAt,
+    updatedAt: admission.updatedAt,
+  };
+
+  if (includeFamily && admission.familyAccountId?.email) {
+    base.familyAccount = {
+      _id: admission.familyAccountId._id,
+      fullName: admission.familyAccountId.fullName,
+      email: admission.familyAccountId.email,
+      phone: admission.familyAccountId.phone,
+    };
+  }
+
+  return base;
+};
 
 const generateRequestCode = async () => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -319,9 +335,169 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
   };
 };
 
+// ── Admin services ─────────────────────────────────────────────────────────────────
+const adminListAdmissions = async (query) => {
+  const filter = {};
+
+  if (query.status) {
+    if (!ADMISSION_STATUSES.includes(query.status)) {
+      throw new ServiceError(`status must be one of: ${ADMISSION_STATUSES.join(', ')}`, 400);
+    }
+    filter.status = query.status;
+  }
+
+  if (query.eligibilityStatus) {
+    const { ADMISSION_ELIGIBILITY_STATUSES } = require('../models/enums');
+    if (!ADMISSION_ELIGIBILITY_STATUSES.includes(query.eligibilityStatus)) {
+      throw new ServiceError(`eligibilityStatus must be one of: ${ADMISSION_ELIGIBILITY_STATUSES.join(', ')}`, 400);
+    }
+    filter.eligibilityStatus = query.eligibilityStatus;
+  }
+
+  if (query.from || query.to) {
+    filter.requestedAt = {};
+    if (query.from) {
+      const from = new Date(query.from);
+      if (Number.isNaN(from.getTime())) throw new ServiceError('from date is invalid', 400);
+      filter.requestedAt.$gte = from;
+    }
+    if (query.to) {
+      const to = new Date(query.to);
+      if (Number.isNaN(to.getTime())) throw new ServiceError('to date is invalid', 400);
+      filter.requestedAt.$lte = to;
+    }
+  }
+
+  if (query.search) {
+    const term = query.search.trim();
+    filter.$or = [
+      { requestCode: { $regex: term, $options: 'i' } },
+      { 'applicant.fullName': { $regex: term, $options: 'i' } },
+      { 'applicant.citizenId': { $regex: term, $options: 'i' } },
+      { requestedByPhone: { $regex: term, $options: 'i' } },
+    ];
+  }
+
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const sort = { requestedAt: -1 };
+
+  const [data, total] = await Promise.all([
+    admissionRepo.findAll(filter, { sort, skip, limit: limitNum }),
+    admissionRepo.countAll(filter),
+  ]);
+
+  return {
+    data: data.map((a) => formatAdmission(a, { includeFamily: true })),
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages: Math.ceil(total / limitNum) || 1,
+  };
+};
+
+const adminGetAdmission = async (admissionId) => {
+  const admission = await admissionRepo.findByIdForAdmin(admissionId);
+  if (!admission) {
+    throw new ServiceError('Admission request not found', 404);
+  }
+  return { admission: formatAdmission(admission, { includeFamily: true }) };
+};
+
+const approveAdmission = async (admin, admissionId, body, req) => {
+  const admission = await admissionRepo.findById(admissionId);
+  if (!admission) {
+    throw new ServiceError('Admission request not found', 404);
+  }
+
+  if (!admissionRepo.APPROVABLE_STATUSES.includes(admission.status)) {
+    throw new ServiceError(
+      `Cannot approve admission with status: ${admission.status}. Only ${admissionRepo.APPROVABLE_STATUSES.join(', ')} are allowed.`,
+      400
+    );
+  }
+
+  const nextStatus = 'contracting';
+  const updateData = {
+    status: nextStatus,
+    eligibilityStatus: 'eligible',
+    approvedAt: new Date(),
+  };
+
+  if (body?.notes) updateData.notes = String(body.notes).trim();
+  if (body?.assignedServicePackage) updateData.assignedServicePackage = String(body.assignedServicePackage).trim();
+
+  const updated = await admissionRepo.updateAdmission(admissionId, updateData);
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'APPROVE_ADMISSION_REQUEST',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    beforeData: { requestCode: admission.requestCode, status: admission.status, eligibilityStatus: admission.eligibilityStatus },
+    afterData: { requestCode: updated.requestCode, status: updated.status, eligibilityStatus: updated.eligibilityStatus },
+    req,
+  });
+
+  return {
+    message: 'Admission request approved successfully',
+    admission: formatAdmission(updated, { includeFamily: false }),
+  };
+};
+
+const rejectAdmission = async (admin, admissionId, body, req) => {
+  const admission = await admissionRepo.findById(admissionId);
+  if (!admission) {
+    throw new ServiceError('Admission request not found', 404);
+  }
+
+  if (!admissionRepo.REJECTABLE_STATUSES.includes(admission.status)) {
+    throw new ServiceError(
+      `Cannot reject admission with status: ${admission.status}. Only ${admissionRepo.REJECTABLE_STATUSES.join(', ')} are allowed.`,
+      400
+    );
+  }
+
+  const rejectionReason = body?.rejectionReason?.trim() || body?.reason?.trim() || '';
+  if (!rejectionReason) {
+    throw new ServiceError('rejectionReason is required when rejecting an admission request', 400);
+  }
+
+  const updated = await admissionRepo.updateAdmission(admissionId, {
+    status: 'cancelled',
+    eligibilityStatus: 'not_eligible',
+    rejectionReason,
+    rejectedAt: new Date(),
+    cancelledAt: new Date(),
+    cancellationReason: `[Admin rejected] ${rejectionReason}`,
+  });
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'REJECT_ADMISSION_REQUEST',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    beforeData: { requestCode: admission.requestCode, status: admission.status },
+    afterData: { requestCode: updated.requestCode, status: updated.status, rejectionReason },
+    req,
+  });
+
+  return {
+    message: 'Admission request rejected successfully',
+    admission: formatAdmission(updated, { includeFamily: false }),
+  };
+};
+
 module.exports = {
   submitAdmissionRequest,
   listAdmissionHistory,
   getAdmissionRequest,
   cancelAdmissionRequest,
+  adminListAdmissions,
+  adminGetAdmission,
+  approveAdmission,
+  rejectAdmission,
 };

@@ -9,24 +9,39 @@ const parsePagination = (query) => {
   return { pageNum, limitNum, skip };
 };
 
-const formatTour = (tour) => ({
-  _id: tour._id,
-  status: tour.status,
-  contactName: tour.contactName,
-  contactPhone: tour.contactPhone,
-  contactEmail: tour.contactEmail,
-  preferredDate: tour.preferredDate,
-  preferredTimeSlot: tour.preferredTimeSlot,
-  numberOfVisitors: tour.numberOfVisitors,
-  notes: tour.notes,
-  cancellationReason: tour.cancellationReason,
-  cancelledAt: tour.cancelledAt,
-  confirmedAt: tour.confirmedAt,
-  confirmedTimeSlot: tour.confirmedTimeSlot,
-  adminNotes: tour.adminNotes,
-  createdAt: tour.createdAt,
-  updatedAt: tour.updatedAt,
-});
+const formatTour = (tour, { includeFamily = false } = {}) => {
+  const base = {
+    _id: tour._id,
+    status: tour.status,
+    contactName: tour.contactName,
+    contactPhone: tour.contactPhone,
+    contactEmail: tour.contactEmail,
+    preferredDate: tour.preferredDate,
+    preferredTimeSlot: tour.preferredTimeSlot,
+    numberOfVisitors: tour.numberOfVisitors,
+    notes: tour.notes,
+    cancellationReason: tour.cancellationReason,
+    cancelledAt: tour.cancelledAt,
+    rejectionReason: tour.rejectionReason,
+    rejectedAt: tour.rejectedAt,
+    confirmedAt: tour.confirmedAt,
+    confirmedTimeSlot: tour.confirmedTimeSlot,
+    adminNotes: tour.adminNotes,
+    createdAt: tour.createdAt,
+    updatedAt: tour.updatedAt,
+  };
+
+  if (includeFamily && tour.familyAccountId?.email) {
+    base.familyAccount = {
+      _id: tour.familyAccountId._id,
+      fullName: tour.familyAccountId.fullName,
+      email: tour.familyAccountId.email,
+      phone: tour.familyAccountId.phone,
+    };
+  }
+
+  return base;
+};
 
 // ── Schedule Facility Tour ──────────────────────────────────────────────────────
 const scheduleTour = async (user, body, req) => {
@@ -176,8 +191,146 @@ const cancelTour = async (user, tourId, body, req) => {
   return { message: 'Facility tour cancelled successfully', tour: formatTour(updated) };
 };
 
+// ── Admin services ──────────────────────────────────────────────────────────────
+const adminListTours = async (query) => {
+  const filter = {};
+
+  if (query.status) {
+    if (!tourRepo.FACILITY_TOUR_STATUSES.includes(query.status)) {
+      throw new ServiceError(
+        `status must be one of: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
+        400
+      );
+    }
+    filter.status = query.status;
+  }
+
+  if (query.from || query.to) {
+    filter.preferredDate = {};
+    if (query.from) {
+      const from = new Date(query.from);
+      if (Number.isNaN(from.getTime())) throw new ServiceError('from date is invalid', 400);
+      filter.preferredDate.$gte = from;
+    }
+    if (query.to) {
+      const to = new Date(query.to);
+      if (Number.isNaN(to.getTime())) throw new ServiceError('to date is invalid', 400);
+      filter.preferredDate.$lte = to;
+    }
+  }
+
+  if (query.search) {
+    const term = query.search.trim();
+    filter.$or = [
+      { contactName: { $regex: term, $options: 'i' } },
+      { contactPhone: { $regex: term, $options: 'i' } },
+      { contactEmail: { $regex: term, $options: 'i' } },
+    ];
+  }
+
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const sort = { createdAt: -1 };
+
+  const [data, total] = await Promise.all([
+    tourRepo.findAll(filter, { sort, skip, limit: limitNum }),
+    tourRepo.countAll(filter),
+  ]);
+
+  return {
+    data: data.map((t) => formatTour(t, { includeFamily: true })),
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages: Math.ceil(total / limitNum) || 1,
+  };
+};
+
+const adminGetTour = async (tourId) => {
+  const tour = await tourRepo.findByIdForAdmin(tourId);
+  if (!tour) throw new ServiceError('Facility tour request not found', 404);
+  return { tour: formatTour(tour, { includeFamily: true }) };
+};
+
+const approveTour = async (admin, tourId, body, req) => {
+  const tour = await tourRepo.findByIdForAdmin(tourId);
+  if (!tour) throw new ServiceError('Facility tour request not found', 404);
+
+  if (!tourRepo.APPROVABLE_STATUSES.includes(tour.status)) {
+    throw new ServiceError(
+      `Cannot approve a tour with status: ${tour.status}. Only ${tourRepo.APPROVABLE_STATUSES.join(', ')} can be approved.`,
+      400
+    );
+  }
+
+  const updateData = {
+    status: 'confirmed',
+    confirmedAt: new Date(),
+  };
+  if (body?.confirmedTimeSlot) updateData.confirmedTimeSlot = String(body.confirmedTimeSlot).trim();
+  if (body?.adminNotes) updateData.adminNotes = String(body.adminNotes).trim();
+
+  const updated = await tourRepo.updateTour(tourId, updateData);
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'APPROVE_FACILITY_TOUR',
+    module: 'facilityTour',
+    targetEntityType: 'FacilityTour',
+    targetEntityId: tour._id,
+    beforeData: { status: tour.status },
+    afterData: { status: updated.status, confirmedAt: updated.confirmedAt, confirmedTimeSlot: updated.confirmedTimeSlot },
+    req,
+  });
+
+  return { message: 'Facility tour approved successfully', tour: formatTour(updated) };
+};
+
+const rejectTour = async (admin, tourId, body, req) => {
+  const tour = await tourRepo.findByIdForAdmin(tourId);
+  if (!tour) throw new ServiceError('Facility tour request not found', 404);
+
+  if (!tourRepo.REJECTABLE_STATUSES.includes(tour.status)) {
+    throw new ServiceError(
+      `Cannot reject a tour with status: ${tour.status}. Only ${tourRepo.REJECTABLE_STATUSES.join(', ')} can be rejected.`,
+      400
+    );
+  }
+
+  const rejectionReason = body?.rejectionReason?.trim() || body?.reason?.trim() || '';
+  if (!rejectionReason) {
+    throw new ServiceError('rejectionReason is required when rejecting a tour request', 400);
+  }
+
+  const updated = await tourRepo.updateTour(tourId, {
+    status: 'cancelled',
+    rejectionReason,
+    rejectedAt: new Date(),
+    cancelledAt: new Date(),
+    cancellationReason: `[Admin rejected] ${rejectionReason}`,
+  });
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'REJECT_FACILITY_TOUR',
+    module: 'facilityTour',
+    targetEntityType: 'FacilityTour',
+    targetEntityId: tour._id,
+    beforeData: { status: tour.status },
+    afterData: { status: updated.status, rejectionReason },
+    req,
+  });
+
+  return { message: 'Facility tour rejected successfully', tour: formatTour(updated) };
+};
+
 module.exports = {
   scheduleTour,
   listTourHistory,
   cancelTour,
+  adminListTours,
+  adminGetTour,
+  approveTour,
+  rejectTour,
 };

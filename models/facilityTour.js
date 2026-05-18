@@ -38,6 +38,8 @@ const facilityTourSchema = new Schema(
     // Lý do huỷ (nếu có)
     cancellationReason: { type: String, trim: true },
     cancelledAt: { type: Date },
+    rejectionReason: { type: String, trim: true },
+    rejectedAt: { type: Date },
 
     // Admin xác nhận
     confirmedAt: { type: Date },

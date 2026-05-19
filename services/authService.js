@@ -3,11 +3,11 @@ const jwt = require('jsonwebtoken');
 const ServiceError = require('./serviceError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
-
+const mailService = require('./mailService');
 const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff'];
 const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', manager: 'MGR', staff: 'STF', admin: 'ADM' };
 const VALID_ROLES = [...STAFF_ROLES, 'admin'];
-
+const crypto = require('crypto');
 const generateStaffCode = (role) => {
   const prefix = STAFF_CODE_PREFIXES[role] || 'STF';
   return `${prefix}${Date.now().toString().slice(-6)}`;
@@ -194,5 +194,165 @@ const toggleStaffActive = async (id, currentUser) => {
     user: { _id: user._id, fullName: user.fullName, email: user.email, role: user.role, isActive: user.isActive },
   };
 };
+// update profile
+const updateProfile = async (user, data) => {
+  return await userRepo.updateProfile(user._id, data);
+};
 
-module.exports = { login, getMe, listStaffAccounts, createStaffAccount, toggleStaffActive };
+// đổi pass
+const changePassword = async (
+  user,
+  { currentPassword, newPassword }
+) => {
+  if (!currentPassword || !newPassword) {
+    throw new ServiceError(
+      'currentPassword and newPassword are required',
+      400
+    );
+  }
+
+  if (newPassword.length < 6) {
+    throw new ServiceError(
+      'New password must be at least 6 characters',
+      400
+    );
+  }
+
+  const dbUser = await userRepo.findById(user._id);
+
+  const isMatch = await bcrypt.compare(
+    currentPassword,
+    dbUser.passwordHash
+  );
+
+  if (!isMatch) {
+    throw new ServiceError(
+      'Current password is incorrect',
+      401
+    );
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+
+  dbUser.passwordHash = passwordHash;
+
+  await userRepo.saveUser(dbUser);
+
+  return {
+    message: 'Password changed successfully',
+  };
+};
+// quên mk
+const forgotPassword = async ({ email }) => {
+  const user = await userRepo.findByEmail(email);
+
+  if (!user) {
+    throw new ServiceError('Email not found', 404);
+  }
+
+  const resetToken = crypto
+    .randomBytes(32)
+    .toString('hex');
+
+  const hashedToken = crypto
+    .createHash('sha256')
+    .update(resetToken)
+    .digest('hex');
+
+  user.resetPasswordTokenHash = hashedToken;
+
+  user.resetPasswordExpiresAt =
+    Date.now() + 10 * 60 * 1000;
+
+  await userRepo.saveUser(user);
+
+  const resetUrl =
+    `http://localhost:5173/reset-password?token=${resetToken}`;
+
+  await mailService.sendResetPasswordEmail(
+    user.email,
+    resetUrl
+  );
+
+  return {
+    message: 'Reset password email sent',
+  };
+};
+//rs mk
+const resetPassword = async ({
+  token,
+  newPassword,
+}) => {
+  const hashedToken = crypto
+    .createHash('sha256')
+    .update(token)
+    .digest('hex');
+
+  const user = await userRepo.findOne({
+    resetPasswordTokenHash: hashedToken,
+    resetPasswordExpiresAt: {
+      $gt: Date.now(),
+    },
+  });
+
+  if (!user) {
+    throw new ServiceError(
+      'Invalid or expired token',
+      400
+    );
+  }
+
+  user.passwordHash = await bcrypt.hash(
+    newPassword,
+    10
+  );
+
+  user.resetPasswordTokenHash = undefined;
+  user.resetPasswordExpiresAt = undefined;
+
+  await userRepo.saveUser(user);
+
+  return {
+    message: 'Password reset successfully',
+  };
+};
+// update user by admin
+const updateUserByAdmin = async (
+  userId,
+  data
+) => {
+  const user = await userRepo.findById(userId);
+
+  if (!user) {
+    throw new ServiceError(
+      'User not found',
+      404
+    );
+  }
+
+  const allowedFields = [
+    'fullName',
+    'phone',
+    'gender',
+    'address',
+    'role',
+    'isActive',
+    'isBanned',
+    'banReason',
+  ];
+
+  allowedFields.forEach((field) => {
+    if (data[field] !== undefined) {
+      user[field] = data[field];
+    }
+  });
+
+  await userRepo.saveUser(user);
+
+  return {
+    message: 'User updated successfully',
+    user,
+  };
+};
+module.exports = { login, getMe, listStaffAccounts, createStaffAccount, 
+  toggleStaffActive, updateProfile, changePassword, forgotPassword, resetPassword, updateUserByAdmin };

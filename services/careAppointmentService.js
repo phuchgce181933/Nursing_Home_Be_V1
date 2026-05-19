@@ -1,10 +1,19 @@
 const ServiceError = require('./serviceError');
 const careAppointmentRepo = require('../repositories/careAppointmentRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
+const residentRepo = require('../repositories/residentRepository');
 const notificationRepo = require('../repositories/notificationRepository');
 const { createAuditLog } = require('../utils/auditLog');
 
 const VALID_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];
+
+// Chỉ cho phép chuyển trạng thái theo chiều hợp lý, không cho quay lui
+const STATUS_TRANSITIONS = {
+  scheduled:   ['in_progress', 'cancelled'],
+  in_progress: ['completed', 'cancelled'],
+  completed:   [],
+  cancelled:   [],
+};
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -24,9 +33,27 @@ const createAppointment = async (user, body, req) => {
     throw new ServiceError('residentId, scheduledStartAt and scheduledEndAt are required', 400);
   }
 
+  const resident = await residentRepo.findById(residentId);
+  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (resident.residencyStatus !== 'admitted') {
+    throw new ServiceError(`Cannot create appointment: resident status is '${resident.residencyStatus}', must be 'admitted'`, 400);
+  }
+
   const start = new Date(scheduledStartAt);
   const end = new Date(scheduledEndAt);
   validateAppointmentWindow(start, end);
+
+  if (doctorStaffId) {
+    const doc = await staffProfileRepo.findById(doctorStaffId);
+    if (!doc) throw new ServiceError('Doctor staff profile not found', 404);
+    if (doc.roleCategory !== 'doctor') throw new ServiceError('Assigned staff is not a doctor', 400);
+  }
+
+  if (nurseStaffId) {
+    const nur = await staffProfileRepo.findById(nurseStaffId);
+    if (!nur) throw new ServiceError('Nurse staff profile not found', 404);
+    if (nur.roleCategory !== 'nurse') throw new ServiceError('Assigned staff is not a nurse', 400);
+  }
 
   const conflict = await careAppointmentRepo.findOneConflict(residentId, start, end);
   if (conflict) {
@@ -79,6 +106,29 @@ const listAppointments = async (query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
+const getMyAppointments = async (user, query) => {
+  const staffProfile = await staffProfileRepo.findByUserId(user._id);
+  if (!staffProfile) throw new ServiceError('Staff profile not found for this account', 404);
+
+  const roleField = staffProfile.roleCategory === 'doctor' ? 'doctorStaffId' : 'nurseStaffId';
+  const filter = { [roleField]: staffProfile._id };
+
+  if (query.status) filter.status = query.status;
+  if (query.from || query.to) {
+    filter.scheduledStartAt = {};
+    if (query.from) filter.scheduledStartAt.$gte = new Date(query.from);
+    if (query.to) filter.scheduledStartAt.$lte = new Date(query.to);
+  }
+
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const [data, total] = await Promise.all([
+    careAppointmentRepo.findAppointmentsWithPopulate(filter, { sort: { scheduledStartAt: 1 }, skip, limit: limitNum }),
+    careAppointmentRepo.countDocuments(filter),
+  ]);
+
+  return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
+};
+
 const getDailySchedule = async (query) => {
   const refDate = query.date ? new Date(query.date) : new Date();
   if (isNaN(refDate)) throw new ServiceError('Invalid date', 400);
@@ -125,6 +175,10 @@ const updateAppointment = async (user, id, body, req) => {
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
 
+  if (['completed', 'cancelled'].includes(appointment.status)) {
+    throw new ServiceError(`Cannot edit appointment with status '${appointment.status}'`, 400);
+  }
+
   const start = body.scheduledStartAt ? new Date(body.scheduledStartAt) : appointment.scheduledStartAt;
   const end = body.scheduledEndAt ? new Date(body.scheduledEndAt) : appointment.scheduledEndAt;
   validateAppointmentWindow(start, end);
@@ -158,6 +212,10 @@ const deleteAppointment = async (user, id, req) => {
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
 
+  if (appointment.status === 'in_progress') {
+    throw new ServiceError('Cannot delete an appointment that is in progress', 400);
+  }
+
   const before = appointment.toObject();
   await careAppointmentRepo.deleteAppointment(appointment);
 
@@ -184,6 +242,15 @@ const updateStatus = async (user, id, body, req) => {
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
 
+  const allowedNext = STATUS_TRANSITIONS[appointment.status];
+  if (!allowedNext.includes(status)) {
+    const hint = allowedNext.length ? allowedNext.join(', ') : 'none (terminal status)';
+    throw new ServiceError(
+      `Cannot transition from '${appointment.status}' to '${status}'. Allowed: ${hint}`,
+      400
+    );
+  }
+
   const prevStatus = appointment.status;
   appointment.status = status;
   await careAppointmentRepo.saveAppointment(appointment);
@@ -208,10 +275,15 @@ const assignDoctor = async (user, id, body, req) => {
   if (doctorStaffId) {
     const staff = await staffProfileRepo.findById(doctorStaffId);
     if (!staff) throw new ServiceError('Doctor staff profile not found', 404);
+    if (staff.roleCategory !== 'doctor') throw new ServiceError('Assigned staff is not a doctor', 400);
   }
 
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
+
+  if (['completed', 'cancelled'].includes(appointment.status)) {
+    throw new ServiceError(`Cannot reassign staff on a '${appointment.status}' appointment`, 400);
+  }
 
   const before = { doctorStaffId: appointment.doctorStaffId };
   appointment.doctorStaffId = doctorStaffId || undefined;
@@ -237,10 +309,15 @@ const assignNurse = async (user, id, body, req) => {
   if (nurseStaffId) {
     const staff = await staffProfileRepo.findById(nurseStaffId);
     if (!staff) throw new ServiceError('Nurse staff profile not found', 404);
+    if (staff.roleCategory !== 'nurse') throw new ServiceError('Assigned staff is not a nurse', 400);
   }
 
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
+
+  if (['completed', 'cancelled'].includes(appointment.status)) {
+    throw new ServiceError(`Cannot reassign staff on a '${appointment.status}' appointment`, 400);
+  }
 
   const before = { nurseStaffId: appointment.nurseStaffId };
   appointment.nurseStaffId = nurseStaffId || undefined;
@@ -268,6 +345,10 @@ const sendReminder = async (id) => {
     .populate({ path: 'nurseStaffId', select: 'userId' });
 
   if (!appointment) throw new ServiceError('Appointment not found', 404);
+
+  if (appointment.status !== 'scheduled') {
+    throw new ServiceError(`Reminders can only be sent for 'scheduled' appointments`, 400);
+  }
 
   const recipientIds = new Set();
   if (appointment.doctorStaffId?.userId) recipientIds.add(appointment.doctorStaffId.userId.toString());
@@ -299,6 +380,7 @@ const sendReminder = async (id) => {
 module.exports = {
   createAppointment,
   listAppointments,
+  getMyAppointments,
   getDailySchedule,
   getWeeklySchedule,
   getAppointment,

@@ -10,9 +10,28 @@ const models = require('./models');
 
 const app = express();
 
+const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+const convertDates = (v) => {
+  if (typeof v === 'string' && ISO_UTC_RE.test(v))
+    return new Date(new Date(v).getTime() + VN_OFFSET_MS).toISOString().replace('Z', '+07:00');
+  if (Array.isArray(v)) return v.map(convertDates);
+  if (v !== null && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v)) out[k] = convertDates(v[k]);
+    return out;
+  }
+  return v;
+};
+
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(cookieParser());
+app.use((req, res, next) => {
+  const _json = res.json.bind(res);
+  res.json = (body) => _json(convertDates(JSON.parse(JSON.stringify(body))));
+  next();
+});
 
 // Swagger docs setup
 app.use(

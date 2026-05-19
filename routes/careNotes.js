@@ -26,6 +26,11 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *                 type: string
  *               noteType:
  *                 type: string
+ *                 enum: [meal, activity, health, general]
+ *               noteAt:
+ *                 type: string
+ *                 format: date-time
+ *                 description: Thời điểm ghi chú (mặc định là lúc tạo). Dùng để ghi nhận ngược thời gian.
  *     responses:
  *       201:
  *         description: Care note created

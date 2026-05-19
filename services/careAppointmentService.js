@@ -5,6 +5,20 @@ const residentRepo = require('../repositories/residentRepository');
 const notificationRepo = require('../repositories/notificationRepository');
 const { createAuditLog } = require('../utils/auditLog');
 
+const VN_TZ = 'Asia/Ho_Chi_Minh';
+
+// Lấy ngày hiện tại theo giờ VN, format YYYY-MM-DD
+const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: VN_TZ });
+
+// Day-of-week theo giờ VN (0=CN, 1=T2, ..., 6=T7)
+const vnDow = (dateStr) => new Date(dateStr + 'T12:00:00+07:00').getUTCDay();
+
+// Cộng/trừ n ngày cho YYYY-MM-DD string
+const addDays = (dateStr, n) =>
+  new Date(new Date(dateStr + 'T12:00:00+07:00').getTime() + n * 86400000)
+    .toISOString()
+    .slice(0, 10);
+
 const VALID_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];
 
 // Chỉ cho phép chuyển trạng thái theo chiều hợp lý, không cho quay lui
@@ -130,13 +144,11 @@ const getMyAppointments = async (user, query) => {
 };
 
 const getDailySchedule = async (query) => {
-  const refDate = query.date ? new Date(query.date) : new Date();
-  if (isNaN(refDate)) throw new ServiceError('Invalid date', 400);
+  const dateStr = query.date ? query.date.slice(0, 10) : todayVN();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw new ServiceError('Invalid date', 400);
 
-  const start = new Date(refDate);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(refDate);
-  end.setHours(23, 59, 59, 999);
+  const start = new Date(dateStr + 'T00:00:00+07:00');
+  const end   = new Date(dateStr + 'T23:59:59.999+07:00');
 
   const filter = { scheduledStartAt: { $gte: start, $lte: end } };
   if (query.residentId) filter.residentId = query.residentId;
@@ -146,17 +158,16 @@ const getDailySchedule = async (query) => {
 };
 
 const getWeeklySchedule = async (query) => {
-  const refDate = query.date ? new Date(query.date) : new Date();
-  if (isNaN(refDate)) throw new ServiceError('Invalid date', 400);
+  const dateStr = query.date ? query.date.slice(0, 10) : todayVN();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw new ServiceError('Invalid date', 400);
 
-  const dow = refDate.getDay();
+  const dow = vnDow(dateStr);
   const mondayOffset = dow === 0 ? -6 : 1 - dow;
-  const weekStart = new Date(refDate);
-  weekStart.setDate(refDate.getDate() + mondayOffset);
-  weekStart.setHours(0, 0, 0, 0);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 6);
-  weekEnd.setHours(23, 59, 59, 999);
+  const mondayStr = addDays(dateStr, mondayOffset);
+  const sundayStr = addDays(mondayStr, 6);
+
+  const weekStart = new Date(mondayStr + 'T00:00:00+07:00');
+  const weekEnd   = new Date(sundayStr + 'T23:59:59.999+07:00');
 
   const filter = { scheduledStartAt: { $gte: weekStart, $lte: weekEnd } };
   if (query.residentId) filter.residentId = query.residentId;

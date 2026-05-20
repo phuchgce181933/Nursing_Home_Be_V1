@@ -16,11 +16,10 @@
     "cross-env": "^10.1.0",
     "debug": "~2.6.9",
     "dotenv": "^17.4.2",
-    "express": "~4.16.1",
+    "express": "^4.22.2",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.6.1",
-    "morgan": "~1.9.1",
-    "nodemon": "^3.1.14",
+    "morgan": "^1.10.1",
     "react-router-dom": "^7.15.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1"

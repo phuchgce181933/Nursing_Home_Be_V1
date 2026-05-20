@@ -15,7 +15,6 @@ node_modules/
 .claude/
 
 # Build / Binary
-bin/
 
 # Logs
 logs/

@@ -40,3 +40,7 @@ temp/
 # Sequence diagrams (local docs only)
 docs/sequence/
 docs/class diagram/
+
+# Postman collections (local test data only)
+*.postman_collection.json
+*.postman_environment.json

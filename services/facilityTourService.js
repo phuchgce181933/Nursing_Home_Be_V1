@@ -9,7 +9,7 @@ const parsePagination = (query) => {
   return { pageNum, limitNum, skip };
 };
 
-const formatTour = (tour, { includeFamily = false } = {}) => {
+const formatTour = (tour, { includeFamily = true } = {}) => {
   const base = {
     _id: tour._id,
     status: tour.status,
@@ -83,6 +83,33 @@ const scheduleTour = async (user, body, req) => {
     throw new ServiceError('numberOfVisitors must be between 1 and 20', 400);
   }
 
+  // Anti-spam: Check if there is already a pending or confirmed tour request on the same preferredDate for this family
+  // We calculate boundaries in Vietnam timezone (+07:00) so it works regardless of different UTC day offsets
+  const vnTime = new Date(parsedDate.getTime() + 7 * 60 * 60 * 1000);
+  const y = vnTime.getUTCFullYear();
+  const m = vnTime.getUTCMonth();
+  const d = vnTime.getUTCDate();
+  
+  const startOfDate = new Date(Date.UTC(y, m, d, 0, 0, 0, 0) - 7 * 60 * 60 * 1000);
+  const endOfDate = new Date(Date.UTC(y, m, d, 23, 59, 59, 999) - 7 * 60 * 60 * 1000);
+
+  const duplicateTour = await tourRepo.findActiveTourOnDate(user._id, startOfDate, endOfDate);
+  if (duplicateTour) {
+    throw new ServiceError(
+      `You already have a ${duplicateTour.status} facility tour request scheduled on this date (${preferredDate.split('T')[0]}). Please cancel it or contact support to modify.`,
+      400
+    );
+  }
+
+  // Anti-spam: Limit the total number of pending tour requests a family can have at once to 3
+  const pendingCount = await tourRepo.countByFamily(user._id, { status: 'pending' });
+  if (pendingCount >= 3) {
+    throw new ServiceError(
+      'You cannot have more than 3 pending facility tour requests at the same time. Please wait for them to be processed or cancel an existing request.',
+      400
+    );
+  }
+
   const tour = await tourRepo.createTour({
     familyAccountId: user._id,
     contactName: name,
@@ -114,13 +141,19 @@ const listTourHistory = async (user, query) => {
   const filter = {};
 
   if (query.status) {
-    if (!tourRepo.FACILITY_TOUR_STATUSES.includes(query.status)) {
-      throw new ServiceError(
-        `status must be one of: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
-        400
-      );
+    const statuses = String(query.status)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const s of statuses) {
+      if (!tourRepo.FACILITY_TOUR_STATUSES.includes(s)) {
+        throw new ServiceError(
+          `status must be one of: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
+          400
+        );
+      }
     }
-    filter.status = query.status;
+    filter.status = statuses.length === 1 ? statuses[0] : { $in: statuses };
   }
 
   if (query.from || query.to) {
@@ -196,13 +229,19 @@ const adminListTours = async (query) => {
   const filter = {};
 
   if (query.status) {
-    if (!tourRepo.FACILITY_TOUR_STATUSES.includes(query.status)) {
-      throw new ServiceError(
-        `status must be one of: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
-        400
-      );
+    const statuses = String(query.status)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const s of statuses) {
+      if (!tourRepo.FACILITY_TOUR_STATUSES.includes(s)) {
+        throw new ServiceError(
+          `status must be one of: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
+          400
+        );
+      }
     }
-    filter.status = query.status;
+    filter.status = statuses.length === 1 ? statuses[0] : { $in: statuses };
   }
 
   if (query.from || query.to) {

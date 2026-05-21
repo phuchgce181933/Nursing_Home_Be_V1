@@ -51,6 +51,33 @@ const admissionSchema = new Schema(
     rejectedAt: { type: Date },
     approvedAt: { type: Date },
     notes: { type: String, trim: true },
+
+    // UC-6.16: Pre-admission Consultation
+    consultationNotes: { type: String, trim: true },
+    consultedBy: { type: Types.ObjectId, ref: 'User' },
+    consultedAt: { type: Date },
+
+    // UC-6.18: Assign Consultant
+    consultantId: { type: Types.ObjectId, ref: 'User' },
+
+    // UC-6.17: Initial Assessment Scheduling
+    initialAssessmentNotes: { type: String, trim: true },
+
+    // UC-6.19: Evaluate Admission Eligibility
+    assessedBy: { type: Types.ObjectId, ref: 'User' },
+    assessedAt: { type: Date },
+
+    // UC-6.24: Assign Service Package
+    servicePackageId: { type: Types.ObjectId, ref: 'ServicePackage' },
+
+    // UC-6.25: Contract
+    contractStartDate: { type: Date },
+    contractEndDate: { type: Date },
+    contractTerms: { type: String, trim: true },
+
+    // UC-6.26: Check-in
+    assignedBedId: { type: Types.ObjectId, ref: 'Bed' },
+    assignedRoomId: { type: Types.ObjectId, ref: 'Room' },
   },
   { timestamps: true }
 );

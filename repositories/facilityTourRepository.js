@@ -16,11 +16,22 @@ const findByFamily = (familyAccountId, filter, { sort, skip, limit }) =>
 const countByFamily = (familyAccountId, filter) =>
   FacilityTour.countDocuments({ familyAccountId, ...filter });
 
+const findPendingTourByFamily = (familyAccountId) =>
+  FacilityTour.findOne({ familyAccountId, status: 'pending' });
+
+const findActiveTourOnDate = (familyAccountId, startOfDate, endOfDate) =>
+  FacilityTour.findOne({
+    familyAccountId,
+    preferredDate: { $gte: startOfDate, $lte: endOfDate },
+    status: { $in: ['pending', 'confirmed'] },
+  });
+
 const findByIdForFamily = (id, familyAccountId) =>
   FacilityTour.findOne({ _id: id, familyAccountId });
 
 const updateTour = (id, update) =>
-  FacilityTour.findByIdAndUpdate(id, update, { new: true, runValidators: true });
+  FacilityTour.findByIdAndUpdate(id, update, { new: true, runValidators: true })
+    .populate('familyAccountId', 'fullName email phone');
 
 // ── Admin queries ──────────────────────────────────────────────────────────────
 const findAll = (filter, { sort, skip, limit }) =>
@@ -43,6 +54,8 @@ module.exports = {
   createTour,
   findByFamily,
   countByFamily,
+  findPendingTourByFamily,
+  findActiveTourOnDate,
   findByIdForFamily,
   updateTour,
   findAll,

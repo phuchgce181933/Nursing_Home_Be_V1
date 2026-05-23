@@ -11,8 +11,7 @@ const {
   checkInResident,
 } = require('../controllers/admissionController');
 const { protect, authorize } = require('../middleware/auth');
-
-router.use(protect, authorize('admin', 'manager'));
+// Route protection is applied per-route below to support read access for doctors and nurses
 
 /**
  * @swagger
@@ -87,7 +86,7 @@ router.use(protect, authorize('admin', 'manager'));
  *       403:
  *         description: Access forbidden
  */
-router.get('/', adminListAdmissions);
+router.get('/', protect, authorize('admin', 'manager', 'doctor', 'nurse'), adminListAdmissions);
 
 /**
  * @swagger
@@ -113,7 +112,7 @@ router.get('/', adminListAdmissions);
  *       404:
  *         description: Admission request not found
  */
-router.get('/:admissionId', adminGetAdmission);
+router.get('/:admissionId', protect, authorize('admin', 'manager', 'doctor', 'nurse'), adminGetAdmission);
 
 /**
  * @swagger
@@ -153,7 +152,7 @@ router.get('/:admissionId', adminGetAdmission);
  *       404:
  *         description: Admission request not found
  */
-router.patch('/:admissionId/approve', approveAdmission);
+router.patch('/:admissionId/approve', protect, authorize('admin', 'manager'), approveAdmission);
 
 /**
  * @swagger
@@ -193,7 +192,7 @@ router.patch('/:admissionId/approve', approveAdmission);
  *       404:
  *         description: Admission request not found
  */
-router.patch('/:admissionId/reject', rejectAdmission);
+router.patch('/:admissionId/reject', protect, authorize('admin', 'manager'), rejectAdmission);
 
 /**
  * @swagger
@@ -229,7 +228,7 @@ router.patch('/:admissionId/reject', rejectAdmission);
  *       404:
  *         description: Admission or consultant not found
  */
-router.patch('/:admissionId/assign-consultant', assignConsultant);
+router.patch('/:admissionId/assign-consultant', protect, authorize('admin', 'manager'), assignConsultant);
 
 /**
  * @swagger
@@ -265,7 +264,7 @@ router.patch('/:admissionId/assign-consultant', assignConsultant);
  *       404:
  *         description: Admission or service package not found
  */
-router.patch('/:admissionId/assign-service-package', assignServicePackage);
+router.patch('/:admissionId/assign-service-package', protect, authorize('admin', 'manager'), assignServicePackage);
 
 /**
  * @swagger
@@ -312,7 +311,7 @@ router.patch('/:admissionId/assign-service-package', assignServicePackage);
  *       404:
  *         description: Admission not found
  */
-router.patch('/:admissionId/create-contract', createAdmissionContract);
+router.patch('/:admissionId/create-contract', protect, authorize('admin', 'manager'), createAdmissionContract);
 
 /**
  * @swagger
@@ -348,6 +347,6 @@ router.patch('/:admissionId/create-contract', createAdmissionContract);
  *       404:
  *         description: Admission, bed, or room not found
  */
-router.patch('/:admissionId/check-in', checkInResident);
+router.patch('/:admissionId/check-in', protect, authorize('admin', 'manager'), checkInResident);
 
 module.exports = router;

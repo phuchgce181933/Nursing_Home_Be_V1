@@ -37,6 +37,7 @@ const formatTour = (tour, { includeFamily = true } = {}) => {
       fullName: tour.familyAccountId.fullName,
       email: tour.familyAccountId.email,
       phone: tour.familyAccountId.phone,
+      username: tour.familyAccountId.username || 'N/A',
     };
   }
 

@@ -31,7 +31,7 @@ const findByIdForFamily = (id, familyAccountId) =>
 
 const updateTour = (id, update) =>
   FacilityTour.findByIdAndUpdate(id, update, { new: true, runValidators: true })
-    .populate('familyAccountId', 'fullName email phone');
+    .populate('familyAccountId', 'fullName email phone username');
 
 // ── Admin queries ──────────────────────────────────────────────────────────────
 const findAll = (filter, { sort, skip, limit }) =>
@@ -39,12 +39,12 @@ const findAll = (filter, { sort, skip, limit }) =>
     .sort(sort)
     .skip(skip)
     .limit(limit)
-    .populate('familyAccountId', 'fullName email phone');
+    .populate('familyAccountId', 'fullName email phone username');
 
 const countAll = (filter) => FacilityTour.countDocuments(filter);
 
 const findByIdForAdmin = (id) =>
-  FacilityTour.findById(id).populate('familyAccountId', 'fullName email phone');
+  FacilityTour.findById(id).populate('familyAccountId', 'fullName email phone username');
 
 module.exports = {
   FACILITY_TOUR_STATUSES,

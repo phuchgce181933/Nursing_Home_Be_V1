@@ -80,6 +80,7 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
       fullName: admission.familyAccountId.fullName,
       email: admission.familyAccountId.email,
       phone: admission.familyAccountId.phone,
+      username: admission.familyAccountId.username || 'N/A',
     };
   }
 

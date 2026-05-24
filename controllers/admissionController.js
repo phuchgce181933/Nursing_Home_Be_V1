@@ -80,6 +80,76 @@ const rejectAdmission = async (req, res) => {
   }
 };
 
+// ── UC-6.16: Pre-admission Consultation ────────────────────────────────────────
+const preAdmissionConsultation = async (req, res) => {
+  try {
+    const result = await admissionService.preAdmissionConsultation(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// ── UC-6.17: Initial Assessment Scheduling ─────────────────────────────────────
+const scheduleInitialAssessment = async (req, res) => {
+  try {
+    const result = await admissionService.scheduleInitialAssessment(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// ── UC-6.18: Assign Consultant ─────────────────────────────────────────────────
+const assignConsultant = async (req, res) => {
+  try {
+    const result = await admissionService.assignConsultant(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// ── UC-6.19: Evaluate Admission Eligibility ────────────────────────────────────
+const evaluateAdmissionEligibility = async (req, res) => {
+  try {
+    const result = await admissionService.evaluateAdmissionEligibility(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// ── UC-6.24: Assign Service Package ────────────────────────────────────────────
+const assignServicePackage = async (req, res) => {
+  try {
+    const result = await admissionService.assignServicePackage(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// ── UC-6.25: Create Admission Contract ─────────────────────────────────────────
+const createAdmissionContract = async (req, res) => {
+  try {
+    const result = await admissionService.createAdmissionContract(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// ── UC-6.26: Check-in Resident ─────────────────────────────────────────────────
+const checkInResident = async (req, res) => {
+  try {
+    const result = await admissionService.checkInResident(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   submitAdmissionRequest,
   listAdmissionRequests,
@@ -89,4 +159,12 @@ module.exports = {
   adminGetAdmission,
   approveAdmission,
   rejectAdmission,
+  preAdmissionConsultation,
+  scheduleInitialAssessment,
+  assignConsultant,
+  evaluateAdmissionEligibility,
+  assignServicePackage,
+  createAdmissionContract,
+  checkInResident,
 };
+

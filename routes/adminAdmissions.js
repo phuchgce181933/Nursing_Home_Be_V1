@@ -5,6 +5,10 @@ const {
   adminGetAdmission,
   approveAdmission,
   rejectAdmission,
+  assignConsultant,
+  assignServicePackage,
+  createAdmissionContract,
+  checkInResident,
 } = require('../controllers/admissionController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -190,5 +194,160 @@ router.patch('/:admissionId/approve', approveAdmission);
  *         description: Admission request not found
  */
 router.patch('/:admissionId/reject', rejectAdmission);
+
+/**
+ * @swagger
+ * /api/admin/admission-requests/{admissionId}/assign-consultant:
+ *   patch:
+ *     summary: Assign a consultant to an admission request (UC-6.18)
+ *     tags: [Admin - Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: admissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - consultantId
+ *             properties:
+ *               consultantId:
+ *                 type: string
+ *                 description: User ID of the doctor or nurse to assign
+ *     responses:
+ *       200:
+ *         description: Consultant assigned successfully
+ *       400:
+ *         description: Invalid consultant or admission status
+ *       404:
+ *         description: Admission or consultant not found
+ */
+router.patch('/:admissionId/assign-consultant', assignConsultant);
+
+/**
+ * @swagger
+ * /api/admin/admission-requests/{admissionId}/assign-service-package:
+ *   patch:
+ *     summary: Assign a service package to an admission (UC-6.24)
+ *     tags: [Admin - Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: admissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - servicePackageId
+ *             properties:
+ *               servicePackageId:
+ *                 type: string
+ *                 description: ID of the service package to assign
+ *     responses:
+ *       200:
+ *         description: Service package assigned successfully
+ *       400:
+ *         description: Invalid package or admission status
+ *       404:
+ *         description: Admission or service package not found
+ */
+router.patch('/:admissionId/assign-service-package', assignServicePackage);
+
+/**
+ * @swagger
+ * /api/admin/admission-requests/{admissionId}/create-contract:
+ *   patch:
+ *     summary: Create admission contract (UC-6.25)
+ *     tags: [Admin - Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: admissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - contractNumber
+ *             properties:
+ *               contractNumber:
+ *                 type: string
+ *                 description: Contract number
+ *               contractStartDate:
+ *                 type: string
+ *                 format: date
+ *               contractEndDate:
+ *                 type: string
+ *                 format: date
+ *               contractTerms:
+ *                 type: string
+ *                 description: Contract terms and conditions
+ *               notes:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Contract created, status set to contracting
+ *       400:
+ *         description: Validation error or invalid status
+ *       404:
+ *         description: Admission not found
+ */
+router.patch('/:admissionId/create-contract', createAdmissionContract);
+
+/**
+ * @swagger
+ * /api/admin/admission-requests/{admissionId}/check-in:
+ *   patch:
+ *     summary: Check-in resident (UC-6.26)
+ *     tags: [Admin - Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: admissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               bedId:
+ *                 type: string
+ *                 description: ID of the bed to assign
+ *               roomId:
+ *                 type: string
+ *                 description: ID of the room to assign
+ *     responses:
+ *       200:
+ *         description: Resident checked in, status set to checked_in. Resident record created/updated.
+ *       400:
+ *         description: Missing contract or invalid status
+ *       404:
+ *         description: Admission, bed, or room not found
+ */
+router.patch('/:admissionId/check-in', checkInResident);
 
 module.exports = router;

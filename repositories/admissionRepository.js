@@ -30,7 +30,13 @@ const countByFamily = (familyAccountId, filter) =>
   Admission.countDocuments({ familyAccountId, ...filter });
 
 const updateAdmission = (id, update) =>
-  Admission.findByIdAndUpdate(id, update, { new: true, runValidators: true });
+  Admission.findByIdAndUpdate(id, update, { new: true, runValidators: true })
+    .populate('residentId', 'residentCode fullName residencyStatus')
+    .populate('familyAccountId', 'fullName email phone')
+    .populate('consultantId', 'fullName email role')
+    .populate('consultedBy', 'fullName email role')
+    .populate('assessedBy', 'fullName email role')
+    .populate('servicePackageId', 'packageCode name tier monthlyPrice');
 
 const assertFamilyResidentAccess = async (userId, residentId) => {
   const resident = await Resident.findOne({
@@ -47,14 +53,22 @@ const findAll = (filter, { sort, skip, limit }) =>
     .skip(skip)
     .limit(limit)
     .populate('residentId', 'residentCode fullName residencyStatus')
-    .populate('familyAccountId', 'fullName email phone');
+    .populate('familyAccountId', 'fullName email phone')
+    .populate('consultantId', 'fullName email role')
+    .populate('consultedBy', 'fullName email role')
+    .populate('assessedBy', 'fullName email role')
+    .populate('servicePackageId', 'packageCode name tier monthlyPrice');
 
 const countAll = (filter) => Admission.countDocuments(filter);
 
 const findByIdForAdmin = (id) =>
   Admission.findById(id)
     .populate('residentId', 'residentCode fullName residencyStatus')
-    .populate('familyAccountId', 'fullName email phone');
+    .populate('familyAccountId', 'fullName email phone')
+    .populate('consultantId', 'fullName email role')
+    .populate('consultedBy', 'fullName email role')
+    .populate('assessedBy', 'fullName email role')
+    .populate('servicePackageId', 'packageCode name tier monthlyPrice');
 
 module.exports = {
   ACTIVE_ADMISSION_STATUSES,

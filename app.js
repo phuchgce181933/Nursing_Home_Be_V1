@@ -66,6 +66,8 @@ app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
+app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
+app.use('/api/medical/service-packages', require('./routes/medicalServicePackages'));
 
 // connect DB and create collections
 const initDB = async () => {

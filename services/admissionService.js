@@ -38,18 +38,18 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
     requestedAt: admission.requestedAt,
     consultationNotes: admission.consultationNotes,
     consultedBy: admission.consultedBy?._id
-      ? { _id: admission.consultedBy._id, fullName: admission.consultedBy.fullName, role: admission.consultedBy.role }
+      ? { _id: admission.consultedBy._id, fullName: admission.consultedBy.fullName, role: admission.consultedBy.role, email: admission.consultedBy.email }
       : admission.consultedBy || null,
     consultedAt: admission.consultedAt,
     consultantId: admission.consultantId?._id
-      ? { _id: admission.consultantId._id, fullName: admission.consultantId.fullName, role: admission.consultantId.role }
+      ? { _id: admission.consultantId._id, fullName: admission.consultantId.fullName, role: admission.consultantId.role, email: admission.consultantId.email }
       : admission.consultantId || null,
     consultationScheduledAt: admission.consultationScheduledAt,
     initialAssessmentScheduledAt: admission.initialAssessmentScheduledAt,
     initialAssessmentNotes: admission.initialAssessmentNotes,
     assessmentResult: admission.assessmentResult,
     assessedBy: admission.assessedBy?._id
-      ? { _id: admission.assessedBy._id, fullName: admission.assessedBy.fullName, role: admission.assessedBy.role }
+      ? { _id: admission.assessedBy._id, fullName: admission.assessedBy.fullName, role: admission.assessedBy.role, email: admission.assessedBy.email }
       : admission.assessedBy || null,
     assessedAt: admission.assessedAt,
     servicePackageId: admission.servicePackageId?._id
@@ -80,6 +80,7 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
       fullName: admission.familyAccountId.fullName,
       email: admission.familyAccountId.email,
       phone: admission.familyAccountId.phone,
+      username: admission.familyAccountId.username || 'N/A',
     };
   }
 
@@ -320,7 +321,13 @@ const getAdmissionRequest = async (user, admissionId) => {
   if (!admission) {
     throw new ServiceError('Admission request not found', 404);
   }
-  await admission.populate('residentId', 'residentCode fullName residencyStatus');
+  await admission.populate([
+    { path: 'residentId', select: 'residentCode fullName residencyStatus' },
+    { path: 'consultantId', select: 'fullName email role' },
+    { path: 'consultedBy', select: 'fullName email role' },
+    { path: 'assessedBy', select: 'fullName email role' },
+    { path: 'servicePackageId', select: 'packageCode name tier monthlyPrice' },
+  ]);
   return { admission: formatAdmission(admission) };
 };
 
@@ -463,7 +470,16 @@ const approveAdmission = async (admin, admissionId, body, req) => {
   };
 
   if (body?.notes) updateData.notes = String(body.notes).trim();
-  if (body?.assignedServicePackage) updateData.assignedServicePackage = String(body.assignedServicePackage).trim();
+  
+  if (body?.servicePackageId) {
+    const pkg = await servicePackageRepo.findById(body.servicePackageId);
+    if (pkg) {
+      updateData.servicePackageId = pkg._id;
+      updateData.assignedServicePackage = pkg.name;
+    }
+  } else if (body?.assignedServicePackage) {
+    updateData.assignedServicePackage = String(body.assignedServicePackage).trim();
+  }
 
   const updated = await admissionRepo.updateAdmission(admissionId, updateData);
 

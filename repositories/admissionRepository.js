@@ -4,7 +4,7 @@ const { ADMISSION_STATUSES } = require('../models/enums');
 
 const ACTIVE_ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracting'];
 const CANCELLABLE_STATUSES = [...ACTIVE_ADMISSION_STATUSES];
-const APPROVABLE_STATUSES = ['new_request', 'consulting', 'assessing', 'contracting'];
+const APPROVABLE_STATUSES = ['new_request', 'consulting', 'assessing'];
 const REJECTABLE_STATUSES = ['new_request', 'consulting', 'assessing'];
 
 const findActiveAdmission = (filter) =>
@@ -32,7 +32,7 @@ const countByFamily = (familyAccountId, filter) =>
 const updateAdmission = (id, update) =>
   Admission.findByIdAndUpdate(id, update, { new: true, runValidators: true })
     .populate('residentId', 'residentCode fullName residencyStatus')
-    .populate('familyAccountId', 'fullName email phone')
+    .populate('familyAccountId', 'fullName email phone username')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')
@@ -53,7 +53,7 @@ const findAll = (filter, { sort, skip, limit }) =>
     .skip(skip)
     .limit(limit)
     .populate('residentId', 'residentCode fullName residencyStatus')
-    .populate('familyAccountId', 'fullName email phone')
+    .populate('familyAccountId', 'fullName email phone username')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')
@@ -64,7 +64,7 @@ const countAll = (filter) => Admission.countDocuments(filter);
 const findByIdForAdmin = (id) =>
   Admission.findById(id)
     .populate('residentId', 'residentCode fullName residencyStatus')
-    .populate('familyAccountId', 'fullName email phone')
+    .populate('familyAccountId', 'fullName email phone username')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')

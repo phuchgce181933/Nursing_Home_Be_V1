@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
+const bodyParser = require('body-parser');
 const connectDB = require('./config/db');
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
@@ -41,11 +42,11 @@ app.use(
 app.use(require('./middleware/parseJsonBody'));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use((req, res, next) => {
-  const _json = res.json.bind(res);
-  res.json = (body) => _json(convertDates(JSON.parse(JSON.stringify(body))));
-  next();
-});
+// app.use((req, res, next) => {
+//   const _json = res.json.bind(res);
+//   res.json = (body) => _json(convertDates(JSON.parse(JSON.stringify(body))));
+//   next();
+// });
 
 // Swagger docs setup
 app.use(

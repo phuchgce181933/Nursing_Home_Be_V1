@@ -20,8 +20,32 @@ app.use(cors({
 }));
 
 app.use(morgan('dev'));
-app.use(express.json());
+app.use(
+  bodyParser.json({
+    limit: '1mb',
+    type: (req) => (req.headers['content-type'] || '').toLowerCase().includes('json'),
+  })
+);
+app.use(
+  bodyParser.text({
+    limit: '1mb',
+    type: (req) => {
+      if (!['POST', 'PUT', 'PATCH'].includes(req.method)) return false;
+      const ct = (req.headers['content-type'] || '').toLowerCase();
+      if (ct.includes('text/plain')) return true;
+      if (!ct) return true;
+      return false;
+    },
+  })
+);
+app.use(require('./middleware/parseJsonBody'));
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use((req, res, next) => {
+  const _json = res.json.bind(res);
+  res.json = (body) => _json(convertDates(JSON.parse(JSON.stringify(body))));
+  next();
+});
 
 // Swagger docs setup
 app.use(
@@ -34,7 +58,10 @@ app.use(
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
-app.use('/api/family', require('./routes/familyPortal'));
+app.use('/api/family', require('./routes/familyIndex'));
+app.use('/api/admin', require('./routes/adminIndex'));
+app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
+app.use('/api/medical/service-packages', require('./routes/medicalServicePackages'));
 
 // connect DB and create collections
 const initDB = async () => {

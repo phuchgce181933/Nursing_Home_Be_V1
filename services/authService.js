@@ -177,7 +177,7 @@ const createStaffAccount = async ({
 };
 
 const toggleStaffActive = async (id, currentUser) => {
-  const user = await userRepo.findById(id).select('-passwordHash -resetPasswordTokenHash');
+  const user = await userRepo.findById(id);
   if (!user) throw new ServiceError('User not found', 404);
   if (!['admin', ...STAFF_ROLES].includes(user.role)) {
     throw new ServiceError('Can only toggle staff accounts', 400);

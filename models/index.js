@@ -23,6 +23,8 @@ const Conversation = require('./conversation');
 const Message = require('./message');
 const AuditLog = require('./auditLog');
 const ReportSnapshot = require('./reportSnapshot');
+const FacilityTour = require('./facilityTour');
+const ServicePackage = require('./servicePackage');
 
 module.exports = {
   User,
@@ -50,4 +52,6 @@ module.exports = {
   Message,
   AuditLog,
   ReportSnapshot,
+  FacilityTour,
+  ServicePackage,
 };

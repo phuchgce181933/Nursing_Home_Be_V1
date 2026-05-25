@@ -31,6 +31,8 @@ const PAYMENT_STATUSES = ['pending', 'confirmed', 'failed', 'refunded'];
 const NOTIFICATION_CATEGORIES = ['incident', 'health', 'appointment', 'activity', 'billing', 'message', 'system'];
 const DELIVERY_CHANNELS = ['in_app', 'email', 'sms', 'push'];
 const SUPPORT_REQUEST_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
+const FACILITY_TOUR_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled'];
+const SERVICE_PACKAGE_TIERS = ['basic', 'standard', 'premium', 'vip'];
 
 module.exports = {
   ROLES,
@@ -60,4 +62,6 @@ module.exports = {
   NOTIFICATION_CATEGORIES,
   DELIVERY_CHANNELS,
   SUPPORT_REQUEST_STATUSES,
+  FACILITY_TOUR_STATUSES,
+  SERVICE_PACKAGE_TIERS,
 };

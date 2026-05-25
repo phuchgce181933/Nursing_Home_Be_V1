@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { login, getMe, createStaffAccount, listStaffAccounts, toggleStaffActive } = require('../controllers/authController');
+const { login, getMe, createStaffAccount, listStaffAccounts, 
+    toggleStaffActive, updateProfile, changePassword,forgotPassword, resetPassword,updateUserByAdmin } = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/auth');
 
 /**
@@ -147,4 +148,176 @@ router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
  */
 router.put('/staff/:id/toggle-active', protect, authorize('admin', 'manager'), toggleStaffActive);
 
+// Phuc/update profile
+/**
+ * @swagger
+ * /api/auth/profile:
+ *   put:
+ *     summary: Update current user profile
+ *     tags: [Auth]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               fullName:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               gender:
+ *                 type: string
+ *                 enum: [male, female, other, unknown]
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ *       401:
+ *         description: Unauthorized
+ */
+router.put('/profile', protect, updateProfile);
+
+// Phuc/change password 
+/**
+ * @swagger
+ * /api/auth/change-password:
+ *   put:
+ *     summary: Change current user password
+ *     tags: [Auth]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *       400:
+ *         description: Validation error
+ *       401:
+ *         description: Current password incorrect
+ */
+router.put('/change-password', protect, changePassword);
+// qiuên mk
+/**
+ * @swagger
+ * /api/auth/forgot-password:
+ *   post:
+ *     summary: Send reset password email
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Reset password email sent
+ *       404:
+ *         description: Email not found
+ */
+router.post('/forgot-password', forgotPassword);
+// reset mk
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Reset password using token
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *               - newPassword
+ *             properties:
+ *               token:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password reset successfully
+ *       400:
+ *         description: Invalid or expired token
+ */
+router.post('/reset-password', resetPassword);
+
+// update user by admin
+/**
+ * @swagger
+ * /api/auth/users/{id}:
+ *   put:
+ *     summary: Admin update any user account
+ *     tags: [Auth]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               fullName:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               gender:
+ *                 type: string
+ *                 enum: [male, female, other, unknown]
+ *               address:
+ *                 type: string
+ *               role:
+ *                 type: string
+ *               isActive:
+ *                 type: boolean
+ *               isBanned:
+ *                 type: boolean
+ *               banReason:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: User updated successfully
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: User not found
+ */
+router.put(
+  '/users/:id',
+  protect,
+  authorize('admin'),
+  updateUserByAdmin
+);
 module.exports = router;

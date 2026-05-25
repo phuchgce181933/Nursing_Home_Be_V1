@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.docs
 
 # Environment variables
 .env
@@ -34,3 +35,11 @@ build/
 # Temporary files
 tmp/
 temp/
+
+# Sequence diagrams (local docs only)
+docs/sequence/
+docs/class diagram/
+
+# Postman collections (local test data only)
+*.postman_collection.json
+*.postman_environment.json

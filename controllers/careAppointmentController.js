@@ -18,6 +18,15 @@ const listAppointments = async (req, res) => {
   }
 };
 
+const getMyAppointments = async (req, res) => {
+  try {
+    const result = await careAppointmentService.getMyAppointments(req.user, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const getDailySchedule = async (req, res) => {
   try {
     const result = await careAppointmentService.getDailySchedule(req.user, req.staffProfile, req.query);
@@ -102,6 +111,7 @@ const sendReminder = async (req, res) => {
 module.exports = {
   createAppointment,
   listAppointments,
+  getMyAppointments,
   getDailySchedule,
   getWeeklySchedule,
   getAppointment,

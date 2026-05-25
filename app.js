@@ -6,6 +6,7 @@ const cookieParser = require('cookie-parser');
 const connectDB = require('./config/db');
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
+const { startReminderScheduler } = require('./services/reminderSchedulerService');
 // import all models through index to ensure schemas are registered
 const models = require('./models');
 
@@ -79,6 +80,7 @@ const initDB = async () => {
     }
 
     console.log('All collections initialized');
+    startReminderScheduler();
   } catch (err) {
     console.error(err);
   }

@@ -59,6 +59,7 @@ app.use(
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
+app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));

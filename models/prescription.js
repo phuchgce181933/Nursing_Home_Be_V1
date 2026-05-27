@@ -33,6 +33,7 @@ const acknowledgmentSchema = new Schema(
 const prescriptionSchema = new Schema(
   {
     residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
+   residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
     doctorId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
     diagnosisNote: { type: String, trim: true },
     prescriptionDate: { type: Date, required: true, default: Date.now },

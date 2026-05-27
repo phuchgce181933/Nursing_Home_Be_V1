@@ -3,12 +3,14 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
+const bodyParser = require('body-parser');
 const connectDB = require('./config/db');
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
 const { startReminderScheduler } = require('./services/reminderSchedulerService');
 // import all models through index to ensure schemas are registered
 const models = require('./models');
+const { initMedicationJobs } = require('./jobs/medicationReminderJob');
 
 const app = express();
 
@@ -42,11 +44,11 @@ app.use(
 app.use(require('./middleware/parseJsonBody'));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use((req, res, next) => {
-  const _json = res.json.bind(res);
-  res.json = (body) => _json(convertDates(JSON.parse(JSON.stringify(body))));
-  next();
-});
+// app.use((req, res, next) => {
+//   const _json = res.json.bind(res);
+//   res.json = (body) => _json(convertDates(JSON.parse(JSON.stringify(body))));
+//   next();
+// });
 
 // Swagger docs setup
 app.use(
@@ -59,10 +61,15 @@ app.use(
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
+app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
 app.use('/api/medical/service-packages', require('./routes/medicalServicePackages'));
+app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
+app.use('/api/medications', require('./routes/scheduleRoutes'));
+app.use('/api/pharmacy', require('./routes/pharmacy'));
+
 
 // connect DB and create collections
 const initDB = async () => {
@@ -81,6 +88,7 @@ const initDB = async () => {
 
     console.log('All collections initialized');
     startReminderScheduler();
+    initMedicationJobs();
   } catch (err) {
     console.error(err);
   }

@@ -18,6 +18,11 @@ const incidentSchema = new Schema(
   {
     residentId: { type: Types.ObjectId, ref: 'Resident', index: true },
     reportedByStaffId: { type: Types.ObjectId, ref: 'StaffProfile', required: true, index: true },
+    reportedByUserId: { type: Types.ObjectId, ref: 'User', index: true },
+    reporterName: { type: String, trim: true },
+    reporterEmail: { type: String, trim: true, lowercase: true },
+    reporterPhone: { type: String, trim: true },
+    reporterRole: { type: String, trim: true },
     incidentType: { type: String, required: true, trim: true, index: true },
     severity: { type: String, enum: INCIDENT_SEVERITIES, default: 'medium', index: true },
     incidentAt: { type: Date, required: true, index: true },

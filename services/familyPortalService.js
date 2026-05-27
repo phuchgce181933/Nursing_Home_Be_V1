@@ -10,7 +10,7 @@ const parsePagination = (query) => {
 
 const assertResidentAccess = async (userId, residentId) => {
   const ids = await familyPortalRepo.getFamilyResidentIds(userId);
-  return ids.includes(residentId);
+  return ids.includes(residentId.toString());
 };
 
 const getResidents = async (user) => familyPortalRepo.getResidentsForFamily(user._id);
@@ -19,7 +19,6 @@ const getResident = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Access denied: not your relative', 403);
   }
-
   const resident = await familyPortalRepo.getResidentById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
   return resident;
@@ -29,7 +28,6 @@ const getVitals = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Access denied: not your relative', 403);
   }
-
   const records = await familyPortalRepo.findMedicalRecords({ residentId }, { sort: { measuredAt: -1 }, limit: 1 });
   return records.length ? records[0] : null;
 };
@@ -87,7 +85,6 @@ const getHealthChart = async (user, residentId, query) => {
     },
   };
 
-  const fields = query.metric ? `measuredAt ${query.metric} abnormalFlag` : `measuredAt ${VALID_METRICS.join(' ')} abnormalFlag`;
   const records = await familyPortalRepo.findMedicalRecords(filter, { sort: { measuredAt: 1 } });
   return records.map((record) => {
     const doc = record.toObject();
@@ -95,9 +92,7 @@ const getHealthChart = async (user, residentId, query) => {
     if (query.metric) {
       selected[query.metric] = doc[query.metric];
     } else {
-      VALID_METRICS.forEach((metric) => {
-        selected[metric] = doc[metric];
-      });
+      VALID_METRICS.forEach((m) => { selected[m] = doc[m]; });
     }
     return selected;
   });
@@ -133,27 +128,36 @@ const getCareNotes = async (user, residentId, query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
+const VALID_MED_STATUSES = ['PENDING', 'TAKEN', 'LATE_TAKEN', 'MISSED', 'SKIPPED'];
+
 const getMedications = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Access denied: not your relative', 403);
   }
 
   const filter = { residentId };
-  if (query.status) filter.status = query.status;
+  if (query.status) {
+    if (!VALID_MED_STATUSES.includes(query.status)) {
+      throw new ServiceError(`status must be one of: ${VALID_MED_STATUSES.join(', ')}`, 400);
+    }
+    filter.status = query.status;
+  }
   if (query.from || query.to) {
-    filter.scheduledAt = {};
-    if (query.from) filter.scheduledAt.$gte = new Date(query.from);
-    if (query.to) filter.scheduledAt.$lte = new Date(query.to);
+    filter.scheduledTime = {};
+    if (query.from) filter.scheduledTime.$gte = new Date(query.from);
+    if (query.to) filter.scheduledTime.$lte = new Date(query.to);
   }
 
   const { pageNum, limitNum, skip } = parsePagination(query);
   const [data, total] = await Promise.all([
-    familyPortalRepo.findMedicationAdministrations(filter, { sort: { scheduledAt: -1 }, skip, limit: limitNum }),
-    familyPortalRepo.countMedicationAdministrations(filter),
+    familyPortalRepo.findMedicationSchedules(filter, { sort: { scheduledTime: -1 }, skip, limit: limitNum }),
+    familyPortalRepo.countMedicationSchedules(filter),
   ]);
 
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
+
+const VALID_PRESCRIPTION_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];
 
 const getPrescriptions = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
@@ -161,8 +165,13 @@ const getPrescriptions = async (user, residentId, query) => {
   }
 
   const filter = { residentId };
-  if (query.status) filter.status = query.status;
-  return familyPortalRepo.findPrescriptions(filter, { sort: { startDate: -1 } });
+  if (query.status) {
+    if (!VALID_PRESCRIPTION_STATUSES.includes(query.status)) {
+      throw new ServiceError(`status must be one of: ${VALID_PRESCRIPTION_STATUSES.join(', ')}`, 400);
+    }
+    filter.status = query.status;
+  }
+  return familyPortalRepo.findPrescriptions(filter, { sort: { prescriptionDate: -1 } });
 };
 
 const getActivities = async (user, residentId, query) => {
@@ -211,15 +220,15 @@ const getHealthReport = async (user, residentId, query) => {
   if (!resident) throw new ServiceError('Resident not found', 404);
 
   const vitalsFilter = { residentId, ...(hasRange && { measuredAt: dateRange }) };
-  const notesFilter = { residentId, ...(hasRange && { noteAt: dateRange }) };
-  const apptFilter = { residentId, ...(hasRange && { scheduledStartAt: dateRange }) };
-  const medFilter = { residentId, ...(hasRange && { scheduledAt: dateRange }) };
+  const notesFilter  = { residentId, ...(hasRange && { noteAt: dateRange }) };
+  const apptFilter   = { residentId, ...(hasRange && { scheduledStartAt: dateRange }) };
+  const medFilter    = { residentId, ...(hasRange && { scheduledTime: dateRange }) };
 
   const [vitals, careNotes, careAppointments, medications] = await Promise.all([
     familyPortalRepo.findMedicalRecords(vitalsFilter, { sort: { measuredAt: -1 }, limit: 100 }),
     familyPortalRepo.findCareNotes(notesFilter, { sort: { noteAt: -1 }, limit: 100 }),
     familyPortalRepo.findCareAppointments(apptFilter, { sort: { scheduledStartAt: -1 }, limit: 50 }),
-    familyPortalRepo.findMedicationAdministrations(medFilter, { sort: { scheduledAt: -1 }, limit: 100 }),
+    familyPortalRepo.findMedicationSchedules(medFilter, { sort: { scheduledTime: -1 }, limit: 100 }),
   ]);
 
   return {

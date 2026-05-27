@@ -4,8 +4,8 @@ const ServiceError = require('./serviceError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const mailService = require('./mailService');
-const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff'];
-const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', manager: 'MGR', staff: 'STF', admin: 'ADM' };
+const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff', 'pharmacist'];
+const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', manager: 'MGR', staff: 'STF', pharmacist: 'PHA', admin: 'ADM' };
 const VALID_ROLES = [...STAFF_ROLES, 'admin'];
 const crypto = require('crypto');
 const generateStaffCode = (role) => {
@@ -155,6 +155,15 @@ const createStaffAccount = async ({
     roleCategory: role,
     specialty: specialty?.trim(),
     certifications: certifications || [],
+  });
+
+  await mailService.sendStaffAccountCreatedEmail({
+    to: user.email,
+    fullName: user.fullName,
+    role: user.role,
+    staffCode: resolvedStaffCode,
+    email: user.email,
+    password,
   });
 
   return {

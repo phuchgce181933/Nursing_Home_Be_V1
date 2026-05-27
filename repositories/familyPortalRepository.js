@@ -1,14 +1,14 @@
 const Resident = require('../models/resident');
 const MedicalRecord = require('../models/medicalRecord');
 const CareNote = require('../models/careNote');
-const MedicationAdministration = require('../models/medicationAdministration');
+const MedicationSchedule = require('../models/MedicationSchedule');
 const Prescription = require('../models/prescription');
 const Activity = require('../models/activity');
 const CareAppointment = require('../models/careAppointment');
 
 const getFamilyResidentIds = async (userId) => {
   const residents = await Resident.find({ familyPortalAccountIds: userId }, '_id');
-  return residents.map((resident) => resident._id.toString());
+  return residents.map((r) => r._id.toString());
 };
 
 const getResidentsForFamily = async (userId) =>
@@ -27,18 +27,34 @@ const findMedicalRecords = async (filter, { sort = { measuredAt: -1 }, skip = 0,
   MedicalRecord.find(filter).sort(sort).skip(skip).limit(limit);
 
 const countMedicalRecords = async (filter) => MedicalRecord.countDocuments(filter);
+
 const findCareNotes = async (filter, { sort = { noteAt: -1 }, skip = 0, limit = 20 } = {}) =>
-  CareNote.find(filter).populate({ path: 'authorStaffId', populate: { path: 'userId', select: 'fullName' } }).sort(sort).skip(skip).limit(limit);
+  CareNote.find(filter)
+    .populate({ path: 'authorStaffId', populate: { path: 'userId', select: 'fullName' } })
+    .sort(sort)
+    .skip(skip)
+    .limit(limit);
 
 const countCareNotes = async (filter) => CareNote.countDocuments(filter);
 
-const findMedicationAdministrations = async (filter, { sort = { scheduledAt: -1 }, skip = 0, limit = 20 } = {}) =>
-  MedicationAdministration.find(filter).populate('prescriptionId', 'medicationName dosage route frequency').sort(sort).skip(skip).limit(limit);
+// MedicationSchedule (replaces MedicationAdministration for the new medication management module)
+const findMedicationSchedules = async (filter, { sort = { scheduledTime: -1 }, skip = 0, limit = 20 } = {}) =>
+  MedicationSchedule.find(filter)
+    .populate('prescriptionId', 'diagnosisNote prescriptionDate validUntil status')
+    .populate('markedBy', 'fullName')
+    .sort(sort)
+    .skip(skip)
+    .limit(limit);
 
-const countMedicationAdministrations = async (filter) => MedicationAdministration.countDocuments(filter);
+const countMedicationSchedules = async (filter) => MedicationSchedule.countDocuments(filter);
 
-const findPrescriptions = async (filter, { sort = { startDate: -1 }, skip = 0, limit = 100 } = {}) =>
-  Prescription.find(filter).populate({ path: 'prescribedByStaffId', populate: { path: 'userId', select: 'fullName' } }).sort(sort).skip(skip).limit(limit);
+// doctorId in new Prescription refs User directly (not StaffProfile)
+const findPrescriptions = async (filter, { sort = { prescriptionDate: -1 }, skip = 0, limit = 100 } = {}) =>
+  Prescription.find(filter)
+    .populate('doctorId', 'fullName email')
+    .sort(sort)
+    .skip(skip)
+    .limit(limit);
 
 const findActivities = async (filter, { sort = { scheduledAt: 1 }, skip = 0, limit = 100 } = {}) =>
   Activity.find(filter).sort(sort).skip(skip).limit(limit);
@@ -58,7 +74,9 @@ module.exports = {
   findMedicalRecords,
   countMedicalRecords,
   findCareNotes,
-  findMedicationAdministrations,
+  countCareNotes,
+  findMedicationSchedules,
+  countMedicationSchedules,
   findPrescriptions,
   findActivities,
   findCareAppointments,

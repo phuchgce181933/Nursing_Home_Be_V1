@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+const app = require('../app');
+const http = require('http');
+
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer(app);
+
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Swagger docs: http://localhost:${PORT}/api-docs`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use`);
+  } else {
+    console.error(err);
+  }
+  process.exit(1);
+});

@@ -12,6 +12,11 @@ const Activity = require('./activity');
 const MedicalRecord = require('./medicalRecord');
 const Prescription = require('./prescription');
 const MedicationAdministration = require('./medicationAdministration');
+const Medication = require('./medication');
+const MedicationStock = require('./medicationStock');
+const MedicationDispense = require('./medicationDispense');
+const MedicationNote = require('./medicationNote');
+const Supplier = require('./supplier');
 const Incident = require('./incident');
 const CareAppointment = require('./careAppointment');
 const CareNote = require('./careNote');
@@ -26,6 +31,12 @@ const ReportSnapshot = require('./reportSnapshot');
 const CareTask = require('./careTask');
 const ShiftTemplate = require('./shiftTemplate');
 const LeaveRequest = require('./leaveRequest');
+const FacilityTour = require('./facilityTour');
+const ServicePackage = require('./servicePackage');
+const MedicationSchedule = require('./MedicationSchedule');
+const ContraindicationRule = require('./ContraindicationRule');
+const DrugInteraction = require('./DrugInteraction');
+const ElderlyDosageGuideline = require('./ElderlyDosageGuideline');
 
 module.exports = {
   User,
@@ -42,6 +53,11 @@ module.exports = {
   MedicalRecord,
   Prescription,
   MedicationAdministration,
+  Medication,
+  MedicationStock,
+  MedicationDispense,
+  MedicationNote,
+  Supplier,
   Incident,
   CareAppointment,
   CareNote,
@@ -56,4 +72,10 @@ module.exports = {
   ShiftTemplate,
   LeaveRequest,
   CareTask,
+  FacilityTour,
+  ServicePackage,
+  MedicationSchedule,
+  ContraindicationRule,
+  DrugInteraction,
+  ElderlyDosageGuideline,
 };

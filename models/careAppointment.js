@@ -13,6 +13,7 @@ const careAppointmentSchema = new Schema(
     appointmentType: { type: String, trim: true, index: true },
     status: { type: String, enum: APPOINTMENT_STATUSES, default: 'scheduled', index: true },
     notes: { type: String, trim: true },
+    autoReminderSentAt: { type: Date, index: true },
   },
   { timestamps: true }
 );

@@ -1,4 +1,4 @@
-const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'family', 'staff'];
+const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'pharmacist', 'family', 'staff'];
 const NON_ASSIGNABLE_ROLES = ['admin', 'manager'];
 const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'staff'];
 const GENDERS = ['male', 'female', 'other', 'unknown'];
@@ -36,7 +36,7 @@ const CONFLICT_TYPES = [
 const CONFLICT_SEVERITIES = ['ERROR', 'WARNING', 'INFO'];
 const ACTIVITY_STATUSES = ['draft', 'scheduled', 'ongoing', 'completed', 'cancelled'];
 
-const PRESCRIPTION_STATUSES = ['active', 'paused', 'stopped', 'completed'];
+const PRESCRIPTION_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];
 const MEDICATION_ADMIN_STATUSES = ['pending', 'taken', 'missed', 'overdue'];
 const INCIDENT_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const INCIDENT_STATUSES = ['open', 'investigating', 'resolved', 'closed'];
@@ -50,6 +50,8 @@ const PAYMENT_STATUSES = ['pending', 'confirmed', 'failed', 'refunded'];
 const NOTIFICATION_CATEGORIES = ['incident', 'health', 'appointment', 'activity', 'billing', 'message', 'system'];
 const DELIVERY_CHANNELS = ['in_app', 'email', 'sms', 'push'];
 const SUPPORT_REQUEST_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
+const FACILITY_TOUR_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled'];
+const SERVICE_PACKAGE_TIERS = ['basic', 'standard', 'premium', 'vip'];
 
 const LEAVE_REQUEST_TYPES = ['annual', 'sick', 'emergency', 'unpaid', 'other'];
 const LEAVE_REQUEST_STATUSES = ['draft', 'pending', 'approved', 'rejected', 'cancelled'];
@@ -92,6 +94,8 @@ module.exports = {
   NOTIFICATION_CATEGORIES,
   DELIVERY_CHANNELS,
   SUPPORT_REQUEST_STATUSES,
+  FACILITY_TOUR_STATUSES,
+  SERVICE_PACKAGE_TIERS,
   LEAVE_REQUEST_TYPES,
   LEAVE_REQUEST_STATUSES,
   CARE_TASK_TYPES,

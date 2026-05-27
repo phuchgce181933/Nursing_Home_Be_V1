@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.docs
 
 # Environment variables
 .env
@@ -13,9 +14,6 @@ node_modules/
 
 # Claude config
 .claude/
-
-# Build / Binary
-bin/
 
 # Logs
 logs/
@@ -39,4 +37,14 @@ tmp/
 temp/
 
 
+
 config/firebase-service-account.json
+
+# Sequence diagrams (local docs only)
+docs/sequence/
+docs/class diagram/
+
+# Postman collections (local test data only)
+*.postman_collection.json
+*.postman_environment.json
+

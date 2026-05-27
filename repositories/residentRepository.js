@@ -26,6 +26,7 @@ const findForAssignment = async ({
     const rooms = await Room.find({ floorId }).select('_id');
     filter.roomId = { $in: rooms.map((r) => r._id) };
   }
+
   if (search) {
     const s = search.trim();
     filter.$or = [
@@ -92,7 +93,38 @@ const findByIdWithFamily = async (residentId) =>
     })
     .lean();
 
-const findById = async (residentId) => Resident.findById(residentId);
+const findById = async (id) => Resident.findById(id);
+
+const findByResidentCode = async (residentCode) =>
+  Resident.findOne({ residentCode: residentCode.toUpperCase().trim() });
+
+const createResident = async (data) => Resident.create(data);
+
+const findAll = async (filter, { sort, skip, limit }) =>
+  Resident.find(filter)
+    .select(
+      'residentCode fullName dateOfBirth gender bloodType residencyStatus admittedAt roomId bedId familyPortalAccountIds'
+    )
+    .sort(sort)
+    .skip(skip)
+    .limit(limit)
+    .populate('roomId', 'roomCode name')
+    .populate('bedId', 'bedCode')
+    .populate('familyPortalAccountIds', 'fullName email phone');
+
+const countAll = async (filter) => Resident.countDocuments(filter);
+
+const findByIdForAdmin = async (id) =>
+  Resident.findById(id)
+    .populate('roomId', 'roomCode name')
+    .populate('bedId', 'bedCode')
+    .populate('familyPortalAccountIds', 'fullName email phone');
+
+const updateById = async (id, update) =>
+  Resident.findByIdAndUpdate(id, update, { new: true, runValidators: true })
+    .populate('roomId', 'roomCode name')
+    .populate('bedId', 'bedCode')
+    .populate('familyPortalAccountIds', 'fullName email phone');
 
 const addEmergencyContact = async (residentId, contact) => {
   const resident = await Resident.findById(residentId);
@@ -260,7 +292,7 @@ const getAreaSummary = async ({ buildingId, status = 'admitted' } = {}) => {
     roomsByFloor.get(fid).push({
       _id: room._id,
       roomNumber: room.roomNumber,
-      label: `Phòng ${room.roomNumber}`,
+      label: `Phong ${room.roomNumber}`,
       residentCount: countByRoomId[String(room._id)] || 0,
     });
   }
@@ -270,13 +302,13 @@ const getAreaSummary = async ({ buildingId, status = 'admitted' } = {}) => {
     const floorRooms = roomsByFloor.get(String(floor._id)) || [];
     const residentCount = floorRooms.reduce((sum, rm) => sum + rm.residentCount, 0);
     totalResidents += residentCount;
-    const floorName = floor.name || `Tầng ${floor.floorNumber}`;
+    const floorName = floor.name || `Tang ${floor.floorNumber}`;
     const buildingName = floor.buildingId?.name || floor.buildingId?.code;
     return {
       _id: floor._id,
       floorNumber: floor.floorNumber,
       name: floor.name,
-      label: buildingName ? `${floorName} — ${buildingName}` : floorName,
+      label: buildingName ? `${floorName} - ${buildingName}` : floorName,
       buildingId: floor.buildingId?._id || floor.buildingId,
       building: floor.buildingId
         ? {
@@ -543,9 +575,7 @@ const findInitialHealthByResidentId = async (residentId) =>
 
 const updateInitialHealth = async (residentId, payload) =>
   Resident.findByIdAndUpdate(residentId, payload, { new: true, runValidators: true })
-    .select(
-      'residentCode fullName dateOfBirth gender bloodType initialHealthCondition updatedAt'
-    )
+    .select('residentCode fullName dateOfBirth gender bloodType initialHealthCondition updatedAt')
     .lean();
 
 const findPreExistingByResidentId = async (residentId) =>
@@ -581,6 +611,12 @@ module.exports = {
   findForFamilyManagement,
   findByIdWithFamily,
   findById,
+  findByResidentCode,
+  createResident,
+  findAll,
+  countAll,
+  findByIdForAdmin,
+  updateById,
   findByIdWithDetail,
   findByIdForTransfer,
   updateRoomAssignment,

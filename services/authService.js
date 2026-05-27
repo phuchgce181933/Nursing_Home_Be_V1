@@ -1,8 +1,10 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const ServiceError = require('./serviceError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
+const mailService = require('./mailService');
 const {
   validateFullName,
   validateEmail,
@@ -20,8 +22,15 @@ const {
   OPERATIONAL_ASSIGNABLE_ROLES,
 } = require('../utils/rolePolicy');
 
-const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff', 'admin'];
-const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', manager: 'MGR', staff: 'STF', admin: 'ADM' };
+const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff', 'pharmacist'];
+const STAFF_CODE_PREFIXES = {
+  doctor: 'DOC',
+  nurse: 'NUR',
+  manager: 'MGR',
+  staff: 'STF',
+  pharmacist: 'PHA',
+  admin: 'ADM',
+};
 const VALID_ROLES = [...STAFF_ROLES, 'admin'];
 
 const generateStaffCode = (role) => {
@@ -45,7 +54,9 @@ const login = async ({ email, password }) => {
   user.lastLoginAt = new Date();
   await userRepo.saveUser(user);
 
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
+    expiresIn: '7d',
+  });
 
   return {
     token,
@@ -139,7 +150,6 @@ const createStaffAccount = async (
   },
   currentUser
 ) => {
-  // Validation
   const validationError = collectErrors([
     () => validateFullName(fullName),
     () => validateEmail(email),
@@ -152,8 +162,7 @@ const createStaffAccount = async (
 
   if (!role) throw new ServiceError('role is required', 400);
   assertActorMayCreateRole(currentUser, role);
-  const allowedRoles =
-    currentUser?.role === 'manager' ? OPERATIONAL_ASSIGNABLE_ROLES : STAFF_ROLES;
+  const allowedRoles = currentUser?.role === 'manager' ? OPERATIONAL_ASSIGNABLE_ROLES : STAFF_ROLES;
   if (!allowedRoles.includes(role)) {
     throw new ServiceError(`role must be one of: ${allowedRoles.join(', ')}`, 400);
   }
@@ -196,6 +205,15 @@ const createStaffAccount = async (
     certifications: certifications || [],
   });
 
+  await mailService.sendStaffAccountCreatedEmail({
+    to: user.email,
+    fullName: user.fullName,
+    role: user.role,
+    staffCode: resolvedStaffCode,
+    email: user.email,
+    password,
+  });
+
   return {
     message: 'Staff account created successfully',
     user: {
@@ -218,7 +236,7 @@ const createStaffAccount = async (
 };
 
 const toggleStaffActive = async (id, currentUser) => {
-  const user = await userRepo.findById(id).select('-passwordHash -resetPasswordTokenHash');
+  const user = await userRepo.findById(id);
   if (!user) throw new ServiceError('User not found', 404);
   if (!['admin', ...STAFF_ROLES].includes(user.role)) {
     throw new ServiceError('Can only toggle staff accounts', 400);
@@ -233,7 +251,101 @@ const toggleStaffActive = async (id, currentUser) => {
 
   return {
     message: `Account ${user.isActive ? 'activated' : 'deactivated'} successfully`,
-    user: { _id: user._id, fullName: user.fullName, email: user.email, role: user.role, isActive: user.isActive },
+    user: {
+      _id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
+    },
+  };
+};
+
+const updateProfile = async (user, data) => {
+  return userRepo.updateProfile(user._id, data);
+};
+
+const changePassword = async (user, { currentPassword, newPassword }) => {
+  if (!currentPassword || !newPassword) {
+    throw new ServiceError('currentPassword and newPassword are required', 400);
+  }
+
+  if (newPassword.length < 6) {
+    throw new ServiceError('New password must be at least 6 characters', 400);
+  }
+
+  const dbUser = await userRepo.findById(user._id);
+  const isMatch = await bcrypt.compare(currentPassword, dbUser.passwordHash);
+  if (!isMatch) {
+    throw new ServiceError('Current password is incorrect', 401);
+  }
+
+  dbUser.passwordHash = await bcrypt.hash(newPassword, 10);
+  await userRepo.saveUser(dbUser);
+
+  return { message: 'Password changed successfully' };
+};
+
+const forgotPassword = async ({ email }) => {
+  const user = await userRepo.findByEmail(email);
+  if (!user) throw new ServiceError('Email not found', 404);
+
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+  user.resetPasswordTokenHash = hashedToken;
+  user.resetPasswordExpiresAt = Date.now() + 10 * 60 * 1000;
+  await userRepo.saveUser(user);
+
+  const resetUrl = `http://localhost:5173/reset-password?token=${resetToken}`;
+  await mailService.sendResetPasswordEmail(user.email, resetUrl);
+
+  return { message: 'Reset password email sent' };
+};
+
+const resetPassword = async ({ token, newPassword }) => {
+  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+  const user = await userRepo.findOne({
+    resetPasswordTokenHash: hashedToken,
+    resetPasswordExpiresAt: { $gt: Date.now() },
+  });
+
+  if (!user) throw new ServiceError('Invalid or expired token', 400);
+
+  user.passwordHash = await bcrypt.hash(newPassword, 10);
+  user.resetPasswordTokenHash = undefined;
+  user.resetPasswordExpiresAt = undefined;
+  await userRepo.saveUser(user);
+
+  return { message: 'Password reset successfully' };
+};
+
+const updateUserByAdmin = async (userId, data) => {
+  const user = await userRepo.findById(userId);
+  if (!user) throw new ServiceError('User not found', 404);
+
+  const allowedFields = [
+    'fullName',
+    'phone',
+    'gender',
+    'address',
+    'role',
+    'isActive',
+    'isBanned',
+    'banReason',
+  ];
+
+  allowedFields.forEach((field) => {
+    if (data[field] !== undefined) {
+      user[field] = data[field];
+    }
+  });
+
+  await userRepo.saveUser(user);
+
+  return {
+    message: 'User updated successfully',
+    user,
   };
 };
 
@@ -268,5 +380,10 @@ module.exports = {
   listStaffAccounts,
   createStaffAccount,
   toggleStaffActive,
+  updateProfile,
+  changePassword,
+  forgotPassword,
+  resetPassword,
+  updateUserByAdmin,
   createFirebaseCustomToken,
 };

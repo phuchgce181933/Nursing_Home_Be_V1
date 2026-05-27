@@ -83,7 +83,7 @@ const getNoteHistory = async (residentId, query) => {
     if (query.from) filter.noteAt.$gte = new Date(query.from);
     if (query.to) filter.noteAt.$lte = new Date(query.to);
   }
-  return careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: -1 } });
+  return careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: -1 }, limit: 0 });
 };
 
 const getNote = async (id) => {

@@ -157,6 +157,15 @@ const createStaffAccount = async ({
     certifications: certifications || [],
   });
 
+  await mailService.sendStaffAccountCreatedEmail({
+    to: user.email,
+    fullName: user.fullName,
+    role: user.role,
+    staffCode: resolvedStaffCode,
+    email: user.email,
+    password,
+  });
+
   return {
     message: 'Staff account created successfully',
     user: {

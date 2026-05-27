@@ -6,14 +6,8 @@ const notificationRepo = require('../repositories/notificationRepository');
 const { createAuditLog } = require('../utils/auditLog');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
-
-// Lấy ngày hiện tại theo giờ VN, format YYYY-MM-DD
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: VN_TZ });
-
-// Day-of-week theo giờ VN (0=CN, 1=T2, ..., 6=T7)
 const vnDow = (dateStr) => new Date(dateStr + 'T12:00:00+07:00').getUTCDay();
-
-// Cộng/trừ n ngày cho YYYY-MM-DD string
 const addDays = (dateStr, n) =>
   new Date(new Date(dateStr + 'T12:00:00+07:00').getTime() + n * 86400000)
     .toISOString()
@@ -21,7 +15,24 @@ const addDays = (dateStr, n) =>
 
 const VALID_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];
 
-// Chỉ cho phép chuyển trạng thái theo chiều hợp lý, không cho quay lui
+const RESTRICTED_ROLES = ['doctor', 'nurse'];
+
+const applyOwnershipFilter = (filter, user, staffProfile) => {
+  if (!RESTRICTED_ROLES.includes(user.role)) return;
+  if (user.role === 'doctor') filter.doctorStaffId = staffProfile._id;
+  else if (user.role === 'nurse') filter.nurseStaffId = staffProfile._id;
+};
+
+const assertAppointmentAccess = (appointment, user, staffProfile) => {
+  if (!RESTRICTED_ROLES.includes(user.role)) return;
+  const myId = staffProfile._id.toString();
+  const doctorMatch = user.role === 'doctor' && appointment.doctorStaffId?._id?.toString() === myId;
+  const nurseMatch = user.role === 'nurse' && appointment.nurseStaffId?._id?.toString() === myId;
+  if (!doctorMatch && !nurseMatch) {
+    throw new ServiceError('Access denied: this appointment is not assigned to you', 403);
+  }
+};
+
 const STATUS_TRANSITIONS = {
   scheduled:   ['in_progress', 'cancelled'],
   in_progress: ['completed', 'cancelled'],
@@ -98,13 +109,17 @@ const createAppointment = async (user, body, req) => {
   return careAppointmentRepo.findByIdWithPopulate(appointment._id);
 };
 
-const listAppointments = async (query) => {
+const listAppointments = async (user, staffProfile, query) => {
   const filter = {};
+  applyOwnershipFilter(filter, user, staffProfile);
+
   if (query.residentId) filter.residentId = query.residentId;
   if (query.status) filter.status = query.status;
   if (query.appointmentType) filter.appointmentType = query.appointmentType;
-  if (query.doctorStaffId) filter.doctorStaffId = query.doctorStaffId;
-  if (query.nurseStaffId) filter.nurseStaffId = query.nurseStaffId;
+  if (!RESTRICTED_ROLES.includes(user.role)) {
+    if (query.doctorStaffId) filter.doctorStaffId = query.doctorStaffId;
+    if (query.nurseStaffId) filter.nurseStaffId = query.nurseStaffId;
+  }
   if (query.from || query.to) {
     filter.scheduledStartAt = {};
     if (query.from) filter.scheduledStartAt.$gte = new Date(query.from);
@@ -143,7 +158,7 @@ const getMyAppointments = async (user, query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
-const getDailySchedule = async (query) => {
+const getDailySchedule = async (user, staffProfile, query) => {
   const dateStr = query.date ? query.date.slice(0, 10) : todayVN();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw new ServiceError('Invalid date', 400);
 
@@ -151,13 +166,14 @@ const getDailySchedule = async (query) => {
   const end   = new Date(dateStr + 'T23:59:59.999+07:00');
 
   const filter = { scheduledStartAt: { $gte: start, $lte: end } };
+  applyOwnershipFilter(filter, user, staffProfile);
   if (query.residentId) filter.residentId = query.residentId;
 
   const appointments = await careAppointmentRepo.findAppointmentsWithPopulate(filter, { sort: { scheduledStartAt: 1 } });
   return { date: start, appointments };
 };
 
-const getWeeklySchedule = async (query) => {
+const getWeeklySchedule = async (user, staffProfile, query) => {
   const dateStr = query.date ? query.date.slice(0, 10) : todayVN();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw new ServiceError('Invalid date', 400);
 
@@ -170,15 +186,17 @@ const getWeeklySchedule = async (query) => {
   const weekEnd   = new Date(sundayStr + 'T23:59:59.999+07:00');
 
   const filter = { scheduledStartAt: { $gte: weekStart, $lte: weekEnd } };
+  applyOwnershipFilter(filter, user, staffProfile);
   if (query.residentId) filter.residentId = query.residentId;
 
   const appointments = await careAppointmentRepo.findAppointmentsWithPopulate(filter, { sort: { scheduledStartAt: 1 } });
   return { weekStart, weekEnd, appointments };
 };
 
-const getAppointment = async (id) => {
+const getAppointment = async (user, staffProfile, id) => {
   const appointment = await careAppointmentRepo.findByIdWithPopulate(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
+  assertAppointmentAccess(appointment, user, staffProfile);
   return appointment;
 };
 
@@ -196,6 +214,22 @@ const updateAppointment = async (user, id, body, req) => {
 
   const conflict = await careAppointmentRepo.findOneConflict(appointment.residentId, start, end, appointment._id);
   if (conflict) throw new ServiceError('Schedule conflict detected', 409);
+
+  if (body.doctorStaffId !== undefined) {
+    if (body.doctorStaffId) {
+      const doctor = await staffProfileRepo.findById(body.doctorStaffId);
+      if (!doctor) throw new ServiceError('Doctor staff profile not found', 404);
+    }
+    appointment.doctorStaffId = body.doctorStaffId || undefined;
+  }
+
+  if (body.nurseStaffId !== undefined) {
+    if (body.nurseStaffId) {
+      const nurse = await staffProfileRepo.findById(body.nurseStaffId);
+      if (!nurse) throw new ServiceError('Nurse staff profile not found', 404);
+    }
+    appointment.nurseStaffId = body.nurseStaffId || undefined;
+  }
 
   const before = appointment.toObject();
   appointment.scheduledStartAt = start;
@@ -349,7 +383,7 @@ const assignNurse = async (user, id, body, req) => {
   return careAppointmentRepo.findByIdWithPopulate(appointment._id);
 };
 
-const sendReminder = async (id) => {
+const sendReminder = async (user, id, req) => {
   const appointment = await careAppointmentRepo.findById(id)
     .populate('residentId', 'fullName familyPortalAccountIds')
     .populate({ path: 'doctorStaffId', select: 'userId' })
@@ -361,31 +395,73 @@ const sendReminder = async (id) => {
     throw new ServiceError(`Reminders can only be sent for 'scheduled' appointments`, 400);
   }
 
+  const recipientGroups = { doctor: null, nurse: null, familyCount: 0 };
   const recipientIds = new Set();
-  if (appointment.doctorStaffId?.userId) recipientIds.add(appointment.doctorStaffId.userId.toString());
-  if (appointment.nurseStaffId?.userId) recipientIds.add(appointment.nurseStaffId.userId.toString());
+
+  if (appointment.doctorStaffId?.userId) {
+    const uid = appointment.doctorStaffId.userId.toString();
+    recipientIds.add(uid);
+    recipientGroups.doctor = uid;
+  }
+  if (appointment.nurseStaffId?.userId) {
+    const uid = appointment.nurseStaffId.userId.toString();
+    recipientIds.add(uid);
+    recipientGroups.nurse = uid;
+  }
   if (appointment.residentId?.familyPortalAccountIds?.length) {
-    appointment.residentId.familyPortalAccountIds.forEach((id) => recipientIds.add(id.toString()));
+    appointment.residentId.familyPortalAccountIds.forEach((fid) => {
+      recipientIds.add(fid.toString());
+      recipientGroups.familyCount += 1;
+    });
+  }
+
+  if (recipientIds.size === 0) {
+    throw new ServiceError(
+      'No recipients found: appointment has no assigned doctor, nurse, or linked family accounts',
+      400
+    );
   }
 
   const residentName = appointment.residentId?.fullName || 'Resident';
-  const scheduledTime = appointment.scheduledStartAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const formatTime = (date) =>
+    date.toLocaleString('vi-VN', { timeZone: VN_TZ, hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  const startStr = formatTime(appointment.scheduledStartAt);
+  const endStr = formatTime(appointment.scheduledEndAt);
+  const typeLabel = appointment.appointmentType || 'Chung';
 
   const notifications = [...recipientIds].map((userId) => ({
     recipientUserId: userId,
     category: 'appointment',
     title: 'Nhắc lịch khám',
-    content: `Lịch khám cho ${residentName} vào lúc ${scheduledTime}. Loại: ${appointment.appointmentType || 'Chung'}.`,
+    content: `Lịch khám cho ${residentName}: ${typeLabel} — từ ${startStr} đến ${endStr}.${appointment.notes ? ` Ghi chú: ${appointment.notes}` : ''}`,
     targetEntityType: 'CareAppointment',
     targetEntityId: appointment._id,
     deliveryChannels: ['in_app'],
   }));
 
-  if (notifications.length > 0) {
-    await notificationRepo.insertMany(notifications);
-  }
+  await notificationRepo.insertMany(notifications);
 
-  return { message: 'Reminders sent', recipientCount: notifications.length };
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'SEND_REMINDER',
+    module: 'CareAppointment',
+    targetEntityType: 'CareAppointment',
+    targetEntityId: appointment._id,
+    afterData: { recipientCount: notifications.length, recipientGroups },
+    req,
+  });
+
+  return {
+    message: 'Reminders sent successfully',
+    recipientCount: notifications.length,
+    recipients: {
+      doctorNotified: !!recipientGroups.doctor,
+      nurseNotified: !!recipientGroups.nurse,
+      familyNotified: recipientGroups.familyCount,
+    },
+  };
 };
 
 module.exports = {

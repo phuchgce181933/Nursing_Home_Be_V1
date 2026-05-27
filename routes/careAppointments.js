@@ -15,6 +15,7 @@ const {
   sendReminder,
 } = require('../controllers/careAppointmentController');
 const { protect, authorize } = require('../middleware/auth');
+const { attachStaffProfile } = require('../middleware/attachStaffProfile');
 
 const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
 
@@ -32,40 +33,47 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *         application/json:
  *           schema:
  *             type: object
- *             required: [residentId, scheduledStartAt, scheduledEndAt]
+ *             required:
+ *               - residentId
+ *               - scheduledStartAt
+ *               - scheduledEndAt
  *             properties:
  *               residentId:
  *                 type: string
- *                 example: "64f1a2b3c4d5e6f7a8b9c0d1"
+ *                 description: ID của resident (bắt buộc)
  *               scheduledStartAt:
  *                 type: string
  *                 format: date-time
- *                 example: "2025-06-01T08:00:00.000Z"
+ *                 example: "2026-05-26T08:00:00.000Z"
+ *                 description: Thời gian bắt đầu (bắt buộc)
  *               scheduledEndAt:
  *                 type: string
  *                 format: date-time
- *                 example: "2025-06-01T09:00:00.000Z"
+ *                 example: "2026-05-26T09:00:00.000Z"
+ *                 description: Thời gian kết thúc, phải sau scheduledStartAt (bắt buộc)
+ *               doctorStaffId:
+ *                 type: string
+ *                 description: ID của StaffProfile bác sĩ (tùy chọn)
+ *               nurseStaffId:
+ *                 type: string
+ *                 description: ID của StaffProfile y tá (tùy chọn)
  *               appointmentType:
  *                 type: string
  *                 example: "Khám tổng quát"
- *               doctorStaffId:
- *                 type: string
- *                 example: "64f1a2b3c4d5e6f7a8b9c0d2"
- *               nurseStaffId:
- *                 type: string
- *                 example: "64f1a2b3c4d5e6f7a8b9c0d3"
+ *                 description: Loại khám (tùy chọn)
  *               notes:
  *                 type: string
- *                 example: "Kiểm tra huyết áp và đường huyết"
+ *                 example: "Kiểm tra huyết áp định kỳ"
+ *                 description: Ghi chú (tùy chọn)
  *     responses:
  *       201:
  *         description: Appointment created
  *       400:
- *         description: Validation error or resident not admitted
+ *         description: Thiếu field bắt buộc, thời gian không hợp lệ, hoặc resident chưa được nhận vào
  *       404:
- *         description: Resident or staff not found
+ *         description: Resident hoặc staff không tồn tại
  *       409:
- *         description: Schedule conflict
+ *         description: Trùng lịch với appointment khác của resident
  */
 router.post('/', protect, authorize(...STAFF_ROLES), createAppointment);
 
@@ -126,7 +134,7 @@ router.post('/', protect, authorize(...STAFF_ROLES), createAppointment);
  *       200:
  *         description: List of appointments
  */
-router.get('/', protect, authorize(...STAFF_ROLES), listAppointments);
+router.get('/', protect, authorize(...STAFF_ROLES), attachStaffProfile, listAppointments);
 
 /**
  * @swagger
@@ -199,7 +207,7 @@ router.get('/my', protect, authorize('doctor', 'nurse'), getMyAppointments);
  *       200:
  *         description: Daily schedule
  */
-router.get('/daily', protect, authorize(...STAFF_ROLES), getDailySchedule);
+router.get('/daily', protect, authorize(...STAFF_ROLES), attachStaffProfile, getDailySchedule);
 
 /**
  * @swagger
@@ -231,7 +239,7 @@ router.get('/daily', protect, authorize(...STAFF_ROLES), getDailySchedule);
  *       200:
  *         description: Weekly schedule
  */
-router.get('/weekly', protect, authorize(...STAFF_ROLES), getWeeklySchedule);
+router.get('/weekly', protect, authorize(...STAFF_ROLES), attachStaffProfile, getWeeklySchedule);
 
 /**
  * @swagger
@@ -253,7 +261,7 @@ router.get('/weekly', protect, authorize(...STAFF_ROLES), getWeeklySchedule);
  *       404:
  *         description: Appointment not found
  */
-router.get('/:id', protect, authorize(...STAFF_ROLES), getAppointment);
+router.get('/:id', protect, authorize(...STAFF_ROLES), attachStaffProfile, getAppointment);
 
 /**
  * @swagger
@@ -279,26 +287,36 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getAppointment);
  *               scheduledStartAt:
  *                 type: string
  *                 format: date-time
- *                 example: "2025-06-01T08:00:00.000Z"
+ *                 example: "2026-05-26T08:00:00.000Z"
+ *                 description: Thời gian bắt đầu mới (tùy chọn)
  *               scheduledEndAt:
  *                 type: string
  *                 format: date-time
- *                 example: "2025-06-01T09:30:00.000Z"
+ *                 example: "2026-05-26T09:00:00.000Z"
+ *                 description: Thời gian kết thúc mới, phải sau scheduledStartAt (tùy chọn)
+ *               doctorStaffId:
+ *                 type: string
+ *                 description: ID StaffProfile bác sĩ mới, truyền null để xóa (tùy chọn)
+ *               nurseStaffId:
+ *                 type: string
+ *                 description: ID StaffProfile y tá mới, truyền null để xóa (tùy chọn)
  *               appointmentType:
  *                 type: string
  *                 example: "Khám tổng quát"
+ *                 description: Loại khám (tùy chọn)
  *               notes:
  *                 type: string
- *                 example: "Cập nhật ghi chú"
+ *                 example: "Kiểm tra huyết áp định kỳ"
+ *                 description: Ghi chú (tùy chọn)
  *     responses:
  *       200:
  *         description: Appointment updated
  *       400:
- *         description: Cannot edit completed/cancelled appointment or schedule conflict
+ *         description: Thời gian không hợp lệ hoặc không thể sửa appointment đã hoàn thành/hủy
  *       404:
- *         description: Appointment not found
+ *         description: Appointment hoặc staff không tồn tại
  *       409:
- *         description: Schedule conflict
+ *         description: Trùng lịch với appointment khác của resident
  */
 router.put('/:id', protect, authorize(...STAFF_ROLES), updateAppointment);
 
@@ -443,7 +461,7 @@ router.put('/:id/assign-nurse', protect, authorize('admin', 'manager'), assignNu
  * /api/care-appointments/{id}/reminder:
  *   post:
  *     summary: Send appointment reminder (only for scheduled appointments)
- *     description: Sends in-app notifications to assigned doctor, nurse, and family members.
+ *     description: Sends in-app notifications to assigned doctor, nurse, and linked family members.
  *     tags: [Care Appointments]
  *     security:
  *       - BearerAuth: []
@@ -455,9 +473,27 @@ router.put('/:id/assign-nurse', protect, authorize('admin', 'manager'), assignNu
  *           type: string
  *     responses:
  *       200:
- *         description: Reminders sent
+ *         description: Reminders sent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 recipientCount:
+ *                   type: integer
+ *                 recipients:
+ *                   type: object
+ *                   properties:
+ *                     doctorNotified:
+ *                       type: boolean
+ *                     nurseNotified:
+ *                       type: boolean
+ *                     familyNotified:
+ *                       type: integer
  *       400:
- *         description: Appointment is not in scheduled status
+ *         description: Appointment chưa ở trạng thái scheduled, hoặc không có người nhận
  *       404:
  *         description: Appointment not found
  */

@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 .docs
+
 # Environment variables
 .env
 .env.*
@@ -13,8 +14,6 @@ node_modules/
 
 # Claude config
 .claude/
-
-# Build / Binary
 
 # Logs
 logs/
@@ -43,4 +42,4 @@ docs/class diagram/
 
 # Postman collections (local test data only)
 *.postman_collection.json
-*.postman_environment.json
+*.postman_environment.json

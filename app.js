@@ -7,6 +7,7 @@ const bodyParser = require('body-parser');
 const connectDB = require('./config/db');
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
+const { startReminderScheduler } = require('./services/reminderSchedulerService');
 // import all models through index to ensure schemas are registered
 const models = require('./models');
 const { initMedicationJobs } = require('./jobs/medicationReminderJob');
@@ -86,6 +87,7 @@ const initDB = async () => {
     }
 
     console.log('All collections initialized');
+    startReminderScheduler();
     initMedicationJobs();
   } catch (err) {
     console.error(err);

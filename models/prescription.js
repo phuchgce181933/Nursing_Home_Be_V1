@@ -16,6 +16,9 @@ const prescriptionSchema = new Schema(
     scheduleTimes: [{ type: String, trim: true }],
     status: { type: String, enum: PRESCRIPTION_STATUSES, default: 'active', index: true },
     notes: { type: String, trim: true },
+    isVerified: { type: Boolean, default: false, index: true },
+    verifiedByUserId: { type: Types.ObjectId, ref: 'User' },
+    verifiedAt: { type: Date },
   },
   { timestamps: true }
 );

@@ -16,7 +16,25 @@ const findStaffUsers = async (filter, { skip = 0, limit = 20 } = {}) =>
     .limit(limit);
 
 const countStaffUsers = async (filter) => User.countDocuments(filter);
+  
+const updateProfile = async (userId, data) => {
+  const allowedFields = {
+    fullName: data.fullName,
+    phone: data.phone,
+    gender: data.gender,
+  };
 
+  return await User.findByIdAndUpdate(
+    userId,
+    allowedFields,
+    {
+      new: true,
+    }
+  ).select('-password');
+};
+const findOne = (filter) => {
+  return User.findOne(filter);
+};
 module.exports = {
   findByEmail,
   findById,
@@ -25,4 +43,6 @@ module.exports = {
   saveUser,
   findStaffUsers,
   countStaffUsers,
+  updateProfile,
+  findOne
 };

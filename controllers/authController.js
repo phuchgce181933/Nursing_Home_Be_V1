@@ -20,13 +20,12 @@ const getMe = async (req, res) => {
 
 const createStaffAccount = async (req, res) => {
   try {
-    const result = await authService.createStaffAccount(req.body);
+    const result = await authService.createStaffAccount(req.body, req.user);
     res.status(201).json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
-
 const listStaffAccounts = async (req, res) => {
   try {
     const result = await authService.listStaffAccounts(req.query);
@@ -45,5 +44,21 @@ const toggleStaffActive = async (req, res) => {
   }
 };
 
-module.exports = { login, getMe, createStaffAccount, listStaffAccounts, toggleStaffActive };
+const createFirebaseToken = async (req, res) => {
+  try {
+    const result = await authService.createFirebaseCustomToken(req.user);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+module.exports = {
+  login,
+  getMe,
+  createStaffAccount,
+  listStaffAccounts,
+  toggleStaffActive,
+  createFirebaseToken,
+};
 

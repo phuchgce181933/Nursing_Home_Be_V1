@@ -2,6 +2,7 @@ const User = require('../models/user');
 
 const findByEmail = async (email) => User.findOne({ email: email.toLowerCase().trim() });
 const findById = async (id) => User.findById(id);
+const findByUsername = async (username) => User.findOne({ username: username.trim() });
 
 const createUser = async (userData) => User.create(userData);
 
@@ -19,6 +20,7 @@ const countStaffUsers = async (filter) => User.countDocuments(filter);
 module.exports = {
   findByEmail,
   findById,
+  findByUsername,
   createUser,
   saveUser,
   findStaffUsers,

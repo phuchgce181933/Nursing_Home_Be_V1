@@ -1,8 +1,20 @@
 const express = require('express');
 const router = express.Router();
-const { login, getMe, createStaffAccount, listStaffAccounts, 
-    toggleStaffActive, updateProfile, changePassword,forgotPassword, resetPassword,updateUserByAdmin } = require('../controllers/authController');
+const {
+  login,
+  getMe,
+  createStaffAccount,
+  listStaffAccounts,
+  toggleStaffActive,
+  createFirebaseToken,
+  updateProfile,
+  changePassword,
+  forgotPassword,
+  resetPassword,
+  updateUserByAdmin
+} = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/auth');
+const { uploadAvatar } = require('../middleware/uploadMiddleware');
 
 /**
  * @swagger
@@ -52,16 +64,47 @@ router.get('/me', protect, getMe);
 
 /**
  * @swagger
+ * /api/auth/firebase-token:
+ *   post:
+ *     summary: Mint Firebase custom token for Realtime Database (emergency readiness)
+ *     description: |
+ *       After JWT login, call this endpoint then use `signInWithCustomToken` on the frontend.
+ *       Custom claims include `role` for RTDB security rules.
+ *     tags: [Auth]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Firebase custom token and database URL
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 firebaseToken:
+ *                   type: string
+ *                 databaseURL:
+ *                   type: string
+ *       503:
+ *         description: Firebase not configured on server
+ */
+router.post('/firebase-token', protect, authorize('admin', 'manager'), createFirebaseToken);
+
+/**
+ * @swagger
  * /api/auth/create-staff:
  *   post:
- *     summary: Create staff account (Admin/Manager only)
+ *     summary: Create staff account (admin or manager)
+ *     description: |
+ *       Admin may create any staff role including admin and manager.
+ *       Manager may only create doctor, nurse, and staff accounts.
  *     tags: [Auth]
  *     security:
  *       - BearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             required: [fullName, email, password, role]
@@ -74,11 +117,16 @@ router.get('/me', protect, getMe);
  *                 example: "staff@hospital.com"
  *               password:
  *                 type: string
+ *               username:
+ *                 type: string
+ *               password:
+ *                 type: string
  *                 minLength: 6
  *                 example: "password123"
  *               role:
  *                 type: string
  *                 enum: [doctor, nurse, manager, staff, pharmacist, admin]
+ *                 description: Manager callers may only use doctor, nurse, staff
  *               phone:
  *                 type: string
  *                 example: "0901234567"
@@ -104,7 +152,14 @@ router.get('/me', protect, getMe);
  *                 type: array
  *                 items:
  *                   type: string
+ *               certifications:
+ *                 type: array
+ *                 items:
+ *                   type: string
  *                 example: ["RN License", "CPR Certified"]
+ *               avatar:
+ *                 type: string
+ *                 format: binary
  *     responses:
  *       201:
  *         description: Staff account created
@@ -113,7 +168,7 @@ router.get('/me', protect, getMe);
  *       409:
  *         description: Email or staffCode already in use
  */
-router.post('/create-staff', protect, authorize('admin', 'manager'), createStaffAccount);
+router.post('/create-staff', protect, authorize('admin', 'manager'), uploadAvatar, createStaffAccount);
 
 /**
  * @swagger

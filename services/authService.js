@@ -1,13 +1,38 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const ServiceError = require('./serviceError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const mailService = require('./mailService');
+const {
+  validateFullName,
+  validateEmail,
+  validatePhone,
+  validateUsername,
+  validatePassword,
+  validateDateOfBirth,
+  collectErrors,
+} = require('../utils/validators');
+const cloudinary = require('../config/cloudinaryConfig');
+const { getAuth, isFirebaseEnabled } = require('../config/firebaseAdmin');
+const {
+  assertActorMayCreateRole,
+  assertActorMayManageUser,
+  OPERATIONAL_ASSIGNABLE_ROLES,
+} = require('../utils/rolePolicy');
+
 const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff', 'pharmacist'];
-const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', manager: 'MGR', staff: 'STF', pharmacist: 'PHA', admin: 'ADM' };
+const STAFF_CODE_PREFIXES = {
+  doctor: 'DOC',
+  nurse: 'NUR',
+  manager: 'MGR',
+  staff: 'STF',
+  pharmacist: 'PHA',
+  admin: 'ADM',
+};
 const VALID_ROLES = [...STAFF_ROLES, 'admin'];
-const crypto = require('crypto');
+
 const generateStaffCode = (role) => {
   const prefix = STAFF_CODE_PREFIXES[role] || 'STF';
   return `${prefix}${Date.now().toString().slice(-6)}`;
@@ -29,7 +54,9 @@ const login = async ({ email, password }) => {
   user.lastLoginAt = new Date();
   await userRepo.saveUser(user);
 
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
+    expiresIn: '7d',
+  });
 
   return {
     token,
@@ -104,31 +131,49 @@ const listStaffAccounts = async ({ role, isActive, search, page = 1, limit = 20 
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
-const createStaffAccount = async ({
-  fullName,
-  email,
-  password,
-  role,
-  phone,
-  gender,
-  dateOfBirth,
-  address,
-  specialty,
-  staffCode,
-  certifications,
-}) => {
-  if (!fullName || !email || !password || !role) {
-    throw new ServiceError('fullName, email, password and role are required', 400);
-  }
-  if (!STAFF_ROLES.includes(role)) {
-    throw new ServiceError(`role must be one of: ${STAFF_ROLES.join(', ')}`, 400);
-  }
-  if (password.length < 6) {
-    throw new ServiceError('password must be at least 6 characters', 400);
+const createStaffAccount = async (
+  {
+    fullName,
+    email,
+    password,
+    role,
+    phone,
+    gender,
+    dateOfBirth,
+    address,
+    specialty,
+    staffCode,
+    certifications,
+    username,
+    avatarUrl,
+    avatarPublicId,
+  },
+  currentUser
+) => {
+  const validationError = collectErrors([
+    () => validateFullName(fullName),
+    () => validateEmail(email),
+    () => validatePassword(password),
+    () => validatePhone(phone),
+    () => validateUsername(username),
+    () => validateDateOfBirth(dateOfBirth),
+  ]);
+  if (validationError) throw new ServiceError(validationError, 400);
+
+  if (!role) throw new ServiceError('role is required', 400);
+  assertActorMayCreateRole(currentUser, role);
+  const allowedRoles = currentUser?.role === 'manager' ? OPERATIONAL_ASSIGNABLE_ROLES : STAFF_ROLES;
+  if (!allowedRoles.includes(role)) {
+    throw new ServiceError(`role must be one of: ${allowedRoles.join(', ')}`, 400);
   }
 
   const existing = await userRepo.findByEmail(email);
   if (existing) throw new ServiceError('Email already in use', 409);
+
+  if (username) {
+    const existingUsername = await userRepo.findByUsername(username.trim());
+    if (existingUsername) throw new ServiceError('Username already in use', 409);
+  }
 
   const resolvedStaffCode = staffCode ? staffCode.toUpperCase().trim() : generateStaffCode(role);
   const codeConflict = await staffProfileRepo.findByStaffCode(resolvedStaffCode);
@@ -140,12 +185,15 @@ const createStaffAccount = async ({
   const user = await userRepo.createUser({
     fullName: fullName.trim(),
     email: email.toLowerCase().trim(),
+    username: username ? username.trim() : undefined,
     passwordHash,
     role,
     phone: phone?.trim(),
     gender: gender || 'unknown',
     dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
     address: address?.trim(),
+    avatarUrl: avatarUrl || undefined,
+    avatarPublicId: avatarPublicId || undefined,
     isActive: true,
   });
 
@@ -172,7 +220,9 @@ const createStaffAccount = async ({
       _id: user._id,
       fullName: user.fullName,
       email: user.email,
+      username: user.username,
       role: user.role,
+      avatarUrl: user.avatarUrl,
       isActive: user.isActive,
       createdAt: user.createdAt,
     },
@@ -191,6 +241,7 @@ const toggleStaffActive = async (id, currentUser) => {
   if (!['admin', ...STAFF_ROLES].includes(user.role)) {
     throw new ServiceError('Can only toggle staff accounts', 400);
   }
+  assertActorMayManageUser(currentUser, user);
   if (user._id.toString() === currentUser._id.toString()) {
     throw new ServiceError('Cannot change your own active status', 400);
   }
@@ -200,144 +251,78 @@ const toggleStaffActive = async (id, currentUser) => {
 
   return {
     message: `Account ${user.isActive ? 'activated' : 'deactivated'} successfully`,
-    user: { _id: user._id, fullName: user.fullName, email: user.email, role: user.role, isActive: user.isActive },
+    user: {
+      _id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
+    },
   };
 };
-// update profile
+
 const updateProfile = async (user, data) => {
-  return await userRepo.updateProfile(user._id, data);
+  return userRepo.updateProfile(user._id, data);
 };
 
-// đổi pass
-const changePassword = async (
-  user,
-  { currentPassword, newPassword }
-) => {
+const changePassword = async (user, { currentPassword, newPassword }) => {
   if (!currentPassword || !newPassword) {
-    throw new ServiceError(
-      'currentPassword and newPassword are required',
-      400
-    );
+    throw new ServiceError('currentPassword and newPassword are required', 400);
   }
 
   if (newPassword.length < 6) {
-    throw new ServiceError(
-      'New password must be at least 6 characters',
-      400
-    );
+    throw new ServiceError('New password must be at least 6 characters', 400);
   }
 
   const dbUser = await userRepo.findById(user._id);
-
-  const isMatch = await bcrypt.compare(
-    currentPassword,
-    dbUser.passwordHash
-  );
-
+  const isMatch = await bcrypt.compare(currentPassword, dbUser.passwordHash);
   if (!isMatch) {
-    throw new ServiceError(
-      'Current password is incorrect',
-      401
-    );
+    throw new ServiceError('Current password is incorrect', 401);
   }
 
-  const passwordHash = await bcrypt.hash(newPassword, 10);
-
-  dbUser.passwordHash = passwordHash;
-
+  dbUser.passwordHash = await bcrypt.hash(newPassword, 10);
   await userRepo.saveUser(dbUser);
 
-  return {
-    message: 'Password changed successfully',
-  };
+  return { message: 'Password changed successfully' };
 };
-// quên mk
+
 const forgotPassword = async ({ email }) => {
   const user = await userRepo.findByEmail(email);
+  if (!user) throw new ServiceError('Email not found', 404);
 
-  if (!user) {
-    throw new ServiceError('Email not found', 404);
-  }
-
-  const resetToken = crypto
-    .randomBytes(32)
-    .toString('hex');
-
-  const hashedToken = crypto
-    .createHash('sha256')
-    .update(resetToken)
-    .digest('hex');
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
 
   user.resetPasswordTokenHash = hashedToken;
-
-  user.resetPasswordExpiresAt =
-    Date.now() + 10 * 60 * 1000;
-
+  user.resetPasswordExpiresAt = Date.now() + 10 * 60 * 1000;
   await userRepo.saveUser(user);
 
-  const resetUrl =
-    `http://localhost:5173/reset-password?token=${resetToken}`;
+  const resetUrl = `http://localhost:5173/reset-password?token=${resetToken}`;
+  await mailService.sendResetPasswordEmail(user.email, resetUrl);
 
-  await mailService.sendResetPasswordEmail(
-    user.email,
-    resetUrl
-  );
-
-  return {
-    message: 'Reset password email sent',
-  };
+  return { message: 'Reset password email sent' };
 };
-//rs mk
-const resetPassword = async ({
-  token,
-  newPassword,
-}) => {
-  const hashedToken = crypto
-    .createHash('sha256')
-    .update(token)
-    .digest('hex');
 
+const resetPassword = async ({ token, newPassword }) => {
+  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
   const user = await userRepo.findOne({
     resetPasswordTokenHash: hashedToken,
-    resetPasswordExpiresAt: {
-      $gt: Date.now(),
-    },
+    resetPasswordExpiresAt: { $gt: Date.now() },
   });
 
-  if (!user) {
-    throw new ServiceError(
-      'Invalid or expired token',
-      400
-    );
-  }
+  if (!user) throw new ServiceError('Invalid or expired token', 400);
 
-  user.passwordHash = await bcrypt.hash(
-    newPassword,
-    10
-  );
-
+  user.passwordHash = await bcrypt.hash(newPassword, 10);
   user.resetPasswordTokenHash = undefined;
   user.resetPasswordExpiresAt = undefined;
-
   await userRepo.saveUser(user);
 
-  return {
-    message: 'Password reset successfully',
-  };
+  return { message: 'Password reset successfully' };
 };
-// update user by admin
-const updateUserByAdmin = async (
-  userId,
-  data
-) => {
-  const user = await userRepo.findById(userId);
 
-  if (!user) {
-    throw new ServiceError(
-      'User not found',
-      404
-    );
-  }
+const updateUserByAdmin = async (userId, data) => {
+  const user = await userRepo.findById(userId);
+  if (!user) throw new ServiceError('User not found', 404);
 
   const allowedFields = [
     'fullName',
@@ -363,5 +348,42 @@ const updateUserByAdmin = async (
     user,
   };
 };
-module.exports = { login, getMe, listStaffAccounts, createStaffAccount, 
-  toggleStaffActive, updateProfile, changePassword, forgotPassword, resetPassword, updateUserByAdmin };
+
+const createFirebaseCustomToken = async (user) => {
+  if (!isFirebaseEnabled()) {
+    throw new ServiceError('Firebase Realtime Database is not configured on the server', 503);
+  }
+
+  const auth = getAuth();
+  if (!auth) {
+    throw new ServiceError('Firebase Realtime Database is not configured on the server', 503);
+  }
+
+  try {
+    const firebaseToken = await auth.createCustomToken(user._id.toString(), {
+      role: user.role,
+    });
+
+    return {
+      firebaseToken,
+      databaseURL: process.env.FIREBASE_DATABASE_URL,
+    };
+  } catch (err) {
+    console.error('[createFirebaseCustomToken]', err.code || err.name, err.message);
+    throw new ServiceError(err.message || 'Failed to create Firebase custom token', 502);
+  }
+};
+
+module.exports = {
+  login,
+  getMe,
+  listStaffAccounts,
+  createStaffAccount,
+  toggleStaffActive,
+  updateProfile,
+  changePassword,
+  forgotPassword,
+  resetPassword,
+  updateUserByAdmin,
+  createFirebaseCustomToken,
+};

@@ -11,8 +11,7 @@ const emergencyContactSchema = new Schema(
     email: { type: String, trim: true, lowercase: true },
     address: { type: String, trim: true },
     isPrimary: { type: Boolean, default: false },
-  },
-  { _id: false }
+  }
 );
 
 const residentSchema = new Schema(
@@ -27,7 +26,9 @@ const residentSchema = new Schema(
     personalAddress: { type: String, trim: true },
     emergencyContacts: [emergencyContactSchema],
     allergies: [{ type: String, trim: true }],
+    drugAllergies: [{ type: String, trim: true }],
     chronicConditions: [{ type: String, trim: true }],
+    medicalHistory: [{ type: String, trim: true }],
     initialHealthCondition: { type: String, trim: true },
     bedId: { type: Types.ObjectId, ref: 'Bed', index: true },
     roomId: { type: Types.ObjectId, ref: 'Room', index: true },

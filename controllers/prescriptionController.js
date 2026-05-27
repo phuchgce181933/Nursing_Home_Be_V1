@@ -1,5 +1,6 @@
 const Prescription = require('../models/prescription');
 const Resident = require('../models/resident');
+const MedicationSchedule = require('../models/MedicationSchedule');
 const {
   checkAllergies,
   checkContraindications,
@@ -7,7 +8,6 @@ const {
   checkElderlyDosage,
 } = require('../services/medicationSafetyService');
 
-// Severity levels that require explicit acknowledgment before proceeding
 const ACK_REQUIRED_INTERACTION = new Set(['SEVERE']);
 const ACK_REQUIRED_CONTRAINDICATION = new Set(['HIGH', 'CRITICAL']);
 
@@ -15,11 +15,53 @@ const hasSevereWarning = (contraWarnings, interactionWarnings) =>
   interactionWarnings.some((w) => ACK_REQUIRED_INTERACTION.has(w.severity)) ||
   contraWarnings.some((w) => ACK_REQUIRED_CONTRAINDICATION.has(w.severity));
 
+/**
+ * Delete future PENDING schedules for one prescription item and recreate from times[].
+ * scheduledTime is stored as UTC; times[] entries are "HH:MM" in Vietnam time (UTC+7).
+ */
+const generateSchedulesForItem = async (prescription, item) => {
+  const now = new Date();
+
+  await MedicationSchedule.deleteMany({
+    prescriptionId: prescription._id,
+    prescriptionItemId: item._id,
+    status: 'PENDING',
+    scheduledTime: { $gt: now },
+  });
+
+  if (!item.startDate || !item.endDate || !Array.isArray(item.times) || !item.times.length) return;
+
+  const schedules = [];
+  const start = new Date(item.startDate);
+  const end = new Date(item.endDate);
+
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().slice(0, 10); // YYYY-MM-DD
+    for (const timeStr of item.times) {
+      const scheduledTime = new Date(`${dateStr}T${timeStr}:00+07:00`);
+      if (scheduledTime > now) {
+        schedules.push({
+          residentId: prescription.residentId,
+          prescriptionId: prescription._id,
+          prescriptionItemId: item._id,
+          medicationName: item.medicationName,
+          dosage: item.dosage,
+          scheduledTime,
+          status: 'PENDING',
+        });
+      }
+    }
+  }
+
+  if (schedules.length) await MedicationSchedule.insertMany(schedules);
+};
+
+// ── POST /api/prescriptions ───────────────────────────────────────────────────
+
 const createPrescription = async (req, res) => {
   try {
     const { residentId, diagnosisNote, validUntil, items, acknowledgeWarnings } = req.body;
 
-    // Confirm resident exists (validator checks ObjectId format; this confirms it exists)
     const resident = await Resident.findById(residentId).select('_id');
     if (!resident) {
       return res.status(404).json({ success: false, message: 'Resident not found' });
@@ -27,7 +69,7 @@ const createPrescription = async (req, res) => {
 
     const drugNames = items.map((i) => i.medicationName);
 
-    // ── Step 1: Allergy check — hard block, no acknowledgment bypass ─────────
+    // Allergy check — hard block, no acknowledgment bypass
     const { allergies: allergyHits } = await checkAllergies(residentId, drugNames);
     if (allergyHits.length) {
       return res.status(400).json({
@@ -38,7 +80,6 @@ const createPrescription = async (req, res) => {
       });
     }
 
-    // ── Steps 2–4: Safety checks that can be acknowledged ────────────────────
     const dosageItems = items.map((i) => ({
       medicationName: i.medicationName,
       dosage: Number(i.dosage),
@@ -62,7 +103,6 @@ const createPrescription = async (req, res) => {
       ...dosageWarnings.map((w) => ({ type: 'ELDERLY_DOSAGE', ...w })),
     ];
 
-    // ── Step 3: Gate on severe warnings ──────────────────────────────────────
     if (hasSevereWarning(contraWarnings, interactionWarnings) && !acknowledgeWarnings) {
       return res.status(400).json({
         success: false,
@@ -72,7 +112,6 @@ const createPrescription = async (req, res) => {
       });
     }
 
-    // Build one acknowledgment record per warning type when doctor acknowledges
     const acknowledgments = [];
     if (acknowledgeWarnings && allWarnings.length) {
       const uniqueTypes = [...new Set(allWarnings.map((w) => w.type))];
@@ -85,7 +124,6 @@ const createPrescription = async (req, res) => {
       }
     }
 
-    // ── Step 4: Persist prescription ─────────────────────────────────────────
     const overdosedDrugs = new Set(dosageWarnings.map((w) => w.medicationName));
 
     const prescription = await Prescription.create({
@@ -113,7 +151,11 @@ const createPrescription = async (req, res) => {
       acknowledgments,
     });
 
-    // ── Step 5: Respond ───────────────────────────────────────────────────────
+    // Generate schedules for items that have times + date range
+    for (const item of prescription.items) {
+      await generateSchedulesForItem(prescription, item);
+    }
+
     return res.status(201).json({
       success: true,
       data: prescription,
@@ -127,4 +169,315 @@ const createPrescription = async (req, res) => {
   }
 };
 
-module.exports = { createPrescription };
+// ── PUT /api/prescriptions/:id ────────────────────────────────────────────────
+
+const editPrescription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const role = req.user.role;
+    const { diagnosisNote, validUntil, items, acknowledgeWarnings } = req.body;
+
+    const prescription = await Prescription.findById(id);
+    if (!prescription) {
+      return res.status(404).json({ success: false, message: 'Prescription not found' });
+    }
+    if (prescription.status !== 'ACTIVE') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only ACTIVE prescriptions can be edited',
+      });
+    }
+
+    const changeLog = [];
+    let allWarnings = [];
+
+    if (role === 'nurse') {
+      // Nurse: only instructions and times per item (matched by _id)
+      if (!Array.isArray(items) || !items.length) {
+        return res.status(400).json({
+          success: false,
+          message: 'Nurse edits require items[] with item _id references',
+        });
+      }
+
+      for (const patch of items) {
+        const existing = prescription.items.id(patch._id);
+        if (!existing) {
+          return res.status(400).json({
+            success: false,
+            message: `Item _id ${patch._id} not found in this prescription`,
+          });
+        }
+
+        if (patch.times !== undefined) {
+          if (!Array.isArray(patch.times) || patch.times.length !== existing.frequency) {
+            return res.status(400).json({
+              success: false,
+              message: `items[${patch._id}].times must have exactly ${existing.frequency} entries`,
+            });
+          }
+          const timesChanged =
+            JSON.stringify(existing.times.slice().sort()) !==
+            JSON.stringify(patch.times.slice().sort());
+          if (timesChanged) {
+            existing.times = patch.times;
+            changeLog.push(`Rescheduled ${existing.medicationName} times to [${patch.times.join(', ')}]`);
+            await generateSchedulesForItem(prescription, existing);
+          }
+        }
+
+        if (patch.instructions !== undefined) {
+          if (patch.instructions !== existing.instructions) {
+            changeLog.push(
+              `Updated ${existing.medicationName} instructions: "${patch.instructions}"`
+            );
+            existing.instructions = patch.instructions;
+          }
+        }
+      }
+    } else {
+      // Doctor: full edit — diagnosisNote, validUntil, items[]
+      if (diagnosisNote !== undefined && diagnosisNote !== prescription.diagnosisNote) {
+        changeLog.push('Updated diagnosisNote');
+        prescription.diagnosisNote = diagnosisNote;
+      }
+
+      if (validUntil !== undefined) {
+        const newUntil = new Date(validUntil);
+        if (newUntil.getTime() !== prescription.validUntil.getTime()) {
+          changeLog.push(`Updated validUntil to ${newUntil.toISOString().slice(0, 10)}`);
+          prescription.validUntil = newUntil;
+        }
+      }
+
+      if (Array.isArray(items) && items.length) {
+        const drugNames = items.map((i) => i.medicationName);
+
+        // Allergy hard block
+        const { allergies: allergyHits } = await checkAllergies(
+          prescription.residentId,
+          drugNames
+        );
+        if (allergyHits.length) {
+          return res.status(400).json({
+            success: false,
+            errorCode: 'ALLERGY',
+            detail: allergyHits,
+            requiresAcknowledgment: false,
+          });
+        }
+
+        const dosageItems = items.map((i) => ({
+          medicationName: i.medicationName,
+          dosage: Number(i.dosage),
+          frequency: Number(i.frequency),
+          unit: i.unit,
+        }));
+
+        const [contraResult, interactResult, dosageResult] = await Promise.all([
+          checkContraindications(prescription.residentId, drugNames),
+          checkDrugInteractions(prescription.residentId, drugNames, prescription._id),
+          checkElderlyDosage(prescription.residentId, dosageItems),
+        ]);
+
+        const contraWarnings = contraResult.violations;
+        const interactionWarnings = interactResult.interactions;
+        const dosageWarnings = dosageResult.warnings;
+
+        allWarnings = [
+          ...contraWarnings.map((w) => ({ type: 'CONTRAINDICATION', ...w })),
+          ...interactionWarnings.map((w) => ({ type: 'DRUG_INTERACTION', ...w })),
+          ...dosageWarnings.map((w) => ({ type: 'ELDERLY_DOSAGE', ...w })),
+        ];
+
+        if (hasSevereWarning(contraWarnings, interactionWarnings) && !acknowledgeWarnings) {
+          return res.status(400).json({
+            success: false,
+            errorCode: 'REQUIRES_ACKNOWLEDGMENT',
+            warnings: allWarnings,
+            requiresAcknowledgment: true,
+          });
+        }
+
+        if (acknowledgeWarnings && allWarnings.length) {
+          const uniqueTypes = [...new Set(allWarnings.map((w) => w.type))];
+          for (const warningType of uniqueTypes) {
+            prescription.acknowledgments.push({
+              warningType,
+              acknowledgedBy: req.user._id,
+              acknowledgedAt: new Date(),
+            });
+          }
+        }
+
+        // Delete all future PENDING schedules for this prescription before full item replacement
+        await MedicationSchedule.deleteMany({
+          prescriptionId: prescription._id,
+          status: 'PENDING',
+          scheduledTime: { $gt: new Date() },
+        });
+
+        const overdosedDrugs = new Set(dosageWarnings.map((w) => w.medicationName));
+
+        prescription.items = items.map((item) => ({
+          medicationName: item.medicationName,
+          genericName: item.genericName,
+          dosage: String(item.dosage),
+          unit: item.unit,
+          frequency: Number(item.frequency),
+          times: Array.isArray(item.times) ? item.times : [],
+          route: item.route || 'oral',
+          duration: item.duration,
+          startDate: item.startDate ? new Date(item.startDate) : undefined,
+          endDate: item.endDate ? new Date(item.endDate) : undefined,
+          instructions: item.instructions,
+          elderlyDosageAdjusted: overdosedDrugs.has(item.medicationName),
+          isActive: true,
+        }));
+
+        changeLog.push(`Replaced items (${items.length} medication(s))`);
+      }
+    }
+
+    if (!changeLog.length) {
+      return res.status(200).json({
+        success: true,
+        message: 'No changes detected',
+        data: prescription,
+        warnings: allWarnings,
+      });
+    }
+
+    prescription.editHistory.push({
+      editedBy: req.user._id,
+      editedAt: new Date(),
+      changes: changeLog.join('; '),
+    });
+
+    await prescription.save();
+
+    // Regenerate schedules for doctor's new items after save (so item._id exists)
+    if (role === 'doctor' && Array.isArray(items) && items.length) {
+      for (const item of prescription.items) {
+        await generateSchedulesForItem(prescription, item);
+      }
+    }
+
+    const populated = await Prescription.findById(prescription._id)
+      .populate('residentId', 'fullName dateOfBirth')
+      .populate('doctorId', 'fullName')
+      .populate('editHistory.editedBy', 'fullName role');
+
+    return res.status(200).json({
+      success: true,
+      data: populated,
+      warnings: allWarnings,
+    });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// ── GET /api/prescriptions ────────────────────────────────────────────────────
+
+const listPrescriptions = async (req, res) => {
+  try {
+    const { residentId, status, page = 1, limit = 10 } = req.query;
+
+    if (!residentId) {
+      return res.status(400).json({
+        success: false,
+        message: 'residentId query parameter is required',
+      });
+    }
+
+    const filter = { residentId };
+    if (status) filter.status = status;
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const [prescriptions, total] = await Promise.all([
+      Prescription.find(filter)
+        .populate('residentId', 'fullName dateOfBirth')
+        .populate('doctorId', 'fullName')
+        .sort({ prescriptionDate: -1 })
+        .skip(skip)
+        .limit(Number(limit)),
+      Prescription.countDocuments(filter),
+    ]);
+
+    const data = prescriptions.map((rx) => ({
+      ...rx.toObject(),
+      itemsCount: rx.items.length,
+      activeItemsCount: rx.items.filter((i) => i.isActive).length,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data,
+      pagination: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(total / Number(limit)),
+      },
+    });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// ── GET /api/prescriptions/:id ────────────────────────────────────────────────
+
+const getPrescription = async (req, res) => {
+  try {
+    const prescription = await Prescription.findById(req.params.id)
+      .populate('residentId', 'fullName dateOfBirth chronicConditions allergies')
+      .populate('doctorId', 'fullName')
+      .populate('acknowledgments.acknowledgedBy', 'fullName role')
+      .populate('editHistory.editedBy', 'fullName role');
+
+    if (!prescription) {
+      return res.status(404).json({ success: false, message: 'Prescription not found' });
+    }
+
+    // Compute compliance rate from MedicationSchedule
+    const [takenCount, missedCount] = await Promise.all([
+      MedicationSchedule.countDocuments({
+        prescriptionId: prescription._id,
+        status: { $in: ['TAKEN', 'LATE_TAKEN'] },
+      }),
+      MedicationSchedule.countDocuments({
+        prescriptionId: prescription._id,
+        status: 'MISSED',
+      }),
+    ]);
+
+    const denominator = takenCount + missedCount;
+    const complianceRate =
+      denominator > 0 ? Math.round((takenCount / denominator) * 1000) / 10 : null;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...prescription.toObject(),
+        itemsCount: prescription.items.length,
+        activeItemsCount: prescription.items.filter((i) => i.isActive).length,
+        complianceRate,
+      },
+    });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+module.exports = { createPrescription, editPrescription, listPrescriptions, getPrescription };

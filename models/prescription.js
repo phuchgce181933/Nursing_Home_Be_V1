@@ -21,6 +21,15 @@ const prescriptionItemSchema = new Schema({
   isActive: { type: Boolean, default: true },
 });
 
+const editHistorySchema = new Schema(
+  {
+    editedBy: { type: Types.ObjectId, ref: 'User', required: true },
+    editedAt: { type: Date, default: Date.now },
+    changes: { type: String, required: true, trim: true },
+  },
+  { _id: false }
+);
+
 const acknowledgmentSchema = new Schema(
   {
     warningType: { type: String, required: true, trim: true },
@@ -40,6 +49,7 @@ const prescriptionSchema = new Schema(
     status: { type: String, enum: PRESCRIPTION_STATUSES, default: 'ACTIVE', index: true },
     items: { type: [prescriptionItemSchema], default: [] },
     acknowledgments: { type: [acknowledgmentSchema], default: [] },
+    editHistory: { type: [editHistorySchema], default: [] },
   },
   { timestamps: true }
 );

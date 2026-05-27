@@ -21,15 +21,6 @@ const prescriptionItemSchema = new Schema({
   isActive: { type: Boolean, default: true },
 });
 
-const editHistorySchema = new Schema(
-  {
-    editedBy: { type: Types.ObjectId, ref: 'User', required: true },
-    editedAt: { type: Date, default: Date.now },
-    changes: { type: String, required: true, trim: true },
-  },
-  { _id: false }
-);
-
 const acknowledgmentSchema = new Schema(
   {
     warningType: { type: String, required: true, trim: true },
@@ -49,23 +40,23 @@ const prescriptionSchema = new Schema(
     status: { type: String, enum: PRESCRIPTION_STATUSES, default: 'ACTIVE', index: true },
     items: { type: [prescriptionItemSchema], default: [] },
     acknowledgments: { type: [acknowledgmentSchema], default: [] },
-    editHistory: { type: [editHistorySchema], default: [] },
   },
   { timestamps: true }
 );
 
 // validUntil must be within 30 days of prescriptionDate
-prescriptionSchema.pre('validate', function () {
+prescriptionSchema.pre('validate', function (next) {
   if (this.prescriptionDate && this.validUntil) {
     const maxValidUntil = new Date(this.prescriptionDate);
     maxValidUntil.setDate(maxValidUntil.getDate() + 30);
     if (this.validUntil > maxValidUntil) {
-      throw new Error('validUntil must be within 30 days of prescriptionDate');
+      return next(new Error('validUntil must be within 30 days of prescriptionDate'));
     }
     if (this.validUntil <= this.prescriptionDate) {
-      throw new Error('validUntil must be after prescriptionDate');
+      return next(new Error('validUntil must be after prescriptionDate'));
     }
   }
+  next();
 });
 
 module.exports = mongoose.models.Prescription || mongoose.model('Prescription', prescriptionSchema);

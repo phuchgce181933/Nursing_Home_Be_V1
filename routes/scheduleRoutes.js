@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const {
+  getCurrentMedications,
+  setMedicationSchedule,
   getDailySchedule,
   getSchedules,
   markTaken,
@@ -8,6 +10,79 @@ const {
   getHistory,
 } = require('../controllers/scheduleController');
 const { protect, authorize } = require('../middleware/auth');
+
+/**
+ * @swagger
+ * /api/medications/current:
+ *   get:
+ *     summary: Active medication items for a resident from ACTIVE prescriptions (Doctor or Nurse)
+ *     tags: [MedicationSchedules]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of active medication items with prescription context
+ *       400:
+ *         description: residentId is required or invalid
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/current', protect, authorize('doctor', 'nurse'), getCurrentMedications);
+
+/**
+ * @swagger
+ * /api/medications/schedule/set:
+ *   put:
+ *     summary: Set startDate, endDate, and times for prescription items (Doctor only)
+ *     tags: [MedicationSchedules]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [prescriptionId, items]
+ *             properties:
+ *               prescriptionId:
+ *                 type: string
+ *               items:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [itemId]
+ *                   properties:
+ *                     itemId:
+ *                       type: string
+ *                     startDate:
+ *                       type: string
+ *                       format: date
+ *                     endDate:
+ *                       type: string
+ *                       format: date
+ *                     times:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       description: "Must match item.frequency count (e.g. ['08:00','20:00'] for frequency=2)"
+ *     responses:
+ *       200:
+ *         description: Items updated and schedules regenerated
+ *       400:
+ *         description: Validation error
+ *       403:
+ *         description: Prescription not ACTIVE
+ *       404:
+ *         description: Prescription or item not found
+ */
+router.put('/schedule/set', protect, authorize('doctor'), setMedicationSchedule);
 
 /**
  * @swagger

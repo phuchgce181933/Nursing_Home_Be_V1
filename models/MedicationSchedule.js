@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const { Schema, Types } = mongoose;
 
-const SCHEDULE_STATUSES = ['PENDING', 'TAKEN', 'LATE_TAKEN', 'MISSED', 'SKIPPED'];
+const SCHEDULE_STATUSES = ['PENDING', 'TAKEN', 'LATE_TAKEN', 'MISSED', 'SKIPPED', 'OVERDUE'];
 
 const medicationScheduleSchema = new Schema(
   {

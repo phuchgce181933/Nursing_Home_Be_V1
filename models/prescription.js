@@ -42,6 +42,7 @@ const acknowledgmentSchema = new Schema(
 const prescriptionSchema = new Schema(
   {
     residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
+   residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
     doctorId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
     diagnosisNote: { type: String, trim: true },
     prescriptionDate: { type: Date, required: true, default: Date.now },
@@ -49,7 +50,6 @@ const prescriptionSchema = new Schema(
     status: { type: String, enum: PRESCRIPTION_STATUSES, default: 'ACTIVE', index: true },
     items: { type: [prescriptionItemSchema], default: [] },
     acknowledgments: { type: [acknowledgmentSchema], default: [] },
-    editHistory: { type: [editHistorySchema], default: [] },
   },
   { timestamps: true }
 );

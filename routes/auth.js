@@ -78,8 +78,7 @@ router.get('/me', protect, getMe);
  *                 example: "password123"
  *               role:
  *                 type: string
- *                 enum: [doctor, nurse, manager, staff]
- *                 example: "nurse"
+ *                 enum: [doctor, nurse, manager, staff, pharmacist, admin]
  *               phone:
  *                 type: string
  *                 example: "0901234567"

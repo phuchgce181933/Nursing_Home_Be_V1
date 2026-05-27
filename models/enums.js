@@ -1,4 +1,4 @@
-const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'family', 'staff'];
+const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'pharmacist', 'family', 'staff'];
 const GENDERS = ['male', 'female', 'other', 'unknown'];
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'unknown'];
 

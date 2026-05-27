@@ -7,6 +7,10 @@ const {
   checkDrugInteractions,
   checkElderlyDosage,
 } = require('../services/medicationSafetyService');
+const {
+  generateSchedules,
+  generateSchedulesForItem,
+} = require('../services/scheduleGeneratorService');
 
 const ACK_REQUIRED_INTERACTION = new Set(['SEVERE']);
 const ACK_REQUIRED_CONTRAINDICATION = new Set(['HIGH', 'CRITICAL']);
@@ -14,47 +18,6 @@ const ACK_REQUIRED_CONTRAINDICATION = new Set(['HIGH', 'CRITICAL']);
 const hasSevereWarning = (contraWarnings, interactionWarnings) =>
   interactionWarnings.some((w) => ACK_REQUIRED_INTERACTION.has(w.severity)) ||
   contraWarnings.some((w) => ACK_REQUIRED_CONTRAINDICATION.has(w.severity));
-
-/**
- * Delete future PENDING schedules for one prescription item and recreate from times[].
- * scheduledTime is stored as UTC; times[] entries are "HH:MM" in Vietnam time (UTC+7).
- */
-const generateSchedulesForItem = async (prescription, item) => {
-  const now = new Date();
-
-  await MedicationSchedule.deleteMany({
-    prescriptionId: prescription._id,
-    prescriptionItemId: item._id,
-    status: 'PENDING',
-    scheduledTime: { $gt: now },
-  });
-
-  if (!item.startDate || !item.endDate || !Array.isArray(item.times) || !item.times.length) return;
-
-  const schedules = [];
-  const start = new Date(item.startDate);
-  const end = new Date(item.endDate);
-
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().slice(0, 10); // YYYY-MM-DD
-    for (const timeStr of item.times) {
-      const scheduledTime = new Date(`${dateStr}T${timeStr}:00+07:00`);
-      if (scheduledTime > now) {
-        schedules.push({
-          residentId: prescription.residentId,
-          prescriptionId: prescription._id,
-          prescriptionItemId: item._id,
-          medicationName: item.medicationName,
-          dosage: item.dosage,
-          scheduledTime,
-          status: 'PENDING',
-        });
-      }
-    }
-  }
-
-  if (schedules.length) await MedicationSchedule.insertMany(schedules);
-};
 
 // ── POST /api/prescriptions ───────────────────────────────────────────────────
 
@@ -151,10 +114,7 @@ const createPrescription = async (req, res) => {
       acknowledgments,
     });
 
-    // Generate schedules for items that have times + date range
-    for (const item of prescription.items) {
-      await generateSchedulesForItem(prescription, item);
-    }
+    await generateSchedules(prescription);
 
     return res.status(201).json({
       success: true,

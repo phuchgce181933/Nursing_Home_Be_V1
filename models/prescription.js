@@ -55,18 +55,17 @@ const prescriptionSchema = new Schema(
 );
 
 // validUntil must be within 30 days of prescriptionDate
-prescriptionSchema.pre('validate', function (next) {
+prescriptionSchema.pre('validate', function () {
   if (this.prescriptionDate && this.validUntil) {
     const maxValidUntil = new Date(this.prescriptionDate);
     maxValidUntil.setDate(maxValidUntil.getDate() + 30);
     if (this.validUntil > maxValidUntil) {
-      return next(new Error('validUntil must be within 30 days of prescriptionDate'));
+      throw new Error('validUntil must be within 30 days of prescriptionDate');
     }
     if (this.validUntil <= this.prescriptionDate) {
-      return next(new Error('validUntil must be after prescriptionDate'));
+      throw new Error('validUntil must be after prescriptionDate');
     }
   }
-  next();
 });
 
 module.exports = mongoose.models.Prescription || mongoose.model('Prescription', prescriptionSchema);

@@ -1,3 +1,4 @@
+const { isValidObjectId } = require('mongoose');
 const Prescription = require('../models/prescription');
 const Resident = require('../models/resident');
 const MedicationSchedule = require('../models/MedicationSchedule');
@@ -7,6 +8,10 @@ const {
   checkDrugInteractions,
   checkElderlyDosage,
 } = require('../services/medicationSafetyService');
+const {
+  generateSchedules,
+  generateSchedulesForItem,
+} = require('../services/scheduleGeneratorService');
 
 const ACK_REQUIRED_INTERACTION = new Set(['SEVERE']);
 const ACK_REQUIRED_CONTRAINDICATION = new Set(['HIGH', 'CRITICAL']);
@@ -14,47 +19,6 @@ const ACK_REQUIRED_CONTRAINDICATION = new Set(['HIGH', 'CRITICAL']);
 const hasSevereWarning = (contraWarnings, interactionWarnings) =>
   interactionWarnings.some((w) => ACK_REQUIRED_INTERACTION.has(w.severity)) ||
   contraWarnings.some((w) => ACK_REQUIRED_CONTRAINDICATION.has(w.severity));
-
-/**
- * Delete future PENDING schedules for one prescription item and recreate from times[].
- * scheduledTime is stored as UTC; times[] entries are "HH:MM" in Vietnam time (UTC+7).
- */
-const generateSchedulesForItem = async (prescription, item) => {
-  const now = new Date();
-
-  await MedicationSchedule.deleteMany({
-    prescriptionId: prescription._id,
-    prescriptionItemId: item._id,
-    status: 'PENDING',
-    scheduledTime: { $gt: now },
-  });
-
-  if (!item.startDate || !item.endDate || !Array.isArray(item.times) || !item.times.length) return;
-
-  const schedules = [];
-  const start = new Date(item.startDate);
-  const end = new Date(item.endDate);
-
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().slice(0, 10); // YYYY-MM-DD
-    for (const timeStr of item.times) {
-      const scheduledTime = new Date(`${dateStr}T${timeStr}:00+07:00`);
-      if (scheduledTime > now) {
-        schedules.push({
-          residentId: prescription.residentId,
-          prescriptionId: prescription._id,
-          prescriptionItemId: item._id,
-          medicationName: item.medicationName,
-          dosage: item.dosage,
-          scheduledTime,
-          status: 'PENDING',
-        });
-      }
-    }
-  }
-
-  if (schedules.length) await MedicationSchedule.insertMany(schedules);
-};
 
 // ── POST /api/prescriptions ───────────────────────────────────────────────────
 
@@ -151,10 +115,7 @@ const createPrescription = async (req, res) => {
       acknowledgments,
     });
 
-    // Generate schedules for items that have times + date range
-    for (const item of prescription.items) {
-      await generateSchedulesForItem(prescription, item);
-    }
+    await generateSchedules(prescription);
 
     return res.status(201).json({
       success: true,
@@ -174,6 +135,10 @@ const createPrescription = async (req, res) => {
 const editPrescription = async (req, res) => {
   try {
     const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid prescription id' });
+    }
+
     const role = req.user.role;
     const { diagnosisNote, validUntil, items, acknowledgeWarnings } = req.body;
 
@@ -200,6 +165,7 @@ const editPrescription = async (req, res) => {
         });
       }
 
+      // Validate ALL patches before modifying anything
       for (const patch of items) {
         const existing = prescription.items.id(patch._id);
         if (!existing) {
@@ -208,33 +174,57 @@ const editPrescription = async (req, res) => {
             message: `Item _id ${patch._id} not found in this prescription`,
           });
         }
+        if (
+          patch.times !== undefined &&
+          (!Array.isArray(patch.times) || patch.times.length !== existing.frequency)
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: `items[${patch._id}].times must have exactly ${existing.frequency} entries`,
+          });
+        }
+      }
+
+      // Apply changes in memory and collect items that need schedule regeneration
+      const rescheduleItems = [];
+      for (const patch of items) {
+        const existing = prescription.items.id(patch._id);
 
         if (patch.times !== undefined) {
-          if (!Array.isArray(patch.times) || patch.times.length !== existing.frequency) {
-            return res.status(400).json({
-              success: false,
-              message: `items[${patch._id}].times must have exactly ${existing.frequency} entries`,
-            });
-          }
           const timesChanged =
             JSON.stringify(existing.times.slice().sort()) !==
             JSON.stringify(patch.times.slice().sort());
           if (timesChanged) {
             existing.times = patch.times;
             changeLog.push(`Rescheduled ${existing.medicationName} times to [${patch.times.join(', ')}]`);
-            await generateSchedulesForItem(prescription, existing);
+            rescheduleItems.push(existing);
           }
         }
 
-        if (patch.instructions !== undefined) {
-          if (patch.instructions !== existing.instructions) {
-            changeLog.push(
-              `Updated ${existing.medicationName} instructions: "${patch.instructions}"`
-            );
-            existing.instructions = patch.instructions;
-          }
+        if (patch.instructions !== undefined && patch.instructions !== existing.instructions) {
+          changeLog.push(`Updated ${existing.medicationName} instructions: "${patch.instructions}"`);
+          existing.instructions = patch.instructions;
         }
       }
+
+      if (!changeLog.length) {
+        return res.status(200).json({ success: true, message: 'No changes detected', data: prescription, warnings: [] });
+      }
+
+      prescription.editHistory.push({ editedBy: req.user._id, editedAt: new Date(), changes: changeLog.join('; ') });
+      await prescription.save();
+
+      // Regenerate schedules AFTER successful save
+      for (const item of rescheduleItems) {
+        await generateSchedulesForItem(prescription, item);
+      }
+
+      const populatedNurse = await Prescription.findById(prescription._id)
+        .populate('residentId', 'fullName dateOfBirth')
+        .populate('doctorId', 'fullName')
+        .populate('editHistory.editedBy', 'fullName role');
+
+      return res.status(200).json({ success: true, data: populatedNurse, warnings: [] });
     } else {
       // Doctor: full edit — diagnosisNote, validUntil, items[]
       if (diagnosisNote !== undefined && diagnosisNote !== prescription.diagnosisNote) {
@@ -356,11 +346,9 @@ const editPrescription = async (req, res) => {
 
     await prescription.save();
 
-    // Regenerate schedules for doctor's new items after save (so item._id exists)
-    if (role === 'doctor' && Array.isArray(items) && items.length) {
-      for (const item of prescription.items) {
-        await generateSchedulesForItem(prescription, item);
-      }
+    // After save, new items have stable _ids — bulk-generate all schedules
+    if (Array.isArray(items) && items.length) {
+      await generateSchedules(prescription);
     }
 
     const populated = await Prescription.findById(prescription._id)
@@ -392,6 +380,10 @@ const listPrescriptions = async (req, res) => {
         success: false,
         message: 'residentId query parameter is required',
       });
+    }
+
+    if (!isValidObjectId(residentId)) {
+      return res.status(400).json({ success: false, message: 'Invalid residentId' });
     }
 
     const filter = { residentId };
@@ -437,6 +429,10 @@ const listPrescriptions = async (req, res) => {
 
 const getPrescription = async (req, res) => {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid prescription id' });
+    }
+
     const prescription = await Prescription.findById(req.params.id)
       .populate('residentId', 'fullName dateOfBirth chronicConditions allergies')
       .populate('doctorId', 'fullName')

@@ -12,6 +12,11 @@ const Activity = require('./activity');
 const MedicalRecord = require('./medicalRecord');
 const Prescription = require('./prescription');
 const MedicationAdministration = require('./medicationAdministration');
+const Medication = require('./medication');
+const MedicationStock = require('./medicationStock');
+const MedicationDispense = require('./medicationDispense');
+const MedicationNote = require('./medicationNote');
+const Supplier = require('./supplier');
 const Incident = require('./incident');
 const CareAppointment = require('./careAppointment');
 const CareNote = require('./careNote');
@@ -45,6 +50,11 @@ module.exports = {
   MedicalRecord,
   Prescription,
   MedicationAdministration,
+  Medication,
+  MedicationStock,
+  MedicationDispense,
+  MedicationNote,
+  Supplier,
   Incident,
   CareAppointment,
   CareNote,

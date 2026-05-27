@@ -20,15 +20,17 @@ const { protect, authorize } = require('../middleware/auth');
  *             properties:
  *               email:
  *                 type: string
+ *                 example: "doctor@test.com"
  *               password:
  *                 type: string
+ *                 example: "password123"
  *     responses:
  *       200:
- *         description: Login successful
+ *         description: Login successful, returns JWT token
  *       400:
  *         description: Email and password required
  *       401:
- *         description: Invalid credentials
+ *         description: Invalid credentials or account inactive/banned
  */
 router.post('/login', login);
 
@@ -36,7 +38,7 @@ router.post('/login', login);
  * @swagger
  * /api/auth/me:
  *   get:
- *     summary: Get current user profile
+ *     summary: Get current user profile (includes staffProfile if applicable)
  *     tags: [Auth]
  *     security:
  *       - BearerAuth: []
@@ -66,28 +68,50 @@ router.get('/me', protect, getMe);
  *             properties:
  *               fullName:
  *                 type: string
+ *                 example: "Nguyễn Văn A"
  *               email:
  *                 type: string
+ *                 example: "staff@hospital.com"
  *               password:
  *                 type: string
+ *                 minLength: 6
+ *                 example: "password123"
  *               role:
  *                 type: string
  *                 enum: [doctor, nurse, manager, staff, pharmacist, admin]
  *               phone:
  *                 type: string
+ *                 example: "0901234567"
+ *               gender:
+ *                 type: string
+ *                 enum: [male, female, other, unknown]
+ *                 example: "female"
+ *               dateOfBirth:
+ *                 type: string
+ *                 format: date
+ *                 example: "1990-05-15"
+ *               address:
+ *                 type: string
+ *                 example: "123 Nguyễn Huệ, Q1, TP.HCM"
  *               specialty:
  *                 type: string
+ *                 example: "Chăm sóc người cao tuổi"
+ *               staffCode:
+ *                 type: string
+ *                 description: Custom staff code (auto-generated if omitted)
+ *                 example: "NUR099"
  *               certifications:
  *                 type: array
  *                 items:
  *                   type: string
+ *                 example: ["RN License", "CPR Certified"]
  *     responses:
  *       201:
  *         description: Staff account created
  *       400:
- *         description: Validation error
+ *         description: Validation error or password too short
  *       409:
- *         description: Email already in use
+ *         description: Email or staffCode already in use
  */
 router.post('/create-staff', protect, authorize('admin', 'manager'), createStaffAccount);
 
@@ -104,6 +128,7 @@ router.post('/create-staff', protect, authorize('admin', 'manager'), createStaff
  *         name: role
  *         schema:
  *           type: string
+ *           enum: [doctor, nurse, manager, staff, admin]
  *       - in: query
  *         name: isActive
  *         schema:
@@ -112,14 +137,17 @@ router.post('/create-staff', protect, authorize('admin', 'manager'), createStaff
  *         name: search
  *         schema:
  *           type: string
+ *         description: Search by fullName or email
  *       - in: query
  *         name: page
  *         schema:
- *           type: number
+ *           type: integer
+ *           default: 1
  *       - in: query
  *         name: limit
  *         schema:
- *           type: number
+ *           type: integer
+ *           default: 20
  *     responses:
  *       200:
  *         description: Staff list retrieved
@@ -130,7 +158,7 @@ router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
  * @swagger
  * /api/auth/staff/{id}/toggle-active:
  *   put:
- *     summary: Toggle staff account active status
+ *     summary: Toggle staff account active/inactive (Admin/Manager only)
  *     tags: [Auth]
  *     security:
  *       - BearerAuth: []
@@ -140,9 +168,12 @@ router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
  *         required: true
  *         schema:
  *           type: string
+ *         description: User ObjectId
  *     responses:
  *       200:
  *         description: Account status toggled
+ *       400:
+ *         description: Cannot toggle your own account
  *       404:
  *         description: User not found
  */

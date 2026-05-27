@@ -9,6 +9,7 @@ const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
 // import all models through index to ensure schemas are registered
 const models = require('./models');
+const { initMedicationJobs } = require('./jobs/medicationReminderJob');
 
 const app = express();
 
@@ -64,7 +65,10 @@ app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
 app.use('/api/medical/service-packages', require('./routes/medicalServicePackages'));
+app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
+app.use('/api/medications', require('./routes/scheduleRoutes'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
+
 
 // connect DB and create collections
 const initDB = async () => {
@@ -82,6 +86,7 @@ const initDB = async () => {
     }
 
     console.log('All collections initialized');
+    initMedicationJobs();
   } catch (err) {
     console.error(err);
   }

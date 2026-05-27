@@ -30,6 +30,10 @@ const AuditLog = require('./auditLog');
 const ReportSnapshot = require('./reportSnapshot');
 const FacilityTour = require('./facilityTour');
 const ServicePackage = require('./servicePackage');
+const MedicationSchedule = require('./MedicationSchedule');
+const ContraindicationRule = require('./ContraindicationRule');
+const DrugInteraction = require('./DrugInteraction');
+const ElderlyDosageGuideline = require('./ElderlyDosageGuideline');
 
 module.exports = {
   User,
@@ -64,4 +68,8 @@ module.exports = {
   ReportSnapshot,
   FacilityTour,
   ServicePackage,
+  MedicationSchedule,
+  ContraindicationRule,
+  DrugInteraction,
+  ElderlyDosageGuideline,
 };

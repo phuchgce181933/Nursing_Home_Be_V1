@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const ctrl = require('../controllers/shiftController');
 const { protect, authorize } = require('../middleware/auth');
-
+//lenhuthao
 const MANAGER = ['admin', 'manager'];
 
 /**

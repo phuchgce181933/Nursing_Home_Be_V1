@@ -72,7 +72,7 @@ router.get('/me', protect, getMe);
  *                 type: string
  *               role:
  *                 type: string
- *                 enum: [doctor, nurse, manager, staff, admin]
+ *                 enum: [doctor, nurse, manager, staff, pharmacist, admin]
  *               phone:
  *                 type: string
  *               specialty:

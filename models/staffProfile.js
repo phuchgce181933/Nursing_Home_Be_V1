@@ -10,7 +10,14 @@ const staffProfileSchema = new Schema(
     roleCategory: { type: String, trim: true, index: true },
     certifications: [{ type: String, trim: true }],
     responsibleAreaIds: [{ type: Types.ObjectId, ref: 'Floor' }],
+    responsibleRoomIds: [{ type: Types.ObjectId, ref: 'Room' }],
     assignedResidentIds: [{ type: Types.ObjectId, ref: 'Resident' }],
+    leaveBalance: {
+      annual:    { type: Number, default: 12 },
+      sick:      { type: Number, default: 10 },
+      emergency: { type: Number, default: 3 },
+      unpaid:    { type: Number, default: 999 },
+    },
   },
   { timestamps: true }
 );

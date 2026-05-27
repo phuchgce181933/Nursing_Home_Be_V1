@@ -1,4 +1,6 @@
 const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'family', 'staff'];
+const NON_ASSIGNABLE_ROLES = ['admin', 'manager'];
+const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'staff'];
 const GENDERS = ['male', 'female', 'other', 'unknown'];
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'unknown'];
 
@@ -14,7 +16,24 @@ const RESIDENCY_STATUSES = ['pending', 'admitted', 'discharged', 'transferred', 
 const ADMISSION_ELIGIBILITY_STATUSES = ['pending', 'eligible', 'not_eligible'];
 const ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracting', 'checked_in', 'cancelled'];
 
-const SHIFT_STATUSES = ['scheduled', 'completed', 'cancelled'];
+const SHIFT_STATUSES = ['draft', 'published', 'confirmed', 'completed', 'cancelled'];
+const SHIFT_TEMPLATE_STATUSES = ['active', 'inactive', 'archived'];
+const SHIFT_TYPES = ['morning', 'afternoon', 'night', 'on_call'];
+const CONFLICT_TYPES = [
+  'INVALID_TIME',
+  'OVERLAP',
+  'LEAVE_CONFLICT',
+  'MAX_DAILY_HOURS',
+  'MULTIPLE_AREAS',
+  'NIGHT_SHIFT_CONTINUOUS',
+  'ROLE_MISMATCH',
+  'STAFF_NOT_ASSIGNABLE',
+  'PAST_DATE',
+  'OVERTIME',
+  'REST_VIOLATION',
+  'UNDERSTAFFED',
+];
+const CONFLICT_SEVERITIES = ['ERROR', 'WARNING', 'INFO'];
 const ACTIVITY_STATUSES = ['draft', 'scheduled', 'ongoing', 'completed', 'cancelled'];
 
 const PRESCRIPTION_STATUSES = ['active', 'paused', 'stopped', 'completed'];
@@ -32,8 +51,17 @@ const NOTIFICATION_CATEGORIES = ['incident', 'health', 'appointment', 'activity'
 const DELIVERY_CHANNELS = ['in_app', 'email', 'sms', 'push'];
 const SUPPORT_REQUEST_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
 
+const LEAVE_REQUEST_TYPES = ['annual', 'sick', 'emergency', 'unpaid', 'other'];
+const LEAVE_REQUEST_STATUSES = ['draft', 'pending', 'approved', 'rejected', 'cancelled'];
+
+const CARE_TASK_TYPES = ['morning_care', 'medication', 'physical_therapy', 'meal_assistance', 'evening_check', 'emergency_response'];
+const CARE_TASK_STATUSES = ['pending', 'in_progress', 'completed', 'skipped'];
+const CARE_LEVELS = ['low', 'medium', 'high'];
+
 module.exports = {
   ROLES,
+  NON_ASSIGNABLE_ROLES,
+  OPERATIONAL_ASSIGNABLE_ROLES,
   GENDERS,
   BLOOD_TYPES,
   ROOM_TYPES,
@@ -47,6 +75,10 @@ module.exports = {
   ADMISSION_ELIGIBILITY_STATUSES,
   ADMISSION_STATUSES,
   SHIFT_STATUSES,
+  SHIFT_TEMPLATE_STATUSES,
+  SHIFT_TYPES,
+  CONFLICT_TYPES,
+  CONFLICT_SEVERITIES,
   ACTIVITY_STATUSES,
   PRESCRIPTION_STATUSES,
   MEDICATION_ADMIN_STATUSES,
@@ -60,4 +92,9 @@ module.exports = {
   NOTIFICATION_CATEGORIES,
   DELIVERY_CHANNELS,
   SUPPORT_REQUEST_STATUSES,
+  LEAVE_REQUEST_TYPES,
+  LEAVE_REQUEST_STATUSES,
+  CARE_TASK_TYPES,
+  CARE_TASK_STATUSES,
+  CARE_LEVELS,
 };

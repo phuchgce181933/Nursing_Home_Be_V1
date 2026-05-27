@@ -16,6 +16,7 @@ const userSchema = new Schema(
     banReason: { type: String, trim: true },
     lastLoginAt: { type: Date },
     avatarUrl: { type: String, trim: true },
+    avatarPublicId: { type: String, trim: true },
     address: { type: String, trim: true },
     dateOfBirth: { type: Date },
     gender: { type: String, enum: GENDERS, default: 'unknown' },

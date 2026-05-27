@@ -3,8 +3,24 @@ const jwt = require('jsonwebtoken');
 const ServiceError = require('./serviceError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
+const {
+  validateFullName,
+  validateEmail,
+  validatePhone,
+  validateUsername,
+  validatePassword,
+  validateDateOfBirth,
+  collectErrors,
+} = require('../utils/validators');
+const cloudinary = require('../config/cloudinaryConfig');
+const { getAuth, isFirebaseEnabled } = require('../config/firebaseAdmin');
+const {
+  assertActorMayCreateRole,
+  assertActorMayManageUser,
+  OPERATIONAL_ASSIGNABLE_ROLES,
+} = require('../utils/rolePolicy');
 
-const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff'];
+const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff', 'admin'];
 const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', manager: 'MGR', staff: 'STF', admin: 'ADM' };
 const VALID_ROLES = [...STAFF_ROLES, 'admin'];
 
@@ -104,31 +120,51 @@ const listStaffAccounts = async ({ role, isActive, search, page = 1, limit = 20 
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
-const createStaffAccount = async ({
-  fullName,
-  email,
-  password,
-  role,
-  phone,
-  gender,
-  dateOfBirth,
-  address,
-  specialty,
-  staffCode,
-  certifications,
-}) => {
-  if (!fullName || !email || !password || !role) {
-    throw new ServiceError('fullName, email, password and role are required', 400);
-  }
-  if (!STAFF_ROLES.includes(role)) {
-    throw new ServiceError(`role must be one of: ${STAFF_ROLES.join(', ')}`, 400);
-  }
-  if (password.length < 6) {
-    throw new ServiceError('password must be at least 6 characters', 400);
+const createStaffAccount = async (
+  {
+    fullName,
+    email,
+    password,
+    role,
+    phone,
+    gender,
+    dateOfBirth,
+    address,
+    specialty,
+    staffCode,
+    certifications,
+    username,
+    avatarUrl,
+    avatarPublicId,
+  },
+  currentUser
+) => {
+  // Validation
+  const validationError = collectErrors([
+    () => validateFullName(fullName),
+    () => validateEmail(email),
+    () => validatePassword(password),
+    () => validatePhone(phone),
+    () => validateUsername(username),
+    () => validateDateOfBirth(dateOfBirth),
+  ]);
+  if (validationError) throw new ServiceError(validationError, 400);
+
+  if (!role) throw new ServiceError('role is required', 400);
+  assertActorMayCreateRole(currentUser, role);
+  const allowedRoles =
+    currentUser?.role === 'manager' ? OPERATIONAL_ASSIGNABLE_ROLES : STAFF_ROLES;
+  if (!allowedRoles.includes(role)) {
+    throw new ServiceError(`role must be one of: ${allowedRoles.join(', ')}`, 400);
   }
 
   const existing = await userRepo.findByEmail(email);
   if (existing) throw new ServiceError('Email already in use', 409);
+
+  if (username) {
+    const existingUsername = await userRepo.findByUsername(username.trim());
+    if (existingUsername) throw new ServiceError('Username already in use', 409);
+  }
 
   const resolvedStaffCode = staffCode ? staffCode.toUpperCase().trim() : generateStaffCode(role);
   const codeConflict = await staffProfileRepo.findByStaffCode(resolvedStaffCode);
@@ -140,12 +176,15 @@ const createStaffAccount = async ({
   const user = await userRepo.createUser({
     fullName: fullName.trim(),
     email: email.toLowerCase().trim(),
+    username: username ? username.trim() : undefined,
     passwordHash,
     role,
     phone: phone?.trim(),
     gender: gender || 'unknown',
     dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
     address: address?.trim(),
+    avatarUrl: avatarUrl || undefined,
+    avatarPublicId: avatarPublicId || undefined,
     isActive: true,
   });
 
@@ -163,7 +202,9 @@ const createStaffAccount = async ({
       _id: user._id,
       fullName: user.fullName,
       email: user.email,
+      username: user.username,
       role: user.role,
+      avatarUrl: user.avatarUrl,
       isActive: user.isActive,
       createdAt: user.createdAt,
     },
@@ -182,6 +223,7 @@ const toggleStaffActive = async (id, currentUser) => {
   if (!['admin', ...STAFF_ROLES].includes(user.role)) {
     throw new ServiceError('Can only toggle staff accounts', 400);
   }
+  assertActorMayManageUser(currentUser, user);
   if (user._id.toString() === currentUser._id.toString()) {
     throw new ServiceError('Cannot change your own active status', 400);
   }
@@ -195,4 +237,36 @@ const toggleStaffActive = async (id, currentUser) => {
   };
 };
 
-module.exports = { login, getMe, listStaffAccounts, createStaffAccount, toggleStaffActive };
+const createFirebaseCustomToken = async (user) => {
+  if (!isFirebaseEnabled()) {
+    throw new ServiceError('Firebase Realtime Database is not configured on the server', 503);
+  }
+
+  const auth = getAuth();
+  if (!auth) {
+    throw new ServiceError('Firebase Realtime Database is not configured on the server', 503);
+  }
+
+  try {
+    const firebaseToken = await auth.createCustomToken(user._id.toString(), {
+      role: user.role,
+    });
+
+    return {
+      firebaseToken,
+      databaseURL: process.env.FIREBASE_DATABASE_URL,
+    };
+  } catch (err) {
+    console.error('[createFirebaseCustomToken]', err.code || err.name, err.message);
+    throw new ServiceError(err.message || 'Failed to create Firebase custom token', 502);
+  }
+};
+
+module.exports = {
+  login,
+  getMe,
+  listStaffAccounts,
+  createStaffAccount,
+  toggleStaffActive,
+  createFirebaseCustomToken,
+};

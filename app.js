@@ -23,8 +23,15 @@ app.use(
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/staff', require('./routes/staff'));
+app.use('/api/shift-templates', require('./routes/shiftTemplates'));
+app.use('/api/shifts', require('./routes/shifts'));
+app.use('/api/facilities', require('./routes/facilities'));
+app.use('/api/residents', require('./routes/residents'));
+app.use('/api/leave-requests', require('./routes/leaveRequests'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
+app.use('/api/care-tasks', require('./routes/careTasks'));
 app.use('/api/family', require('./routes/familyPortal'));
 
 // connect DB and create collections
@@ -43,6 +50,9 @@ const initDB = async () => {
     }
 
     console.log('All collections initialized');
+
+    const { startReadinessSyncJob } = require('./jobs/readinessSyncJob');
+    startReadinessSyncJob();
   } catch (err) {
     console.error(err);
   }

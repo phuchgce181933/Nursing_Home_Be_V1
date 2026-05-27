@@ -23,6 +23,9 @@ const Conversation = require('./conversation');
 const Message = require('./message');
 const AuditLog = require('./auditLog');
 const ReportSnapshot = require('./reportSnapshot');
+const CareTask = require('./careTask');
+const ShiftTemplate = require('./shiftTemplate');
+const LeaveRequest = require('./leaveRequest');
 
 module.exports = {
   User,
@@ -50,4 +53,7 @@ module.exports = {
   Message,
   AuditLog,
   ReportSnapshot,
+  ShiftTemplate,
+  LeaveRequest,
+  CareTask,
 };

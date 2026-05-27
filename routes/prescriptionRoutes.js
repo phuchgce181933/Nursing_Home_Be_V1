@@ -1,8 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const { createPrescription } = require('../controllers/prescriptionController');
+const {
+  createPrescription,
+  editPrescription,
+  listPrescriptions,
+  getPrescription,
+} = require('../controllers/prescriptionController');
 const { protect, authorize } = require('../middleware/auth');
-const { createPrescriptionRules, validate } = require('../validators/prescriptionValidator');
+const {
+  createPrescriptionRules,
+  editPrescriptionRules,
+  validate,
+} = require('../validators/prescriptionValidator');
 
 /**
  * @swagger
@@ -78,7 +87,7 @@ const { createPrescriptionRules, validate } = require('../validators/prescriptio
  *                       example: "Uống sau ăn sáng"
  *               acknowledgeWarnings:
  *                 type: boolean
- *                 description: "Gửi true để xác nhận bỏ qua cảnh báo nghiêm trọng (SEVERE/HIGH/CRITICAL)"
+ *                 description: "Gửi true để xác nhận bỏ qua cảnh báo nghiêm trọng"
  *                 example: false
  *     responses:
  *       201:
@@ -100,6 +109,147 @@ router.post(
   createPrescriptionRules,
   validate,
   createPrescription
+);
+
+/**
+ * @swagger
+ * /api/prescriptions:
+ *   get:
+ *     summary: List prescriptions for a resident (Doctor or Nurse)
+ *     tags: [Prescriptions]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: "Resident ObjectId (required)"
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [ACTIVE, COMPLETED, CANCELLED]
+ *         description: "Filter by status"
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *     responses:
+ *       200:
+ *         description: Paginated list with itemsCount and activeItemsCount per prescription
+ *       400:
+ *         description: residentId is required
+ *       403:
+ *         description: Doctor or Nurse role required
+ */
+router.get('/', protect, authorize('doctor', 'nurse'), listPrescriptions);
+
+/**
+ * @swagger
+ * /api/prescriptions/{id}:
+ *   get:
+ *     summary: Get a single prescription with compliance rate (Doctor or Nurse)
+ *     tags: [Prescriptions]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Prescription with complianceRate (null if no schedule data yet)
+ *       403:
+ *         description: Doctor or Nurse role required
+ *       404:
+ *         description: Prescription not found
+ */
+router.get('/:id', protect, authorize('doctor', 'nurse'), getPrescription);
+
+/**
+ * @swagger
+ * /api/prescriptions/{id}:
+ *   put:
+ *     summary: Edit an ACTIVE prescription (Doctor or Nurse)
+ *     tags: [Prescriptions]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             description: |
+ *               Doctor can send: diagnosisNote, validUntil, items[] (full replacement), acknowledgeWarnings.
+ *               Nurse can send only: items[] with _id + instructions and/or times.
+ *             properties:
+ *               diagnosisNote:
+ *                 type: string
+ *                 minLength: 10
+ *               validUntil:
+ *                 type: string
+ *                 format: date-time
+ *               items:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     _id:
+ *                       type: string
+ *                       description: "Required for Nurse edits (identifies item to patch)"
+ *                     medicationName:
+ *                       type: string
+ *                     dosage:
+ *                       type: number
+ *                     unit:
+ *                       type: string
+ *                     frequency:
+ *                       type: integer
+ *                     times:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                     route:
+ *                       type: string
+ *                       enum: [oral, injection, topical, inhaled]
+ *                     instructions:
+ *                       type: string
+ *               acknowledgeWarnings:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Updated prescription (warnings[] present if safety checks triggered)
+ *       400:
+ *         description: VALIDATION_ERROR / ALLERGY / REQUIRES_ACKNOWLEDGMENT / no changes detected
+ *       403:
+ *         description: Doctor or Nurse role required
+ *       404:
+ *         description: Prescription not found
+ */
+router.put(
+  '/:id',
+  protect,
+  authorize('doctor', 'nurse'),
+  editPrescriptionRules,
+  validate,
+  editPrescription
 );
 
 module.exports = router;

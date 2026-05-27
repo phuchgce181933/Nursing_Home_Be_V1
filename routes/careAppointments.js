@@ -36,20 +36,27 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *             properties:
  *               residentId:
  *                 type: string
+ *                 example: "64f1a2b3c4d5e6f7a8b9c0d1"
  *               scheduledStartAt:
  *                 type: string
  *                 format: date-time
+ *                 example: "2025-06-01T08:00:00.000Z"
  *               scheduledEndAt:
  *                 type: string
  *                 format: date-time
+ *                 example: "2025-06-01T09:00:00.000Z"
  *               appointmentType:
  *                 type: string
+ *                 example: "Khám tổng quát"
  *               doctorStaffId:
  *                 type: string
+ *                 example: "64f1a2b3c4d5e6f7a8b9c0d2"
  *               nurseStaffId:
  *                 type: string
+ *                 example: "64f1a2b3c4d5e6f7a8b9c0d3"
  *               notes:
  *                 type: string
+ *                 example: "Kiểm tra huyết áp và đường huyết"
  *     responses:
  *       201:
  *         description: Appointment created
@@ -75,14 +82,7 @@ router.post('/', protect, authorize(...STAFF_ROLES), createAppointment);
  *         name: residentId
  *         schema:
  *           type: string
- *       - in: query
- *         name: doctorStaffId
- *         schema:
- *           type: string
- *       - in: query
- *         name: nurseStaffId
- *         schema:
- *           type: string
+ *         description: Filter by resident ObjectId
  *       - in: query
  *         name: status
  *         schema:
@@ -93,23 +93,35 @@ router.post('/', protect, authorize(...STAFF_ROLES), createAppointment);
  *         schema:
  *           type: string
  *       - in: query
+ *         name: doctorStaffId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: nurseStaffId
+ *         schema:
+ *           type: string
+ *       - in: query
  *         name: from
  *         schema:
  *           type: string
  *           format: date-time
+ *         description: Filter scheduledStartAt >= from
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
+ *         description: Filter scheduledStartAt <= to
  *       - in: query
  *         name: page
  *         schema:
  *           type: integer
+ *           default: 1
  *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
+ *           default: 20
  *     responses:
  *       200:
  *         description: List of appointments
@@ -176,6 +188,13 @@ router.get('/my', protect, authorize('doctor', 'nurse'), getMyAppointments);
  *         name: residentId
  *         schema:
  *           type: string
+ *           format: date
+ *         description: Date to view (default today), e.g. 2025-06-01
+ *       - in: query
+ *         name: residentId
+ *         schema:
+ *           type: string
+ *         description: Filter by resident ObjectId
  *     responses:
  *       200:
  *         description: Daily schedule
@@ -201,6 +220,13 @@ router.get('/daily', protect, authorize(...STAFF_ROLES), getDailySchedule);
  *         name: residentId
  *         schema:
  *           type: string
+ *           format: date
+ *         description: Any date within the target week (default current week), e.g. 2025-06-01
+ *       - in: query
+ *         name: residentId
+ *         schema:
+ *           type: string
+ *         description: Filter by resident ObjectId
  *     responses:
  *       200:
  *         description: Weekly schedule
@@ -244,6 +270,7 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getAppointment);
  *         schema:
  *           type: string
  *     requestBody:
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
@@ -252,13 +279,17 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getAppointment);
  *               scheduledStartAt:
  *                 type: string
  *                 format: date-time
+ *                 example: "2025-06-01T08:00:00.000Z"
  *               scheduledEndAt:
  *                 type: string
  *                 format: date-time
+ *                 example: "2025-06-01T09:30:00.000Z"
  *               appointmentType:
  *                 type: string
+ *                 example: "Khám tổng quát"
  *               notes:
  *                 type: string
+ *                 example: "Cập nhật ghi chú"
  *     responses:
  *       200:
  *         description: Appointment updated
@@ -266,6 +297,8 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getAppointment);
  *         description: Cannot edit completed/cancelled appointment or schedule conflict
  *       404:
  *         description: Appointment not found
+ *       409:
+ *         description: Schedule conflict
  */
 router.put('/:id', protect, authorize(...STAFF_ROLES), updateAppointment);
 
@@ -324,6 +357,7 @@ router.delete('/:id', protect, authorize('admin', 'manager', 'doctor'), deleteAp
  *               status:
  *                 type: string
  *                 enum: [scheduled, in_progress, completed, cancelled]
+ *                 example: "in_progress"
  *     responses:
  *       200:
  *         description: Status updated
@@ -358,6 +392,7 @@ router.put('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
  *               doctorStaffId:
  *                 type: string
  *                 description: StaffProfile _id. Leave empty to unassign.
+ *                 example: "64f1a2b3c4d5e6f7a8b9c0d2"
  *     responses:
  *       200:
  *         description: Doctor assigned
@@ -392,6 +427,7 @@ router.put('/:id/assign-doctor', protect, authorize('admin', 'manager'), assignD
  *               nurseStaffId:
  *                 type: string
  *                 description: StaffProfile _id. Leave empty to unassign.
+ *                 example: "64f1a2b3c4d5e6f7a8b9c0d3"
  *     responses:
  *       200:
  *         description: Nurse assigned

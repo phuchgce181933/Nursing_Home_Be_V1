@@ -17,7 +17,7 @@ const ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracti
 const SHIFT_STATUSES = ['scheduled', 'completed', 'cancelled'];
 const ACTIVITY_STATUSES = ['draft', 'scheduled', 'ongoing', 'completed', 'cancelled'];
 
-const PRESCRIPTION_STATUSES = ['active', 'paused', 'stopped', 'completed'];
+const PRESCRIPTION_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];
 const MEDICATION_ADMIN_STATUSES = ['pending', 'taken', 'missed', 'overdue'];
 const INCIDENT_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const INCIDENT_STATUSES = ['open', 'investigating', 'resolved', 'closed'];

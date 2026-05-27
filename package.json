@@ -7,6 +7,8 @@
     "dev": "nodemon ./bin/www",
     "seed": "node scripts/seed.js",
     "seed:local": "cross-env NODE_ENV=local node scripts/seed.js",
+    "seed:medication": "node seeders/medicationSeed.js",
+    "seed:medication:local": "cross-env NODE_ENV=local node seeders/medicationSeed.js",
     "dev:local": "cross-env NODE_ENV=local nodemon ./bin/www"
   },
   "dependencies": {

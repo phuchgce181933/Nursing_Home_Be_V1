@@ -1,0 +1,185 @@
+const express = require('express');
+
+const router = express.Router();
+const {
+  createIncident,
+  listIncidents,
+  getIncident,
+  updateIncidentStatus,
+  exportIncidents,
+} = require('../controllers/incidentController');
+const { protect, authorize } = require('../middleware/auth');
+
+router.use(protect, authorize('doctor', 'nurse', 'admin'));
+
+/**
+ * @swagger
+ * /api/incidents:
+ *   post:
+ *     summary: Create incident report
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - incidentType
+ *               - incidentAt
+ *               - description
+ *             properties:
+ *               residentId:
+ *                 type: string
+ *               incidentType:
+ *                 type: string
+ *               severity:
+ *                 type: string
+ *                 enum: [low, medium, high, critical]
+ *               incidentAt:
+ *                 type: string
+ *                 format: date-time
+ *               location:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               assignedStaffIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       201:
+ *         description: Incident created and notifications sent when possible
+ */
+router.post('/', createIncident);
+
+/**
+ * @swagger
+ * /api/incidents:
+ *   get:
+ *     summary: Search and list incidents
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [open, investigating, resolved, closed]
+ *       - in: query
+ *         name: severity
+ *         schema:
+ *           type: string
+ *           enum: [low, medium, high, critical]
+ *       - in: query
+ *         name: incidentType
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: residentId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: reporterRole
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: incidentFrom
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: incidentTo
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Paginated incident list
+ */
+router.get('/', listIncidents);
+
+/**
+ * @swagger
+ * /api/incidents/export:
+ *   get:
+ *     summary: Export incident reports as CSV
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Downloadable CSV incident report
+ */
+router.get('/export', exportIncidents);
+
+/**
+ * @swagger
+ * /api/incidents/{id}:
+ *   get:
+ *     summary: Get incident details
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Incident details
+ */
+router.get('/:id', getIncident);
+
+/**
+ * @swagger
+ * /api/incidents/{id}/status:
+ *   patch:
+ *     summary: Update incident status
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [open, investigating, resolved, closed]
+ *     responses:
+ *       200:
+ *         description: Incident status updated
+ */
+router.patch('/:id/status', updateIncidentStatus);
+
+module.exports = router;

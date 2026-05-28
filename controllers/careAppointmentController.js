@@ -11,7 +11,16 @@ const createAppointment = async (req, res) => {
 
 const listAppointments = async (req, res) => {
   try {
-    const result = await careAppointmentService.listAppointments(req.query);
+    const result = await careAppointmentService.listAppointments(req.user, req.staffProfile, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const getMyAppointments = async (req, res) => {
+  try {
+    const result = await careAppointmentService.getMyAppointments(req.user, req.query);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -20,7 +29,7 @@ const listAppointments = async (req, res) => {
 
 const getDailySchedule = async (req, res) => {
   try {
-    const result = await careAppointmentService.getDailySchedule(req.query);
+    const result = await careAppointmentService.getDailySchedule(req.user, req.staffProfile, req.query);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -29,7 +38,7 @@ const getDailySchedule = async (req, res) => {
 
 const getWeeklySchedule = async (req, res) => {
   try {
-    const result = await careAppointmentService.getWeeklySchedule(req.query);
+    const result = await careAppointmentService.getWeeklySchedule(req.user, req.staffProfile, req.query);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -38,7 +47,7 @@ const getWeeklySchedule = async (req, res) => {
 
 const getAppointment = async (req, res) => {
   try {
-    const result = await careAppointmentService.getAppointment(req.params.id);
+    const result = await careAppointmentService.getAppointment(req.user, req.staffProfile, req.params.id);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -92,7 +101,7 @@ const assignNurse = async (req, res) => {
 
 const sendReminder = async (req, res) => {
   try {
-    const result = await careAppointmentService.sendReminder(req.params.id);
+    const result = await careAppointmentService.sendReminder(req.user, req.params.id, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -102,6 +111,7 @@ const sendReminder = async (req, res) => {
 module.exports = {
   createAppointment,
   listAppointments,
+  getMyAppointments,
   getDailySchedule,
   getWeeklySchedule,
   getAppointment,

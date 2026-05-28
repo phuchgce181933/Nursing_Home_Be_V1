@@ -32,6 +32,19 @@ const countDocuments = async (filter) => CareAppointment.countDocuments(filter);
 const saveAppointment = async (appointment) => appointment.save();
 const deleteAppointment = async (appointment) => appointment.deleteOne();
 
+const findAppointmentsNeedingReminder = async (windowStart, windowEnd) =>
+  CareAppointment.find({
+    status: 'scheduled',
+    scheduledStartAt: { $gte: windowStart, $lte: windowEnd },
+    autoReminderSentAt: { $exists: false },
+  })
+    .populate('residentId', 'fullName familyPortalAccountIds')
+    .populate({ path: 'doctorStaffId', select: 'userId' })
+    .populate({ path: 'nurseStaffId', select: 'userId' });
+
+const markReminderSent = async (id) =>
+  CareAppointment.findByIdAndUpdate(id, { autoReminderSentAt: new Date() });
+
 module.exports = {
   createAppointment,
   findById,
@@ -42,4 +55,6 @@ module.exports = {
   countDocuments,
   saveAppointment,
   deleteAppointment,
+  findAppointmentsNeedingReminder,
+  markReminderSent,
 };

@@ -94,6 +94,14 @@ const SEED_EMAILS = [
   'doctor@test.com', 'doctor2@test.com',
   'nurse@test.com', 'nurse2@test.com',
   'family@test.com',
+  'family1b@test.com',
+  'family2@test.com',
+  'family3@test.com',
+  'family4@test.com',
+  'family5@test.com',
+  'admin@gmail.com',
+  'manager@gmail.com',
+  'doctor@gmail.com',
 ];
 const SEED_STAFF_CODES = ['ADM001', 'MGR001', 'DOC001', 'DOC002', 'NUR001', 'NUR002'];
 const SEED_RESIDENT_CODES = ['RES001', 'RES002', 'RES003', 'RES004', 'RES005', 'RES006'];
@@ -104,6 +112,17 @@ const seed = async () => {
   await connectDB();
 
   console.log('Clearing old seed data...');
+  const existingBuilding = await Building.findOne({ code: SEED_BUILDING_CODE });
+  if (existingBuilding) {
+    const existingFloors = await Floor.find({ buildingId: existingBuilding._id });
+    const floorIds = existingFloors.map((f) => f._id);
+    const existingRooms = await Room.find({ floorId: { $in: floorIds } });
+    const roomIds = existingRooms.map((r) => r._id);
+    await Bed.deleteMany({ roomId: { $in: roomIds } });
+    await Room.deleteMany({ floorId: { $in: floorIds } });
+    await Floor.deleteMany({ buildingId: existingBuilding._id });
+    await Building.deleteOne({ _id: existingBuilding._id });
+  }
   await User.deleteMany({ email: { $in: SEED_EMAILS } });
   await StaffProfile.deleteMany({ staffCode: { $in: SEED_STAFF_CODES } });
   await Resident.deleteMany({ residentCode: { $in: SEED_RESIDENT_CODES } });
@@ -181,6 +200,37 @@ const seed = async () => {
       admittedAt: new Date('2024-05-20'),
       familyPortalAccountIds: [],
     },
+  ]);
+
+  const familyPortalIds = {
+    RES001: [family1._id, family1b._id],
+    RES002: [family2._id],
+    RES003: [family3._id],
+    RES004: [family4._id],
+    RES005: [family5._id],
+  };
+
+  console.log('Creating staff profiles...');
+  const [, , doctorProfile, nurseProfile] = await StaffProfile.insertMany([
+    { userId: admin._id, staffCode: 'ADM001', roleCategory: 'admin', specialty: 'Administration' },
+    { userId: manager._id, staffCode: 'MGR001', roleCategory: 'manager', specialty: 'Operations Management' },
+    { userId: doctor._id, staffCode: 'DOC001', roleCategory: 'doctor', specialty: 'General Medicine' },
+    { userId: nurse._id, staffCode: 'NUR001', roleCategory: 'nurse', specialty: 'Care Nursing' },
+    { userId: adminGmail._id, staffCode: 'ADM002', roleCategory: 'admin', specialty: 'Administration' },
+    { userId: managerGmail._id, staffCode: 'MGR002', roleCategory: 'manager', specialty: 'Operations Management' },
+    { userId: doctorGmail._id, staffCode: 'DOC002', roleCategory: 'doctor', specialty: 'General Medicine' },
+  ]);
+
+  console.log('Creating building, floors and rooms...');
+  const building = await Building.create({
+    code: SEED_BUILDING_CODE,
+    name: 'Tòa điều dưỡng chính',
+    address: '123 Đường Y Tế, Quận 1',
+    description: 'Tòa nhà mẫu dùng cho seed',
+    isActive: true,
+  });
+
+  const [floor1, floor2] = await Floor.insertMany([
     {
       residentCode: 'RES005',
       fullName: 'Bà Hoàng Thị H',

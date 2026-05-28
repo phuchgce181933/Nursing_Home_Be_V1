@@ -29,6 +29,8 @@ const Conversation = require('./conversation');
 const Message = require('./message');
 const AuditLog = require('./auditLog');
 const ReportSnapshot = require('./reportSnapshot');
+const CareTask = require('./careTask');
+const LeaveRequest = require('./leaveRequest');
 const FacilityTour = require('./facilityTour');
 const ServicePackage = require('./servicePackage');
 const MedicationSchedule = require('./MedicationSchedule');
@@ -68,6 +70,8 @@ module.exports = {
   Message,
   AuditLog,
   ReportSnapshot,
+  LeaveRequest,
+  CareTask,
   FacilityTour,
   ServicePackage,
   MedicationSchedule,

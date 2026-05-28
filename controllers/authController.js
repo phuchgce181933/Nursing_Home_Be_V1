@@ -20,7 +20,7 @@ const getMe = async (req, res) => {
 
 const createStaffAccount = async (req, res) => {
   try {
-    const result = await authService.createStaffAccount(req.body);
+    const result = await authService.createStaffAccount(req.body, req.user);
     res.status(201).json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -44,6 +44,7 @@ const toggleStaffActive = async (req, res) => {
     res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
+
 // update profile
 const updateProfile = async (req, res) => {
   try {
@@ -55,14 +56,11 @@ const updateProfile = async (req, res) => {
     });
   }
 };
-// đổi pass
+
+// doi pass
 const changePassword = async (req, res) => {
   try {
-    const result = await authService.changePassword(
-      req.user,
-      req.body
-    );
-
+    const result = await authService.changePassword(req.user, req.body);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({
@@ -70,13 +68,11 @@ const changePassword = async (req, res) => {
     });
   }
 };
+
 // forgot password
 const forgotPassword = async (req, res) => {
   try {
-    const result = await authService.forgotPassword(
-      req.body
-    );
-
+    const result = await authService.forgotPassword(req.body);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({
@@ -84,13 +80,11 @@ const forgotPassword = async (req, res) => {
     });
   }
 };
+
 // reset password
 const resetPassword = async (req, res) => {
   try {
-    const result = await authService.resetPassword(
-      req.body
-    );
-
+    const result = await authService.resetPassword(req.body);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({
@@ -98,15 +92,11 @@ const resetPassword = async (req, res) => {
     });
   }
 };
+
 // update user by admin
 const updateUserByAdmin = async (req, res) => {
   try {
-    const result =
-      await authService.updateUserByAdmin(
-        req.params.id,
-        req.body
-      );
-
+    const result = await authService.updateUserByAdmin(req.params.id, req.body);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({
@@ -114,6 +104,26 @@ const updateUserByAdmin = async (req, res) => {
     });
   }
 };
-module.exports = { login, getMe, createStaffAccount, listStaffAccounts, 
-  toggleStaffActive, updateProfile, changePassword, forgotPassword, resetPassword, updateUserByAdmin };
 
+const createFirebaseToken = async (req, res) => {
+  try {
+    const result = await authService.createFirebaseCustomToken(req.user);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+module.exports = {
+  login,
+  getMe,
+  createStaffAccount,
+  listStaffAccounts,
+  toggleStaffActive,
+  updateProfile,
+  changePassword,
+  forgotPassword,
+  resetPassword,
+  updateUserByAdmin,
+  createFirebaseToken,
+};

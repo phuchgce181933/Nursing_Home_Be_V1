@@ -1,246 +1,680 @@
 const express = require('express');
 const router = express.Router();
-const residentService = require('../services/residentService');
-const residentRepo = require('../repositories/residentRepository');
-const facilityService = require('../services/facilityService');
+const {
+  listResidents,
+  getResidentsAreaSummary,
+  listResidentsByArea,
+  getResidentDetail,
+  getTransferTargets,
+  transferResidentToRoom,
+  listResidentsForInitialHealth,
+  listResidentsForPreExisting,
+  listResidentsForDrugAllergies,
+  getInitialHealth,
+  recordInitialHealth,
+  getPreExistingConditions,
+  updatePreExistingConditions,
+  getDrugAllergies,
+  updateDrugAllergies,
+  getResidentFamilyInfo,
+  addEmergencyContact,
+  replaceEmergencyContacts,
+  updateEmergencyContact,
+  removeEmergencyContact,
+} = require('../controllers/residentController');
+const { protect, authorize } = require('../middleware/auth');
 
-const parsePagination = (query) => {
-  const page = Math.max(1, parseInt(query.page || 1, 10));
-  const limit = Math.min(100, Math.max(1, parseInt(query.limit || 20, 10)));
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
-};
+const adminManager = authorize('admin', 'manager');
 
-// Public list used by admin UI and assignment pickers
-router.get('/', async (req, res) => {
-  try {
-    const result = await residentService.adminListResidents(req.query);
-    res.json(result);
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
+/**
+ * @swagger
+ * /api/residents:
+ *   get:
+ *     summary: List residents (assignment picker or family management with pagination)
+ *     description: |
+ *       Without page/limit — returns residents for staff assignment picker (floorId, roomId filters).
+ *       With page or limit — returns paginated list with emergencyContactCount for family management UI.
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: When set, enables family management list mode
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: floorId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: roomId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search by fullName or residentCode
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           default: admitted
+ *     responses:
+ *       200:
+ *         description: Residents list (with emergencyContactCount when paginated)
+ */
+router.get('/', protect, adminManager, listResidents);
 
-// List residents for initial-health view (simple summary)
-router.get('/initial-health', async (req, res) => {
-  try {
-    const { page, limit, skip } = parsePagination(req.query);
-    const filter = {};
-    if (req.query.status) filter.residencyStatus = req.query.status;
-    if (req.query.search) {
-      const term = String(req.query.search).trim();
-      if (term) filter.$or = [
-        { residentCode: { $regex: term, $options: 'i' } },
-        { fullName: { $regex: term, $options: 'i' } },
-      ];
-    }
+/**
+ * @swagger
+ * /api/residents/areas/summary:
+ *   get:
+ *     summary: Resident counts per floor and room (View Residents by Area)
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: buildingId
+ *         schema:
+ *           type: string
+ *         description: Filter by building (recommended)
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           default: admitted
+ *     responses:
+ *       200:
+ *         description: totalResidents and floors with residentCount per room
+ */
+router.get('/areas/summary', protect, adminManager, getResidentsAreaSummary);
 
-    const [data, total] = await Promise.all([
-      residentRepo.findAll(filter, { sort: { createdAt: -1 }, skip, limit }),
-      residentRepo.countAll(filter),
-    ]);
+/**
+ * @swagger
+ * /api/residents/by-area:
+ *   get:
+ *     summary: Paginated residents list filtered by building, floor, or room
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: buildingId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: floorId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: roomId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           default: admitted
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Residents with room, floor, building, and bed labels
+ *       400:
+ *         description: buildingId or floorId required
+ */
+router.get('/by-area', protect, adminManager, listResidentsByArea);
 
-    const mapped = (data || []).map((r) => ({
-      _id: r._id,
-      residentCode: r.residentCode,
-      fullName: r.fullName,
-      hasInitialHealthRecord: Boolean(r.initialHealthCondition),
-    }));
+/**
+ * @swagger
+ * /api/residents/initial-health:
+ *   get:
+ *     summary: List residents for admission-time health (admin/manager)
+ *     description: |
+ *       Health status at nursing-home admission (e.g. healthy, active, weak needing 1-1 care) — not pre-admission disease history.
+ *       Each row `_id` is `residentId` for GET/PUT `/api/residents/:residentId/initial-health`.
+ *       `hasInitialHealthRecord` is based on `initialHealthCondition` only.
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           default: admitted
+ *       - in: query
+ *         name: recorded
+ *         schema:
+ *           type: boolean
+ *         description: true = already has initialHealthCondition, false = not yet recorded
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Paginated list with hasInitialHealthRecord flag
+ */
+router.get('/initial-health', protect, adminManager, listResidentsForInitialHealth);
 
-    res.json({ data: mapped, total, page, limit, totalPages: Math.ceil(total / limit) || 1 });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
+/**
+ * @swagger
+ * /api/residents/pre-existing-conditions:
+ *   get:
+ *     summary: List residents for pre-admission conditions & history (admin/manager)
+ *     description: |
+ *       Diseases and medical history before entering the nursing home (e.g. asthma, dengue). Not admission-time fitness.
+ *       Each item includes `_id`, `room`/`floor`/`building`, `hasPreExistingRecord`, `chronicConditionsCount`, `medicalHistoryCount`.
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           default: admitted
+ *       - in: query
+ *         name: recorded
+ *         schema:
+ *           type: boolean
+ *         description: true = has chronicConditions or medicalHistory entries, false = neither
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Paginated list with area and record flags
+ */
+router.get('/pre-existing-conditions', protect, adminManager, listResidentsForPreExisting);
 
-router.get('/:residentId/initial-health', async (req, res) => {
-  try {
-    const resident = await residentRepo.findById(req.params.residentId);
-    if (!resident) return res.status(404).json({ message: 'Resident not found' });
-    res.json({
-      resident: {
-        _id: resident._id,
-        residentCode: resident.residentCode,
-        fullName: resident.fullName,
-        age: resident.age,
-        gender: resident.gender,
-        residencyStatus: resident.residencyStatus,
-      },
-      initialHealth: {
-        bloodType: resident.bloodType,
-        initialHealthCondition: resident.initialHealthCondition,
-        hasInitialHealthRecord: Boolean(resident.initialHealthCondition),
-        updatedAt: resident.updatedAt,
-      },
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
+/**
+ * @swagger
+ * /api/residents/drug-allergies:
+ *   get:
+ *     summary: List residents for drug allergies management (admin/manager)
+ *     description: |
+ *       Each item includes `_id` (residentId), `room`/`floor`/`building` aligned with by-area lists,
+ *       and `hasDrugAllergiesRecord`, `drugAllergiesCount`.
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           default: admitted
+ *       - in: query
+ *         name: recorded
+ *         schema:
+ *           type: boolean
+ *         description: true = has at least one drug allergy entry, false = none
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Paginated list with area and record flags
+ */
+router.get('/drug-allergies', protect, adminManager, listResidentsForDrugAllergies);
 
-// Family / emergency contacts for admin UI
-router.get('/:residentId/family', async (req, res) => {
-  try {
-    const resident = await residentRepo.findById(req.params.residentId);
-    if (!resident) return res.status(404).json({ message: 'Resident not found' });
-    res.json({
-      resident: { _id: resident._id, residentCode: resident.residentCode, fullName: resident.fullName },
-      emergencyContacts: resident.emergencyContacts || [],
-      familyPortalAccountIds: resident.familyPortalAccountIds || [],
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
+/**
+ * @swagger
+ * /api/residents/{residentId}/family:
+ *   get:
+ *     summary: Get resident family info and emergency contacts
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Resident detail with emergencyContacts array
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/:residentId/family', protect, adminManager, getResidentFamilyInfo);
 
-router.put('/:residentId/initial-health', async (req, res) => {
-  try {
-    const update = {};
-    if (req.body.bloodType !== undefined) update.bloodType = req.body.bloodType;
-    if (req.body.initialHealthCondition !== undefined)
-      update.initialHealthCondition = String(req.body.initialHealthCondition || '').trim() || undefined;
+/**
+ * @swagger
+ * /api/residents/{residentId}/initial-health:
+ *   get:
+ *     summary: Get admission-time health for a resident
+ *     description: Returns `initialHealth` with `bloodType` and `initialHealthCondition` only (not chronicConditions or allergies).
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Resident identity and initialHealth object
+ *       404:
+ *         description: Resident not found
+ *   put:
+ *     summary: Record or update admission-time health
+ *     description: |
+ *       Describe the resident's condition when admitted (healthy, active, weak needing 1-1 care, etc.).
+ *       Do not send `chronicConditions`, `medicalHistory`, or `allergies` — use pre-existing-conditions and drug-allergies endpoints.
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [initialHealthCondition]
+ *             properties:
+ *               bloodType:
+ *                 type: string
+ *                 enum: [A+, A-, B+, B-, AB+, AB-, O+, O-, unknown]
+ *               initialHealthCondition:
+ *                 type: string
+ *                 minLength: 10
+ *                 description: Narrative of health at admission (not pre-admission disease list)
+ *     responses:
+ *       200:
+ *         description: Health condition saved
+ *       400:
+ *         description: Validation error
+ */
+router.get('/:residentId/initial-health', protect, adminManager, getInitialHealth);
+router.put('/:residentId/initial-health', protect, adminManager, recordInitialHealth);
 
-    if (Object.keys(update).length === 0) return res.status(400).json({ message: 'No fields to update' });
+/**
+ * @swagger
+ * /api/residents/{residentId}/pre-existing-conditions:
+ *   get:
+ *     summary: Get pre-admission conditions and medical history
+ *     description: |
+ *       `chronicConditions` = ongoing chronic diseases before admission; `medicalHistory` = past episodes (e.g. dengue).
+ *       Resident includes building (tòa), floor (tầng), room (phòng), and bed when assigned.
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Resident with area (building, floor, room, bed) and preExistingConditions
+ *   put:
+ *     summary: Update pre-admission conditions and medical history
+ *     description: For illnesses before entering the nursing home — not admission-time fitness (use initial-health).
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               chronicConditions:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Chronic diseases before admission (e.g. asthma, diabetes); array or CSV; 2-200 chars/item; max 30
+ *               medicalHistory:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Past medical episodes before admission (e.g. dengue); array or CSV; 2-200 chars/item; max 30
+ *     responses:
+ *       200:
+ *         description: Pre-existing conditions updated
+ *       400:
+ *         description: Validation error
+ */
+router.get('/:residentId/pre-existing-conditions', protect, adminManager, getPreExistingConditions);
+router.put('/:residentId/pre-existing-conditions', protect, adminManager, updatePreExistingConditions);
 
-    const before = await residentRepo.findById(req.params.residentId);
-    if (!before) return res.status(404).json({ message: 'Resident not found' });
+/**
+ * @swagger
+ * /api/residents/{residentId}/drug-allergies:
+ *   get:
+ *     summary: Get drug allergies of a resident
+ *     description: Resident includes building (tòa), floor (tầng), room (phòng), and bed when assigned.
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Resident with area (building, floor, room, bed) and drugAllergies
+ *   put:
+ *     summary: Update drug allergies
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [drugAllergies]
+ *             properties:
+ *               drugAllergies:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array or comma-separated string; each item 2-200 chars; max 30 items
+ *     responses:
+ *       200:
+ *         description: Drug allergies updated
+ *       400:
+ *         description: Validation error
+ */
+router.get('/:residentId/drug-allergies', protect, adminManager, getDrugAllergies);
+router.put('/:residentId/drug-allergies', protect, adminManager, updateDrugAllergies);
 
-    const updated = await residentRepo.updateById(req.params.residentId, update);
-    res.json({ message: 'Recorded initial health', resident: updated });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
+/**
+ * @swagger
+ * /api/residents/{residentId}/emergency-contacts:
+ *   post:
+ *     summary: Add one emergency contact
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [fullName, relationship, phone]
+ *             properties:
+ *               fullName:
+ *                 type: string
+ *               relationship:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               address:
+ *                 type: string
+ *               isPrimary:
+ *                 type: boolean
+ *     responses:
+ *       201:
+ *         description: Contact added
+ *   put:
+ *     summary: Replace all emergency contacts (bulk sync)
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               contacts:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *     responses:
+ *       200:
+ *         description: Contacts replaced
+ */
+router.post('/:residentId/emergency-contacts', protect, adminManager, addEmergencyContact);
+router.put('/:residentId/emergency-contacts', protect, adminManager, replaceEmergencyContacts);
 
-// Pre-existing conditions list (summary)
-router.get('/pre-existing-conditions', async (req, res) => {
-  try {
-    const { page, limit, skip } = parsePagination(req.query);
-    const filter = {};
-    if (req.query.status) filter.residencyStatus = req.query.status;
-    const [data, total] = await Promise.all([
-      residentRepo.findAll(filter, { sort: { createdAt: -1 }, skip, limit }),
-      residentRepo.countAll(filter),
-    ]);
+/**
+ * @swagger
+ * /api/residents/{residentId}/emergency-contacts/{contactId}:
+ *   put:
+ *     summary: Update one emergency contact
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: contactId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               fullName:
+ *                 type: string
+ *               relationship:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               address:
+ *                 type: string
+ *               isPrimary:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Contact updated
+ *   delete:
+ *     summary: Remove one emergency contact
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: contactId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Contact removed
+ */
+router.put('/:residentId/emergency-contacts/:contactId', protect, adminManager, updateEmergencyContact);
+router.delete('/:residentId/emergency-contacts/:contactId', protect, adminManager, removeEmergencyContact);
 
-    const mapped = (data || []).map((r) => ({
-      _id: r._id,
-      residentCode: r.residentCode,
-      fullName: r.fullName,
-      chronicConditionsCount: (r.chronicConditions || []).length,
-      medicalHistoryCount: 0,
-      hasPreExistingRecord: (r.chronicConditions || []).length > 0,
-    }));
+/**
+ * @swagger
+ * /api/residents/{residentId}/transfer-room/targets:
+ *   get:
+ *     summary: Get available transfer targets (rooms and beds)
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: floorId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Resident current assignment and target rooms with availableBeds
+ *       400:
+ *         description: Validation error
+ *       404:
+ *         description: Resident or floor not found
+ */
+router.get('/:residentId/transfer-room/targets', protect, adminManager, getTransferTargets);
 
-    res.json({ data: mapped, total, page, limit, totalPages: Math.ceil(total / limit) || 1 });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
+/**
+ * @swagger
+ * /api/residents/{residentId}/transfer-room:
+ *   post:
+ *     summary: Transfer resident to another room and bed
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [targetRoomId, targetBedId]
+ *             properties:
+ *               targetRoomId:
+ *                 type: string
+ *               targetBedId:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Resident transferred successfully
+ *       400:
+ *         description: Validation error or target unavailable
+ *       404:
+ *         description: Resident, room, or bed not found
+ */
+router.post('/:residentId/transfer-room', protect, adminManager, transferResidentToRoom);
 
-router.get('/:residentId/pre-existing-conditions', async (req, res) => {
-  try {
-    const resident = await residentRepo.findById(req.params.residentId);
-    if (!resident) return res.status(404).json({ message: 'Resident not found' });
-    res.json({
-      resident: { _id: resident._id, residentCode: resident.residentCode, fullName: resident.fullName },
-      preExistingConditions: {
-        chronicConditions: resident.chronicConditions || [],
-        medicalHistory: resident.medicalHistory || [],
-      },
-    });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.put('/:residentId/pre-existing-conditions', async (req, res) => {
-  try {
-    const update = {};
-    if (req.body.chronicConditions !== undefined) update.chronicConditions = req.body.chronicConditions;
-    if (req.body.medicalHistory !== undefined) update.medicalHistory = req.body.medicalHistory;
-    if (Object.keys(update).length === 0) return res.status(400).json({ message: 'No fields to update' });
-
-    const before = await residentRepo.findById(req.params.residentId);
-    if (!before) return res.status(404).json({ message: 'Resident not found' });
-    const updated = await residentRepo.updateById(req.params.residentId, update);
-    res.json({ message: 'Pre-existing conditions updated', preExistingConditions: { chronicConditions: updated.chronicConditions || [], medicalHistory: updated.medicalHistory || [] } });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-// Drug allergies
-router.get('/drug-allergies', async (req, res) => {
-  try {
-    const { page, limit, skip } = parsePagination(req.query);
-    const filter = {};
-    const [data, total] = await Promise.all([
-      residentRepo.findAll(filter, { sort: { createdAt: -1 }, skip, limit }),
-      residentRepo.countAll(filter),
-    ]);
-
-    const mapped = (data || []).map((r) => ({
-      _id: r._id,
-      residentCode: r.residentCode,
-      fullName: r.fullName,
-      drugAllergiesCount: (r.allergies || []).length,
-      hasDrugAllergiesRecord: (r.allergies || []).length > 0,
-    }));
-
-    res.json({ data: mapped, total, page, limit, totalPages: Math.ceil(total / limit) || 1 });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.get('/:residentId/drug-allergies', async (req, res) => {
-  try {
-    const resident = await residentRepo.findById(req.params.residentId);
-    if (!resident) return res.status(404).json({ message: 'Resident not found' });
-    res.json({ resident: { _id: resident._id, residentCode: resident.residentCode, fullName: resident.fullName }, drugAllergies: { drugAllergies: resident.allergies || [] } });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.put('/:residentId/drug-allergies', async (req, res) => {
-  try {
-    const update = {};
-    if (req.body.drugAllergies !== undefined) update.allergies = req.body.drugAllergies;
-    if (Object.keys(update).length === 0) return res.status(400).json({ message: 'No fields to update' });
-    const before = await residentRepo.findById(req.params.residentId);
-    if (!before) return res.status(404).json({ message: 'Resident not found' });
-    const updated = await residentRepo.updateById(req.params.residentId, update);
-    res.json({ message: 'Drug allergies updated', drugAllergies: { drugAllergies: updated.allergies || [] } });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-// Transfer targets and transfer action
-router.get('/:residentId/transfer-room/targets', async (req, res) => {
-  try {
-    const params = req.query || {};
-    // delegate to facilityService to list candidate rooms
-    const rooms = await facilityService.listRooms({ floorId: params.floorId, activeOnly: true });
-    res.json({ targets: rooms });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.post('/:residentId/transfer-room', async (req, res) => {
-  try {
-    const { targetRoomId } = req.body || {};
-    if (!targetRoomId) return res.status(400).json({ message: 'targetRoomId is required' });
-    const before = await residentRepo.findById(req.params.residentId);
-    if (!before) return res.status(404).json({ message: 'Resident not found' });
-    const updated = await residentRepo.updateById(req.params.residentId, { roomId: targetRoomId });
-    res.json({ message: 'Resident transferred', resident: updated });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
+/**
+ * @swagger
+ * /api/residents/{residentId}:
+ *   get:
+ *     summary: Get resident detail with area and health info (View Residents by Area)
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Full resident profile with area (room, floor, building, bed)
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/:residentId', protect, adminManager, getResidentDetail);
 
 module.exports = router;

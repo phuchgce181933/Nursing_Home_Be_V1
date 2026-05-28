@@ -1,32 +1,66 @@
-const Floor = require('../models/floor');
-const Room = require('../models/room');
+const Building = require('../models/building');
+const floorRepo = require('../repositories/floorRepository');
+const roomRepo = require('../repositories/roomRepository');
 
-const listFloors = async ({ buildingId, activeOnly } = {}) => {
-  const q = {};
-  if (buildingId) q.buildingId = buildingId;
-  if (activeOnly) q.isActive = true;
-  return Floor.find(q).sort({ floorNumber: 1 }).lean();
+const formatFloorLabel = (floor) => {
+  const floorName = floor.name || `Tầng ${floor.floorNumber}`;
+  const buildingName = floor.buildingId?.name || floor.buildingId?.code;
+  return buildingName ? `${floorName} — ${buildingName}` : floorName;
 };
 
-const listRooms = async ({ floorId, buildingId, activeOnly } = {}) => {
-  const q = {};
-  if (floorId) q.floorId = floorId;
-  if (buildingId) q.buildingId = buildingId;
-  if (activeOnly) q.status = 'available';
-  const rooms = await Room.find(q).sort({ roomNumber: 1 }).lean();
-  return rooms.map((r) => ({
-    _id: r._id,
-    roomNumber: r.roomNumber,
-    label: r.name || (r.roomNumber ? `Phòng ${r.roomNumber}` : undefined),
-    roomType: r.roomType,
-    capacity: r.capacity,
-    occupiedCount: r.occupiedCount,
-    status: r.status,
-  }));
+const listBuildings = async ({ activeOnly = true } = {}) => {
+  const filter = activeOnly ? { isActive: { $ne: false } } : {};
+  return Building.find(filter).select('code name address isActive').sort({ name: 1 }).lean();
+};
+
+const listFloors = async ({ buildingId, activeOnly = true } = {}) => {
+  const filter = {};
+  if (activeOnly) filter.isActive = { $ne: false };
+  if (buildingId) filter.buildingId = buildingId;
+
+  const floors = await floorRepo.findAll(filter);
+
+  return floors
+    .filter((f) => !activeOnly || f.buildingId?.isActive !== false)
+    .map((floor) => ({
+      _id: floor._id,
+      floorNumber: floor.floorNumber,
+      name: floor.name,
+      description: floor.description,
+      isActive: floor.isActive,
+      buildingId: floor.buildingId?._id || floor.buildingId,
+      building: floor.buildingId
+        ? {
+            _id: floor.buildingId._id,
+            code: floor.buildingId.code,
+            name: floor.buildingId.name,
+          }
+        : null,
+      label: formatFloorLabel(floor),
+    }));
+};
+
+const getFloor = async (floorId) => {
+  const floor = await floorRepo.findById(floorId);
+  if (!floor) throw Object.assign(new Error('Floor not found'), { status: 404 });
+  const obj = floor.toObject();
+  return { ...obj, label: formatFloorLabel(obj) };
 };
 
 const listRoomsByFloor = async (floorId) => {
-  return listRooms({ floorId, activeOnly: false });
+  const floor = await floorRepo.findById(floorId);
+  if (!floor) throw Object.assign(new Error('Floor not found'), { status: 404 });
+
+  const rooms = await roomRepo.findByFloorId(floorId);
+  return rooms.map((room) => ({
+    ...room,
+    label: `Phòng ${room.roomNumber}`,
+  }));
 };
 
-module.exports = { listFloors, listRooms, listRoomsByFloor };
+module.exports = {
+  listBuildings,
+  listFloors,
+  getFloor,
+  listRoomsByFloor,
+};

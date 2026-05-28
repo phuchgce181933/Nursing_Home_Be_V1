@@ -1,303 +1,269 @@
 const express = require('express');
 const router = express.Router();
-const Shift = require('../models/shift');
-const ShiftTemplate = require('../models/shiftTemplate');
-const StaffProfile = require('../models/staffProfile');
-const Resident = require('../models/resident');
-const User = require('../models/user');
-const LeaveRequest = require('../models/leaveRequest');
+const ctrl = require('../controllers/shiftController');
 const { protect, authorize } = require('../middleware/auth');
+//lenhuthao
+const MANAGER = ['admin', 'manager'];
 
-const normalizeDate = (value) => {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Date(date.toISOString().slice(0, 10));
-};
+/**
+ * @swagger
+ * tags:
+ *   name: Shifts
+ *   description: Work shift scheduling and management
+ */
 
-const parseTime = (time) => {
-  if (!time || typeof time !== 'string') return null;
-  const [hour, minute] = time.split(':').map(Number);
-  if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
-  return hour * 60 + minute;
-};
+/**
+ * @swagger
+ * /api/shifts:
+ *   get:
+ *     tags: [Shifts]
+ *     summary: List shifts with optional filters
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [draft, published, confirmed, completed, cancelled] }
+ *       - in: query
+ *         name: assignedStaffId
+ *         schema: { type: string }
+ *       - in: query
+ *         name: floorId
+ *         schema: { type: string }
+ *       - in: query
+ *         name: fromDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: toDate
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200: { description: Success }
+ */
+router.get('/', protect, ctrl.listShifts);
 
-const buildConflicts = async ({ assignedStaffId, workDate, startTime, endTime, excludeId }) => {
-  const conflicts = [];
-  const parsedDate = normalizeDate(workDate);
-  const staffProfile = assignedStaffId
-    ? await StaffProfile.findOne({ $or: [{ _id: assignedStaffId }, { userId: assignedStaffId }] }).populate('userId').lean()
-    : null;
+/**
+ * @swagger
+ * /api/shifts/schedule:
+ *   get:
+ *     tags: [Shifts]
+ *     summary: Get schedule view (day/week/month)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: fromDate
+ *         required: true
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: toDate
+ *         required: true
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200: { description: Success }
+ */
+router.get('/schedule', protect, ctrl.getSchedule);
 
-  if (!parsedDate) {
-    conflicts.push({ type: 'INVALID_TIME', severity: 'ERROR', message: 'workDate is invalid' });
-  }
-  const startMinutes = parseTime(startTime);
-  const endMinutes = parseTime(endTime);
-  if (startMinutes === null || endMinutes === null || startMinutes >= endMinutes) {
-    conflicts.push({ type: 'INVALID_TIME', severity: 'ERROR', message: 'Invalid start/end time' });
-  }
+/**
+ * @swagger
+ * /api/shifts/check-conflicts:
+ *   get:
+ *     tags: [Shifts]
+ *     summary: Preview shift validation conflicts (8 business rules)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: assignedStaffId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: workDate
+ *         required: true
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: startTime
+ *         required: true
+ *         schema: { type: string, example: "07:00" }
+ *       - in: query
+ *         name: endTime
+ *         required: true
+ *         schema: { type: string, example: "15:00" }
+ *       - in: query
+ *         name: excludeId
+ *         schema: { type: string }
+ *       - in: query
+ *         name: shiftTemplateId
+ *         schema: { type: string }
+ *       - in: query
+ *     responses:
+ *       200: { description: Conflict list with hasErrors flag }
+ */
+router.get('/check-conflicts', protect, authorize(...MANAGER), ctrl.checkConflicts);
 
-  if (parsedDate) {
-    const today = normalizeDate(new Date().toISOString().slice(0, 10));
-    if (parsedDate < today) {
-      conflicts.push({ type: 'PAST_DATE', severity: 'ERROR', message: 'Date is in the past' });
-    }
-  }
+/**
+ * @swagger
+ * /api/shifts/{id}:
+ *   get:
+ *     tags: [Shifts]
+ *     summary: Get a single shift by ID
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Success }
+ *       404: { description: Not found }
+ */
+router.get('/:id', protect, ctrl.getShift);
 
-  if (staffProfile && staffProfile.userId) {
-    const user = staffProfile.userId;
-    if (!['doctor', 'nurse'].includes(user.role)) {
-      conflicts.push({ type: 'ROLE_MISMATCH', severity: 'ERROR', message: 'Staff role cannot be scheduled for patient care' });
-    }
-    if (parsedDate) {
-      const leave = await LeaveRequest.findOne({
-        userId: user._id,
-        status: 'approved',
-        startDate: { $lte: parsedDate },
-        endDate: { $gte: parsedDate },
-      }).lean();
-      if (leave) {
-        conflicts.push({ type: 'LEAVE_CONFLICT', severity: 'ERROR', message: 'Staff is on approved leave for this date' });
-      }
+/**
+ * @swagger
+ * /api/shifts:
+ *   post:
+ *     tags: [Shifts]
+ *     summary: Create a shift (status = draft, returns conflict warnings)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, startTime, endTime, workDate, assignedStaffId]
+ *             properties:
+ *               name: { type: string }
+ *               startTime: { type: string, example: "07:00" }
+ *               endTime: { type: string, example: "15:00" }
+ *               workDate: { type: string, format: date }
+ *               assignedStaffId: { type: string }
+ *               shiftTemplateId: { type: string }
+ *               taskDescription: { type: string }
+ *               notes: { type: string }
+ *     responses:
+ *       201:
+ *         description: Shift created (floor/room assigned via PUT /api/staff/{id}/areas)
+ *       400:
+ *         description: Validation error
+ */
+router.post('/', protect, authorize(...MANAGER), ctrl.createShift);
 
-      if (startMinutes !== null && endMinutes !== null) {
-        const overlapQuery = {
-          assignedStaffId: staffProfile._id,
-          workDate: parsedDate,
-          status: { $ne: 'cancelled' },
-        };
-        if (excludeId) overlapQuery._id = { $ne: excludeId };
+/**
+ * @swagger
+ * /api/shifts/{id}/publish:
+ *   put:
+ *     tags: [Shifts]
+ *     summary: Publish a draft shift (runs full conflict check, blocks on ERROR)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Published }
+ *       400: { description: Not in draft status }
+ *       409: { description: Blocking conflicts exist }
+ */
+router.put('/:id/publish', protect, authorize(...MANAGER), ctrl.publishShift);
 
-        const existingShifts = await Shift.find(overlapQuery).lean();
-        const hasOverlap = existingShifts.some((existing) => {
-          const existingStart = parseTime(existing.startTime);
-          const existingEnd = parseTime(existing.endTime);
-          return existingStart !== null && existingEnd !== null && startMinutes < existingEnd && endMinutes > existingStart;
-        });
-        if (hasOverlap) {
-          conflicts.push({ type: 'OVERLAP', severity: 'ERROR', message: 'Staff has another shift during this time' });
-        }
-      }
-    }
-  }
+/**
+ * @swagger
+ * /api/shifts/{id}/confirm:
+ *   put:
+ *     tags: [Shifts]
+ *     summary: Confirm a published shift
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Confirmed }
+ *       400: { description: Not in published status }
+ */
+router.put('/:id/confirm', protect, authorize(...MANAGER), ctrl.confirmShift);
 
-  return conflicts;
-};
+/**
+ * @swagger
+ * /api/shifts/{id}/cancel:
+ *   put:
+ *     tags: [Shifts]
+ *     summary: Cancel a shift
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reason: { type: string }
+ *     responses:
+ *       200: { description: Cancelled }
+ */
+router.put('/:id/cancel', protect, authorize(...MANAGER), ctrl.cancelShift);
 
-const resolveStaffProfile = async (value) => {
-  if (!value) return null;
-  const byId = await StaffProfile.findById(value).lean();
-  if (byId) return byId;
-  return StaffProfile.findOne({ userId: value }).lean();
-};
+// ── Generic /:id AFTER sub-resource routes ────────────────────────────────────
 
-const includeShiftPopulations = (query) =>
-  query
-    .populate({ path: 'assignedStaffId', populate: { path: 'userId', model: 'User' } })
-    .populate('shiftTemplateId');
+/**
+ * @swagger
+ * /api/shifts/{id}:
+ *   put:
+ *     tags: [Shifts]
+ *     summary: Update a shift (changeReason required; blocked if completed/confirmed or < 2h before start for non-admins)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [changeReason]
+ *             properties:
+ *               name: { type: string }
+ *               startTime: { type: string }
+ *               endTime: { type: string }
+ *               workDate: { type: string, format: date }
+ *               assignedStaffId: { type: string }
+ *               shiftTemplateId: { type: string }
+ *               taskDescription: { type: string }
+ *               changeReason: { type: string }
+ *     responses:
+ *       200: { description: Updated }
+ */
+router.put('/:id', protect, authorize(...MANAGER), ctrl.updateShift);
 
-router.get('/', protect, authorize('admin'), async (req, res) => {
-  try {
-    const filter = {};
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.fromDate || req.query.toDate) {
-      filter.workDate = {};
-      if (req.query.fromDate) {
-        const parsed = normalizeDate(req.query.fromDate);
-        if (parsed) filter.workDate.$gte = parsed;
-      }
-      if (req.query.toDate) {
-        const parsed = normalizeDate(req.query.toDate);
-        if (parsed) filter.workDate.$lte = parsed;
-      }
-      if (Object.keys(filter.workDate).length === 0) delete filter.workDate;
-    }
-    if (req.query.assignedStaffId) {
-      const profile = await resolveStaffProfile(req.query.assignedStaffId);
-      if (profile) filter.assignedStaffId = profile._id;
-    }
-
-    const limit = Number(req.query.limit) || 200;
-    const page = Math.max(Number(req.query.page) || 1, 1);
-    const query = Shift.find(filter).sort({ workDate: -1, startTime: 1 });
-    includeShiftPopulations(query);
-    const [shifts, total] = await Promise.all([query.skip((page - 1) * limit).limit(limit).lean(), Shift.countDocuments(filter)]);
-    res.json({ data: shifts, total, page });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.get('/schedule', protect, authorize('admin'), async (req, res) => {
-  try {
-    const filter = {};
-    if (req.query.fromDate || req.query.toDate) {
-      filter.workDate = {};
-      if (req.query.fromDate) {
-        const parsed = normalizeDate(req.query.fromDate);
-        if (parsed) filter.workDate.$gte = parsed;
-      }
-      if (req.query.toDate) {
-        const parsed = normalizeDate(req.query.toDate);
-        if (parsed) filter.workDate.$lte = parsed;
-      }
-      if (Object.keys(filter.workDate).length === 0) delete filter.workDate;
-    }
-    const shifts = await Shift.find(filter).sort({ workDate: 1, startTime: 1 }).populate({ path: 'assignedStaffId', populate: { path: 'userId', model: 'User' } }).populate('shiftTemplateId').lean();
-    res.json({ data: shifts });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.get('/check-conflicts', protect, authorize('admin'), async (req, res) => {
-  try {
-    const conflicts = await buildConflicts({
-      assignedStaffId: req.query.assignedStaffId,
-      workDate: req.query.workDate,
-      startTime: req.query.startTime,
-      endTime: req.query.endTime,
-      excludeId: req.query.excludeId,
-    });
-    res.json({ data: { conflicts, hasErrors: conflicts.some((c) => c.severity === 'ERROR') } });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.post('/', protect, authorize('admin'), async (req, res) => {
-  try {
-    const { name, startTime, endTime, workDate, assignedStaffId, shiftTemplateId, floorId, roomId, taskDescription, notes } = req.body || {};
-    if (!name || !startTime || !endTime || !workDate || !assignedStaffId || !floorId) {
-      return res.status(400).json({ message: 'Missing required shift fields' });
-    }
-
-    const profile = await resolveStaffProfile(assignedStaffId);
-    if (!profile) return res.status(400).json({ message: 'Assigned staff profile not found' });
-
-    const shift = await Shift.create({
-      name,
-      startTime,
-      endTime,
-      workDate: normalizeDate(workDate),
-      assignedStaffId: profile._id,
-      shiftTemplateId: shiftTemplateId || undefined,
-      floorId,
-      roomId,
-      notes: notes || taskDescription || '',
-      status: 'draft',
-    });
-
-    const created = await Shift.findById(shift._id).populate({ path: 'assignedStaffId', populate: { path: 'userId', model: 'User' } }).populate('shiftTemplateId').lean();
-    res.status(201).json({ data: created });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.put('/:id', protect, authorize('admin'), async (req, res) => {
-  try {
-    const shift = await Shift.findById(req.params.id);
-    if (!shift) return res.status(404).json({ message: 'Shift not found' });
-    if (['completed', 'cancelled'].includes(shift.status)) {
-      return res.status(400).json({ message: 'Cannot edit completed or cancelled shift' });
-    }
-
-    const { name, startTime, endTime, workDate, assignedStaffId, shiftTemplateId, floorId, roomId, taskDescription, notes, changeReason } = req.body || {};
-    if (!changeReason && shift.status !== 'draft') {
-      return res.status(400).json({ message: 'changeReason is required to update this shift' });
-    }
-
-    if (assignedStaffId) {
-      const profile = await resolveStaffProfile(assignedStaffId);
-      if (!profile) return res.status(400).json({ message: 'Assigned staff profile not found' });
-      shift.assignedStaffId = profile._id;
-    }
-    if (name !== undefined) shift.name = name;
-    if (startTime !== undefined) shift.startTime = startTime;
-    if (endTime !== undefined) shift.endTime = endTime;
-    if (workDate !== undefined) shift.workDate = normalizeDate(workDate);
-    if (shiftTemplateId !== undefined) shift.shiftTemplateId = shiftTemplateId || undefined;
-    if (floorId !== undefined) shift.floorId = floorId;
-    if (roomId !== undefined) shift.roomId = roomId;
-    if (taskDescription !== undefined) shift.notes = taskDescription;
-    if (notes !== undefined) shift.notes = notes;
-    await shift.save();
-
-    const updated = await Shift.findById(shift._id).populate({ path: 'assignedStaffId', populate: { path: 'userId', model: 'User' } }).populate('shiftTemplateId').lean();
-    res.json({ data: updated, conflicts: [] });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.put('/:id/publish', protect, authorize('admin'), async (req, res) => {
-  try {
-    const shift = await Shift.findById(req.params.id);
-    if (!shift) return res.status(404).json({ message: 'Shift not found' });
-    if (shift.status !== 'draft') return res.status(400).json({ message: 'Only draft shifts can be published' });
-
-    const conflicts = await buildConflicts({
-      assignedStaffId: shift.assignedStaffId,
-      workDate: shift.workDate,
-      startTime: shift.startTime,
-      endTime: shift.endTime,
-      excludeId: shift._id,
-    });
-    if (conflicts.some((c) => c.severity === 'ERROR')) {
-      return res.status(400).json({ message: 'Conflicts must be resolved before publishing', conflicts });
-    }
-
-    shift.status = 'published';
-    await shift.save();
-    const published = await Shift.findById(shift._id).populate({ path: 'assignedStaffId', populate: { path: 'userId', model: 'User' } }).populate('shiftTemplateId').lean();
-    res.json({ data: published, conflicts });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.put('/:id/confirm', protect, authorize('admin'), async (req, res) => {
-  try {
-    const shift = await Shift.findById(req.params.id);
-    if (!shift) return res.status(404).json({ message: 'Shift not found' });
-    if (shift.status !== 'published') return res.status(400).json({ message: 'Only published shifts can be confirmed' });
-    shift.status = 'confirmed';
-    await shift.save();
-    const confirmed = await Shift.findById(shift._id).populate({ path: 'assignedStaffId', populate: { path: 'userId', model: 'User' } }).populate('shiftTemplateId').lean();
-    res.json({ data: confirmed });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.put('/:id/cancel', protect, authorize('admin'), async (req, res) => {
-  try {
-    const { reason } = req.body || {};
-    const shift = await Shift.findById(req.params.id);
-    if (!shift) return res.status(404).json({ message: 'Shift not found' });
-    if (shift.status === 'cancelled') return res.status(400).json({ message: 'Shift is already cancelled' });
-    shift.status = 'cancelled';
-    if (reason) shift.notes = `${reason}${shift.notes ? ' · ' + shift.notes : ''}`;
-    await shift.save();
-    const cancelled = await Shift.findById(shift._id).populate({ path: 'assignedStaffId', populate: { path: 'userId', model: 'User' } }).populate('shiftTemplateId').lean();
-    res.json({ data: cancelled });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
-
-router.delete('/:id', protect, authorize('admin'), async (req, res) => {
-  try {
-    const shift = await Shift.findById(req.params.id);
-    if (!shift) return res.status(404).json({ message: 'Shift not found' });
-    if (shift.status !== 'draft') return res.status(400).json({ message: 'Only draft shifts can be deleted' });
-    await shift.deleteOne();
-    res.json({ data: shift });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-});
+/**
+ * @swagger
+ * /api/shifts/{id}:
+ *   delete:
+ *     tags: [Shifts]
+ *     summary: Delete a shift (only draft shifts)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Deleted }
+ *       400: { description: Shift is not in draft status }
+ */
+router.delete('/:id', protect, authorize(...MANAGER), ctrl.deleteShift);
 
 module.exports = router;

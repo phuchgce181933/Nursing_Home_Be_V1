@@ -59,23 +59,22 @@ app.use(
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/staff', require('./routes/staff'));
+app.use('/api/shift-templates', require('./routes/shiftTemplates'));
+app.use('/api/shifts', require('./routes/shifts'));
+app.use('/api/facilities', require('./routes/facilities'));
+app.use('/api/residents', require('./routes/residents'));
+app.use('/api/leave-requests', require('./routes/leaveRequests'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
-app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
-app.use('/api/residents', require('./routes/residents'));
-app.use('/api/staff', require('./routes/staff'));
-app.use('/api/shifts', require('./routes/shifts'));
-app.use('/api/shift-templates', require('./routes/shiftTemplates'));
-app.use('/api/leave-requests', require('./routes/leaveRequests'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
-app.use('/api/medical/service-packages', require('./routes/medicalServicePackages'));
-app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
-app.use('/api/medications', require('./routes/scheduleRoutes'));
+app.use('/api/medications', require('./routes/medications'));
+app.use('/api/incidents', require('./routes/incidents'));
+app.use('/api/medical', require('./routes/medicalServicePackages'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
-
-
+//app.use('/api/pharmacist', require('./routes/pharmacist'));
 // connect DB and create collections
 const initDB = async () => {
   try {
@@ -92,6 +91,9 @@ const initDB = async () => {
     }
 
     console.log('All collections initialized');
+
+    const { startReadinessSyncJob } = require('./jobs/readinessSyncJob');
+    startReadinessSyncJob();
     startReminderScheduler();
     initMedicationJobs();
   } catch (err) {

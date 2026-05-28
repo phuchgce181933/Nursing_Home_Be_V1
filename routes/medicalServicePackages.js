@@ -45,7 +45,7 @@ router.use(protect, authorize('doctor', 'nurse', 'admin', 'manager', 'family'));
  *       403:
  *         description: Access forbidden
  */
-router.get('/', listServicePackages);
+router.get('/service-packages', listServicePackages);
 
 /**
  * @swagger
@@ -67,6 +67,6 @@ router.get('/', listServicePackages);
  *       404:
  *         description: Not found
  */
-router.get('/:packageId', getServicePackage);
+router.get('/service-packages/:packageId', getServicePackage);
 
 module.exports = router;

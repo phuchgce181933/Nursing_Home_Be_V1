@@ -14,7 +14,7 @@ const RESIDENCY_STATUSES = ['pending', 'admitted', 'discharged', 'transferred', 
 const ADMISSION_ELIGIBILITY_STATUSES = ['pending', 'eligible', 'not_eligible'];
 const ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracting', 'checked_in', 'cancelled'];
 
-const SHIFT_STATUSES = ['scheduled', 'completed', 'cancelled'];
+const SHIFT_STATUSES = ['draft', 'published', 'confirmed', 'completed', 'cancelled'];
 const ACTIVITY_STATUSES = ['draft', 'scheduled', 'ongoing', 'completed', 'cancelled'];
 
 const PRESCRIPTION_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];

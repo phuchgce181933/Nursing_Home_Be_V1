@@ -8,6 +8,7 @@ const Resident = require('./resident');
 const Admission = require('./admission');
 const StaffProfile = require('./staffProfile');
 const Shift = require('./shift');
+const ShiftTemplate = require('./shiftTemplate');
 const Activity = require('./activity');
 const MedicalRecord = require('./medicalRecord');
 const Prescription = require('./prescription');
@@ -46,6 +47,7 @@ module.exports = {
   Admission,
   StaffProfile,
   Shift,
+  ShiftTemplate,
   Activity,
   MedicalRecord,
   Prescription,

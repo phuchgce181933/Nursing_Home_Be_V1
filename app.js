@@ -26,6 +26,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
 app.use('/api/family', require('./routes/familyPortal'));
+app.use('/api/medications', require('./routes/medications'));
 
 // connect DB and create collections
 const initDB = async () => {

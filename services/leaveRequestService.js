@@ -18,6 +18,9 @@ const {
   triggerReadinessSyncForWorkDate,
 } = require('./readinessSyncService');
 
+const AUTO_REJECT_REVIEW_NOTE =
+  'Tự động từ chối: hết ngày nghỉ cuối cùng mà đơn chưa được duyệt.';
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const calcDays = (start, end) => {
@@ -101,9 +104,23 @@ const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reaso
   };
 };
 
+// ── auto-reject pending requests past leave end date ─────────────────────────
+
+const autoRejectExpiredPending = async () => {
+  const now = new Date();
+  const result = await leaveRequestRepo.rejectExpiredPending(now, AUTO_REJECT_REVIEW_NOTE);
+  const rejectedCount = result.modifiedCount ?? 0;
+  if (rejectedCount > 0) {
+    console.log(`[leaveRequest] Auto-rejected ${rejectedCount} expired pending request(s)`);
+  }
+  return { rejectedCount };
+};
+
 // ── list leave requests ───────────────────────────────────────────────────────
 
 const listLeaveRequests = async (currentUser, { staffId, status, fromDate, toDate, page = 1, limit = 20 }) => {
+  await autoRejectExpiredPending();
+
   const filter = {};
 
   if (!['admin', 'manager'].includes(currentUser.role)) {
@@ -137,6 +154,8 @@ const listLeaveRequests = async (currentUser, { staffId, status, fromDate, toDat
 };
 
 const getLeaveRequest = async (currentUser, id) => {
+  await autoRejectExpiredPending();
+
   const request = await leaveRequestRepo.findById(id);
   if (!request) throw new ServiceError('Leave request not found', 404);
 
@@ -253,6 +272,8 @@ const approveLeaveRequest = async (
   id,
   { reviewNote, replacementStaffProfileId } = {}
 ) => {
+  await autoRejectExpiredPending();
+
   const request = await leaveRequestRepo.findById(id);
   if (!request) throw new ServiceError('Leave request not found', 404);
   if (request.status !== 'pending') throw new ServiceError('Only pending requests can be approved', 400);
@@ -401,4 +422,5 @@ module.exports = {
   approveLeaveRequest,
   rejectLeaveRequest,
   cancelLeaveRequest,
+  autoRejectExpiredPending,
 };

@@ -99,6 +99,10 @@ const initDB = async () => {
 
     const { startReadinessSyncJob } = require('./jobs/readinessSyncJob');
     startReadinessSyncJob();
+    const { startLeaveRequestAutoRejectJob } = require('./jobs/leaveRequestAutoRejectJob');
+    startLeaveRequestAutoRejectJob();
+    const { startCareTaskAutoSkipJob } = require('./jobs/careTaskAutoSkipJob');
+    startCareTaskAutoSkipJob();
     startReminderScheduler();
     initMedicationJobs();
   } catch (err) {

@@ -183,7 +183,7 @@ router.put('/:id/confirm', protect, authorize(...MANAGER), ctrl.confirmShift);
  * /api/shifts/{id}/cancel:
  *   put:
  *     tags: [Shifts]
- *     summary: Cancel a shift
+ *     summary: Cancel a shift (published or confirmed only)
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: path
@@ -199,6 +199,7 @@ router.put('/:id/confirm', protect, authorize(...MANAGER), ctrl.confirmShift);
  *               reason: { type: string }
  *     responses:
  *       200: { description: Cancelled }
+ *       400: { description: Shift not in published or confirmed status }
  *       409: { description: Active care tasks on this shift; blockingTasks in response }
  */
 router.put('/:id/cancel', protect, authorize(...MANAGER), ctrl.cancelShift);

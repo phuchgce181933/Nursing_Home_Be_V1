@@ -137,10 +137,10 @@ const seed = async () => {
   const [admin, manager, doctor1, doctor2, nurse1, nurse2, family] = await User.insertMany([
     { fullName: 'Admin System',         email: 'admin@test.com',   username: 'admin_test',   passwordHash: pw, role: 'admin',   isActive: true },
     { fullName: 'Manager Nguyen Van B', email: 'manager@test.com', username: 'manager_test', passwordHash: pw, role: 'manager', isActive: true },
-    { fullName: 'Dr. Nguyen Van A',     email: 'doctor@test.com',  username: 'doctor_test',  passwordHash: pw, role: 'doctor',  isActive: true },
-    { fullName: 'Dr. Le Van Hung',      email: 'doctor2@test.com', username: 'doctor2_test', passwordHash: pw, role: 'doctor',  isActive: true },
-    { fullName: 'Nurse Tran Thi B',     email: 'nurse@test.com',   username: 'nurse_test',   passwordHash: pw, role: 'nurse',   isActive: true },
-    { fullName: 'Nurse Pham Van C',     email: 'nurse2@test.com',  username: 'nurse2_test',  passwordHash: pw, role: 'nurse',   isActive: true },
+    { fullName: 'Dr. Nguyen Van A',     email: 'doctor@test.com',  username: 'doctor_test',  passwordHash: pw, role: 'doctor',  phone: '0901000001', isActive: true },
+    { fullName: 'Dr. Le Van Hung',      email: 'doctor2@test.com', username: 'doctor2_test', passwordHash: pw, role: 'doctor',  phone: '0901000002', isActive: true },
+    { fullName: 'Nurse Tran Thi B',     email: 'nurse@test.com',   username: 'nurse_test',   passwordHash: pw, role: 'nurse',   phone: '0902000001', isActive: true },
+    { fullName: 'Nurse Pham Van C',     email: 'nurse2@test.com',  username: 'nurse2_test',  passwordHash: pw, role: 'nurse',   phone: '0902000002', isActive: true },
     { fullName: 'Family Le Van C',      email: 'family@test.com',  username: 'family_test',  passwordHash: pw, role: 'family',  isActive: true },
   ]);
 
@@ -267,10 +267,10 @@ const seed = async () => {
   const [, , doctorProfile1, doctorProfile2, nurseProfile1, nurseProfile2] = await StaffProfile.insertMany([
     { userId: admin._id,   staffCode: 'ADM001', roleCategory: 'admin',   specialty: 'Administration',      assignedResidentIds: [] },
     { userId: manager._id, staffCode: 'MGR001', roleCategory: 'manager', specialty: 'Operations Management', assignedResidentIds: [] },
-    { userId: doctor1._id, staffCode: 'DOC001', roleCategory: 'doctor',  specialty: 'Internal Medicine',    assignedResidentIds: [res1._id, res2._id, res3._id] },
-    { userId: doctor2._id, staffCode: 'DOC002', roleCategory: 'doctor',  specialty: 'General Medicine',     assignedResidentIds: [res4._id, res5._id, res6._id] },
-    { userId: nurse1._id,  staffCode: 'NUR001', roleCategory: 'nurse',   specialty: 'Care Nursing',         assignedResidentIds: [res1._id, res2._id, res3._id] },
-    { userId: nurse2._id,  staffCode: 'NUR002', roleCategory: 'nurse',   specialty: 'Care Nursing',         assignedResidentIds: [res4._id, res5._id, res6._id] },
+    { userId: doctor1._id, staffCode: 'DOC001', roleCategory: 'doctor',  specialty: 'Internal Medicine',    certifications: ['BLS', 'ACLS'], assignedResidentIds: [res1._id, res2._id, res3._id] },
+    { userId: doctor2._id, staffCode: 'DOC002', roleCategory: 'doctor',  specialty: 'General Medicine',     certifications: ['BLS'], assignedResidentIds: [res4._id, res5._id, res6._id] },
+    { userId: nurse1._id,  staffCode: 'NUR001', roleCategory: 'nurse',   specialty: 'Care Nursing',         certifications: ['BLS', 'First Aid'], assignedResidentIds: [res1._id, res2._id, res3._id] },
+    { userId: nurse2._id,  staffCode: 'NUR002', roleCategory: 'nurse',   specialty: 'Care Nursing',         certifications: ['BLS'], assignedResidentIds: [res4._id, res5._id, res6._id] },
   ]);
 
   // ── Prescriptions ─────────────────────────────────────────────────────────

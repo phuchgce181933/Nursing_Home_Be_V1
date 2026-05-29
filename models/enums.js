@@ -55,7 +55,7 @@ const LEAVE_REQUEST_TYPES = ['annual', 'sick', 'emergency', 'unpaid', 'other'];
 const LEAVE_REQUEST_STATUSES = ['draft', 'pending', 'approved', 'rejected', 'cancelled'];
 
 const CARE_TASK_TYPES = ['morning_care', 'medication', 'physical_therapy', 'meal_assistance', 'evening_check', 'emergency_response'];
-const CARE_TASK_STATUSES = ['pending', 'in_progress', 'completed', 'skipped'];
+const CARE_TASK_STATUSES = ['pending', 'in_progress', 'completed', 'skipped', 'missed'];
 const CARE_LEVELS = ['low', 'medium', 'high'];
 
 module.exports = {

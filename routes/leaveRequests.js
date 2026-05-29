@@ -4,6 +4,7 @@ const {
   submitLeaveRequest,
   listLeaveRequests,
   getLeaveRequest,
+  getReplacementCandidates,
   approveLeaveRequest,
   rejectLeaveRequest,
   cancelLeaveRequest,
@@ -113,9 +114,42 @@ router.get('/:id', protect, getLeaveRequest);
 
 /**
  * @swagger
+ * /api/leave-requests/{id}/replacement-candidates:
+ *   get:
+ *     summary: List eligible replacement staff for a pending leave request (same role, no shift overlap)
+ *     tags: [Leave Requests]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: |
+ *           requester, shiftsToCover (shifts that must be handed over), and candidates with eligible flag.
+ *           Each candidate includes blockingReasons when eligible is false.
+ *       400:
+ *         description: Request is not pending
+ *       403:
+ *         description: Admin/manager only
+ *       404:
+ *         description: Leave request not found
+ */
+router.get(
+  '/:id/replacement-candidates',
+  protect,
+  authorize('admin', 'manager'),
+  getReplacementCandidates
+);
+
+/**
+ * @swagger
  * /api/leave-requests/{id}/approve:
  *   put:
- *     summary: Approve a leave request (STT 12) — auto-cancels shifts in leave period and deducts leave balance
+ *     summary: Approve a leave request (STT 12) — requires replacement when shifts exist; reassigns shifts and care tasks
  *     tags: [Leave Requests]
  *     security:
  *       - BearerAuth: []
@@ -133,9 +167,19 @@ router.get('/:id', protect, getLeaveRequest);
  *             properties:
  *               reviewNote:
  *                 type: string
+ *               replacementStaffProfileId:
+ *                 type: string
+ *                 description: |
+ *                   Required when the requester has draft/published/confirmed shifts in the leave period.
+ *                   StaffProfile._id or User._id; must be same role and pass shift conflict checks.
  *     responses:
  *       200:
- *         description: "Request approved. Response includes cancelledShifts if any shifts were auto-cancelled."
+ *         description: |
+ *           Request approved. May include reassignedShifts and reassignedCareTasks when shifts were handed over.
+ *       400:
+ *         description: Missing replacement, wrong role, or request not pending
+ *       409:
+ *         description: Replacement cannot cover shifts (conflicts) or care tasks cannot be reassigned (blockingTasks)
  */
 router.put('/:id/approve', protect, authorize('admin', 'manager'), approveLeaveRequest);
 

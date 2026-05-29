@@ -3,6 +3,7 @@ const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const shiftRepo = require('../repositories/shiftRepository');
 const leaveRequestRepo = require('../repositories/leaveRequestRepository');
+const careTaskRepo = require('../repositories/careTaskRepository');
 const Floor = require('../models/floor');
 const Room = require('../models/room');
 const Resident = require('../models/resident');
@@ -12,7 +13,12 @@ const {
   getAssignableFlags,
   parseResidentIds,
   validateObjectIds,
+  residentCoversStaffArea,
 } = require('../utils/staffAssignment');
+const {
+  assertNoActiveCareTasksForResidents,
+  getResidentIdsRemovedByAreaChange,
+} = require('../utils/careTaskGuards');
 const cloudinary = require('../config/cloudinaryConfig');
 const bcrypt = require('bcryptjs');
 const {
@@ -363,6 +369,53 @@ const validateStaffAreaAssignment = async (floorIds, roomIds) => {
   }
 };
 
+const pruneAssignedResidentsToAreas = async (profile) => {
+  const populated = await StaffProfile.findById(profile._id)
+    .populate({
+      path: 'assignedResidentIds',
+      select: 'fullName residentCode roomId',
+      populate: { path: 'roomId', select: 'roomNumber floorId' },
+    })
+    .populate('responsibleAreaIds', 'floorNumber name')
+    .populate('responsibleRoomIds', 'roomNumber roomType');
+
+  if (!populated) throw new ServiceError('Staff profile not found', 404);
+
+  const current = populated.assignedResidentIds || [];
+  const kept = current.filter((r) => residentCoversStaffArea(r, populated));
+  const keptIds = kept.map((r) => r._id);
+
+  const beforeIds = current.map((r) => String(r._id || r)).sort();
+  const afterIds = keptIds.map((id) => String(id)).sort();
+  const changed =
+    beforeIds.length !== afterIds.length || beforeIds.some((id, i) => id !== afterIds[i]);
+
+  const keptIdSet = new Set(afterIds);
+  const removed = current.filter((r) => !keptIdSet.has(String(r._id || r)));
+
+  if (changed) {
+    await staffProfileRepo.updateById(profile._id, { assignedResidentIds: keptIds });
+  }
+
+  const removedResidents = removed.map((r) => ({
+    _id: r._id,
+    fullName: r.fullName,
+    residentCode: r.residentCode,
+    roomNumber: r.roomId?.roomNumber,
+  }));
+
+  const staffProfile = await StaffProfile.findById(profile._id)
+    .populate('assignedResidentIds', 'fullName residentCode roomId')
+    .populate('responsibleAreaIds', 'floorNumber name')
+    .populate('responsibleRoomIds', 'roomNumber roomType');
+
+  return {
+    staffProfile,
+    removedResidents,
+    removedCount: removedResidents.length,
+  };
+};
+
 const assignAreas = async (id, { floorIds, roomIds }) => {
   await assertAssignableStaffByUserId(id);
 
@@ -396,34 +449,23 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
     }
   }
 
-  const updated = await staffProfileRepo.updateById(profile._id, updateData);
+  const residentIdsToRemove = await getResidentIdsRemovedByAreaChange(profile, updateData, {
+    floorIds,
+    roomIds,
+  });
+  await assertNoActiveCareTasksForResidents(profile._id, residentIdsToRemove);
 
-  return { message: 'Responsible areas updated', staffProfile: updated };
+  const updated = await staffProfileRepo.updateById(profile._id, updateData);
+  const { staffProfile, removedResidents, removedCount } = await pruneAssignedResidentsToAreas(updated);
+
+  return {
+    message: 'Responsible areas updated',
+    staffProfile,
+    residentsPruned: { count: removedCount, removed: removedResidents },
+  };
 };
 
 // ── STT 9 – assign elderly care duties ──────────────────────────────────────
-
-/**
- * When staff has specific responsibleRoomIds, only those rooms count (not the whole floor).
- * Floor-wide access applies only when no rooms are explicitly assigned.
- */
-const residentCoversStaffArea = (resident, profile) => {
-  const roomId = resident.roomId?._id?.toString() || resident.roomId?.toString();
-  if (!roomId) return false;
-
-  const assignedRoomIds = (profile.responsibleRoomIds || []).map((r) => String(r._id || r));
-  if (assignedRoomIds.length > 0) {
-    return assignedRoomIds.includes(roomId);
-  }
-
-  const floorId =
-    resident.roomId?.floorId?._id?.toString() ||
-    resident.roomId?.floorId?.toString();
-  if (!floorId) return false;
-
-  const floorIds = (profile.responsibleAreaIds || []).map((f) => String(f._id || f));
-  return floorIds.includes(floorId);
-};
 
 const listResidentsAvailableForStaff = async (userId, { search, status } = {}) => {
   const profile = await staffProfileRepo.findByUserId(userId);
@@ -506,6 +548,11 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
       );
     }
   }
+
+  const currentIds = (profile.assignedResidentIds || []).map((rid) => String(rid._id || rid));
+  const newIdSet = new Set(objectIds.map((oid) => String(oid)));
+  const removedIds = currentIds.filter((rid) => !newIdSet.has(rid));
+  await assertNoActiveCareTasksForResidents(profile._id, removedIds);
 
   await staffProfileRepo.updateById(profile._id, { assignedResidentIds: objectIds });
 
@@ -625,26 +672,44 @@ const getAvailability = async ({ role, date, floorId }) => {
     onLeaveRecords.map((r) => (r.staffId?._id || r.staffId).toString())
   );
 
-  const scheduledShifts = await shiftRepo.findByDateRange(checkDate, dayEnd, {
-    status: 'confirmed',
-  });
+  const profileIds = profiles.map((p) => p._id);
+  const profileIdToUserId = Object.fromEntries(
+    profiles
+      .map((p) => [p._id.toString(), resolveUserIdFromProfile(p)])
+      .filter(([, uid]) => uid)
+  );
 
-  const activeShifts = scheduledShifts.filter((s) =>
+  const shiftsOnDate = await shiftRepo.findShiftsByStaffIdsOnDate(profileIds, checkDate);
+
+  const profilesWithShiftOnDate = new Set(
+    shiftsOnDate.map((s) => (s.assignedStaffId?._id || s.assignedStaffId).toString())
+  );
+
+  const activeShifts = shiftsOnDate.filter((s) =>
     isShiftActiveForCheck(s.startTime, s.endTime, isToday, now)
   );
 
-  const onShiftSet = new Set(activeShifts.map(resolveUserIdFromShift).filter(Boolean));
+  const onShiftSet = new Set();
+  for (const s of activeShifts) {
+    const pid = (s.assignedStaffId?._id || s.assignedStaffId).toString();
+    const uid = profileIdToUserId[pid];
+    if (uid) onShiftSet.add(uid);
+  }
 
   const shiftByProfileId = {};
   for (const s of activeShifts) {
-    const pid = s.assignedStaffId?._id?.toString();
-    if (pid) shiftByProfileId[pid] = s;
+    const pid = (s.assignedStaffId?._id || s.assignedStaffId).toString();
+    if (pid && !shiftByProfileId[pid]) shiftByProfileId[pid] = s;
   }
 
-  const profileIds = profiles.map((p) => p._id);
-  const careTaskRepo = require('../repositories/careTaskRepository');
-  const activeTasks = await careTaskRepo.findActiveByStaffIds(profileIds);
-  const busyProfileIds = new Set(activeTasks.map((t) => t.staffProfileId.toString()));
+  const activeTasksOnDate = await careTaskRepo.findActiveByStaffIdsOnDate(
+    profileIds,
+    checkDate,
+    dayEnd
+  );
+  const busyProfileIdsOnDate = new Set(
+    activeTasksOnDate.map((t) => t.staffProfileId.toString())
+  );
 
   const summary = { ready: 0, caring: 0, offDuty: 0, onLeave: 0 };
 
@@ -654,7 +719,9 @@ const getAvailability = async ({ role, date, floorId }) => {
     const profileId = profile?._id?.toString();
     const onLeave = onLeaveSet.has(uid);
     const onShift = onShiftSet.has(uid);
-    const hasTasks = profileId ? busyProfileIds.has(profileId) : false;
+    const hasShiftOnDate = profileId ? profilesWithShiftOnDate.has(profileId) : false;
+    const hasActiveTasksOnDate = profileId ? busyProfileIdsOnDate.has(profileId) : false;
+    const hasTasks = hasShiftOnDate && hasActiveTasksOnDate;
     const shiftDoc = profileId ? shiftByProfileId[profileId] || null : null;
 
     const { readinessLevel, readinessLabelVi, availabilityStatus } = classifyReadiness(

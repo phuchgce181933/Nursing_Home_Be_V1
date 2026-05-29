@@ -6,8 +6,10 @@ const shiftRepo = require('../repositories/shiftRepository');
 const leaveRequestRepo = require('../repositories/leaveRequestRepository');
 const { CARE_TASK_TYPES, CARE_TASK_STATUSES, CARE_LEVELS, OPERATIONAL_ASSIGNABLE_ROLES } = require('../models/enums');
 const { triggerReadinessSyncForWorkDate } = require('./readinessSyncService');
-const { assertAssignableStaffProfile } = require('../utils/staffAssignment');
-const { parseWorkDate, toMinutes } = require('../utils/shiftTime');
+const { assertAssignableStaffProfile, residentCoversStaffArea } = require('../utils/staffAssignment');
+const Resident = require('../models/resident');
+const StaffProfile = require('../models/staffProfile');
+const { parseWorkDate, toMinutes, getLocalDateString } = require('../utils/shiftTime');
 const { getTaskTypeOptions, getCareLevelOptions } = require('../utils/careTaskLabels');
 
 const VALID_TRANSITIONS = {
@@ -159,7 +161,18 @@ const assignCareTask = async (body, actorUserId) => {
     throw new ServiceError('scheduledTime must be in HH:mm format', 400);
   }
 
-  let resolvedShiftId;
+  const assertShiftEligibleForCareTask = (shift) => {
+    if (!['published', 'confirmed'].includes(shift.status)) {
+      throw new ServiceError('Shift must be published or confirmed to assign care tasks', 400);
+    }
+    const shiftDateStr = getLocalDateString(new Date(shift.workDate));
+    const taskDateStr = getLocalDateString(workDateObj);
+    if (shiftDateStr !== taskDateStr) {
+      throw new ServiceError('shift workDate must match care task workDate', 400);
+    }
+  };
+
+  let resolvedShift;
   if (shiftId) {
     const shiftMatch = shiftsOnDate.find((s) => s._id.toString() === String(shiftId));
     if (!shiftMatch) {
@@ -168,23 +181,43 @@ const assignCareTask = async (body, actorUserId) => {
     if (scheduledTimeTrimmed && !isScheduledTimeWithinShift(scheduledTimeTrimmed, shiftMatch)) {
       throw new ServiceError('scheduledTime must be within the selected shift time range', 400);
     }
-    resolvedShiftId = shiftMatch._id;
+    resolvedShift = shiftMatch;
   } else {
     if (scheduledTimeTrimmed) {
       const matchedShift = shiftsOnDate.find((s) => isScheduledTimeWithinShift(scheduledTimeTrimmed, s));
       if (!matchedShift) {
         throw new ServiceError('scheduledTime must be within one of staff shifts on this workDate', 400);
       }
-      resolvedShiftId = matchedShift._id;
+      resolvedShift = matchedShift;
     } else {
-      resolvedShiftId = shiftsOnDate[0]._id;
+      resolvedShift = shiftsOnDate[0];
     }
   }
 
-  const assignedIds = (profile.assignedResidentIds || []).map((r) => String(r._id || r));
+  assertShiftEligibleForCareTask(resolvedShift);
+  const resolvedShiftId = resolvedShift._id;
+
+  const resident = await Resident.findById(residentId).populate({
+    path: 'roomId',
+    select: 'roomNumber floorId',
+  });
+  if (!resident) throw new ServiceError('Resident not found', 404);
+
+  const profileWithAreas = await StaffProfile.findById(staffProfileId)
+    .populate('responsibleAreaIds')
+    .populate('responsibleRoomIds');
+
+  const assignedIds = (profileWithAreas?.assignedResidentIds || []).map((r) => String(r._id || r));
   if (!assignedIds.includes(String(residentId))) {
     throw new ServiceError(
       'Resident must be assigned to this staff in the Residents tab before creating care tasks',
+      400
+    );
+  }
+
+  if (!residentCoversStaffArea(resident, profileWithAreas)) {
+    throw new ServiceError(
+      'Resident is not within staff responsible floors/rooms. Update area or resident assignment first.',
       400
     );
   }
@@ -208,26 +241,54 @@ const assignCareTask = async (body, actorUserId) => {
   return { message: 'Care task assigned', task };
 };
 
+const assertValidObjectId = (value, label) => {
+  const mongoose = require('mongoose');
+  if (!mongoose.Types.ObjectId.isValid(String(value))) {
+    throw new ServiceError(`Invalid ${label}`, 400);
+  }
+};
+
 const listCareTasks = async (filter = {}, options = {}) => {
+  if (!filter.workDate || String(filter.workDate).trim() === '') {
+    throw new ServiceError('workDate is required (YYYY-MM-DD)', 400);
+  }
+
   const query = {};
-  if (filter.staffProfileId) query.staffProfileId = filter.staffProfileId;
-  if (filter.residentId) query.residentId = filter.residentId;
-  if (filter.shiftId) query.shiftId = filter.shiftId;
+  if (filter.staffProfileId) {
+    assertValidObjectId(filter.staffProfileId, 'staffProfileId');
+    query.staffProfileId = filter.staffProfileId;
+  }
+  if (filter.residentId) {
+    assertValidObjectId(filter.residentId, 'residentId');
+    query.residentId = filter.residentId;
+  }
+  if (filter.shiftId) {
+    assertValidObjectId(filter.shiftId, 'shiftId');
+    query.shiftId = filter.shiftId;
+  }
   if (filter.status) {
     if (!CARE_TASK_STATUSES.includes(filter.status))
       throw new ServiceError(`status must be one of: ${CARE_TASK_STATUSES.join(', ')}`, 400);
     query.status = filter.status;
   }
-  if (filter.taskType) query.taskType = filter.taskType;
-  if (filter.workDate) {
-    const d = new Date(filter.workDate);
-    const start = new Date(d); start.setHours(0, 0, 0, 0);
-    const end = new Date(d); end.setHours(23, 59, 59, 999);
-    query.workDate = { $gte: start, $lte: end };
+  if (filter.taskType) {
+    if (!CARE_TASK_TYPES.includes(filter.taskType))
+      throw new ServiceError(`taskType must be one of: ${CARE_TASK_TYPES.join(', ')}`, 400);
+    query.taskType = filter.taskType;
   }
 
-  const page = parseInt(options.page) || 1;
-  const limit = parseInt(options.limit) || 20;
+  let checkDate;
+  try {
+    checkDate = parseWorkDate(String(filter.workDate).trim());
+  } catch {
+    throw new ServiceError('workDate must be YYYY-MM-DD', 400);
+  }
+  const start = new Date(checkDate);
+  const end = new Date(checkDate.getTime() + 24 * 60 * 60 * 1000 - 1);
+  query.workDate = { $gte: start, $lte: end };
+
+  const page = parseInt(options.page, 10) || 1;
+  const limit = Math.min(100, Math.max(1, parseInt(options.limit, 10) || 20));
   const skip = (page - 1) * limit;
 
   const [data, total] = await Promise.all([

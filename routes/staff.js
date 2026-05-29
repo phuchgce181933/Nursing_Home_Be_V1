@@ -21,11 +21,14 @@ const { uploadAvatar } = require('../middleware/uploadMiddleware');
  * @swagger
  * /api/staff/availability:
  *   get:
- *     summary: Emergency readiness — doctor/nurse availability linked to confirmed shifts (STT 10)
+ *     summary: Emergency readiness — doctor/nurse availability by date (STT 10)
  *     description: |
- *       Uses real-time local clock when date is today: staff with a confirmed shift whose
- *       startTime–endTime window contains now are on shift. Readiness levels map to the
- *       emergency readiness UI (Sẵn sàng / Đang chăm sóc / Không trực / Nghỉ phép).
+ *       Scoped to the `date` query (YYYY-MM-DD, default today). Shifts use published or
+ *       confirmed status (same as care-task assignment). When date is today, on-shift uses
+ *       the real-time local clock and the shift startTime–endTime window.
+ *       `hasTasks` is true only when the staff member has both an eligible shift and an
+ *       active care task (pending/in_progress) on that same date.
+ *       Readiness levels map to the emergency UI (Sẵn sàng / Đang chăm sóc / Không trực / Nghỉ phép).
  *     tags: [Staff]
  *     security:
  *       - BearerAuth: []
@@ -52,7 +55,9 @@ const { uploadAvatar } = require('../middleware/uploadMiddleware');
  *         description: |
  *           Staff readiness list. Root includes summary counts and checkedAt (ISO) when date is today.
  *           Each item has readinessLevel (ready|caring|off_duty|on_leave), readinessLabelVi,
- *           isOnShift, currentShift (name, times, status), and legacy availabilityStatus.
+ *           isOnShift, onShift, hasTasks (date-scoped; requires shift + active task on that date),
+ *           currentShift (published/confirmed shift for the date, active window when today),
+ *           and legacy availabilityStatus.
  *       400:
  *         description: Invalid date format (must be YYYY-MM-DD) or invalid role
  */
@@ -297,6 +302,10 @@ router.put('/:id/unban', protect, authorize('admin', 'manager'), unbanStaff);
  * /api/staff/{id}/areas:
  *   put:
  *     summary: Assign staff to responsible floors and rooms (STT 8). Not allowed for admin/manager. Use GET /api/facilities/floors for dropdowns.
+ *     description: |
+ *       When floors or rooms are removed or narrowed, residents outside the new area are automatically
+ *       removed from assignedResidentIds (unless active care tasks block the change — 409 with blockingTasks).
+ *       Response includes residentsPruned when prune succeeds.
  *     tags: [Staff]
  *     security:
  *       - BearerAuth: []
@@ -323,9 +332,11 @@ router.put('/:id/unban', protect, authorize('admin', 'manager'), unbanStaff);
  *                   type: string
  *     responses:
  *       200:
- *         description: Areas assigned
+ *         description: Areas assigned; residentsPruned lists residents auto-unassigned when area shrinks
  *       400:
  *         description: Invalid floor/room or staff on leave
+ *       409:
+ *         description: Active care tasks block area change; response includes blockingTasks array
  */
 router.put('/:id/areas', protect, authorize('admin', 'manager'), assignAreas);
 
@@ -428,6 +439,8 @@ router.get(
  *         description: Residents assigned; staffProfile includes populated assignedResidentIds
  *       400:
  *         description: Invalid IDs, area mismatch, or admin/manager cannot be assigned
+ *       409:
+ *         description: Active care tasks block resident removal; response includes blockingTasks array
  */
 router.put('/:id/residents', protect, authorize('admin', 'manager'), assignResidents);
 

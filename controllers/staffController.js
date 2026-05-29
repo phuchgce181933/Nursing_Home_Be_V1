@@ -59,7 +59,10 @@ const assignAreas = async (req, res) => {
     const result = await staffService.assignAreas(req.params.id, req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({
+      message: err.message,
+      ...(err.blockingTasks && { blockingTasks: err.blockingTasks }),
+    });
   }
 };
 
@@ -68,7 +71,10 @@ const assignResidents = async (req, res) => {
     const result = await staffService.assignResidents(req.params.id, req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({
+      message: err.message,
+      ...(err.blockingTasks && { blockingTasks: err.blockingTasks }),
+    });
   }
 };
 

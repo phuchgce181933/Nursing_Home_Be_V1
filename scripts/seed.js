@@ -329,6 +329,9 @@ const seed = async () => {
 
   await MedicationAdministration.insertMany(allAdminDocs);
 
+  const { ensureDefaultShiftTemplates } = require('../services/defaultShiftBootstrap');
+  await ensureDefaultShiftTemplates();
+
   // ── Summary ───────────────────────────────────────────────────────────────
 
   console.log('\n========================================');

@@ -1,16 +1,24 @@
 const LeaveRequest = require('../models/leaveRequest');
 
+const REPLACEMENT_POPULATE = {
+  path: 'replacementStaffProfileId',
+  select: 'staffCode roleCategory userId',
+  populate: { path: 'userId', select: 'fullName email role' },
+};
+
 const create = async (data) => LeaveRequest.create(data);
 
 const findById = async (id) =>
   LeaveRequest.findById(id)
     .populate('staffId', 'fullName email role')
-    .populate('reviewedBy', 'fullName email role');
+    .populate('reviewedBy', 'fullName email role')
+    .populate(REPLACEMENT_POPULATE);
 
 const findAll = async (filter, { skip = 0, limit = 20 } = {}) =>
   LeaveRequest.find(filter)
     .populate('staffId', 'fullName email role')
     .populate('reviewedBy', 'fullName email role')
+    .populate(REPLACEMENT_POPULATE)
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);

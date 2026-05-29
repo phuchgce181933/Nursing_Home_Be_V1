@@ -12,7 +12,12 @@ const create = async (data) => CareTask.create(data);
 const findById = async (id) => CareTask.findById(id).populate(POPULATE);
 
 const findAll = async (filter, { skip = 0, limit = 20 } = {}) =>
-  CareTask.find(filter).populate(POPULATE).sort({ workDate: 1, scheduledTime: 1 }).skip(skip).limit(limit);
+  CareTask.find(filter)
+    .populate(POPULATE)
+    .sort({ workDate: 1, scheduledTime: 1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
 
 const countAll = async (filter) => CareTask.countDocuments(filter);
 
@@ -30,9 +35,44 @@ const findActiveByStaffIds = async (staffProfileIds) =>
   CareTask.find({ staffProfileId: { $in: staffProfileIds }, status: { $in: ['pending', 'in_progress'] } })
     .select('staffProfileId status');
 
+const findActiveByStaffIdsOnDate = async (staffProfileIds, dayStart, dayEnd) => {
+  if (!staffProfileIds?.length) return [];
+  return CareTask.find({
+    staffProfileId: { $in: staffProfileIds },
+    status: { $in: ['pending', 'in_progress'] },
+    workDate: { $gte: dayStart, $lte: dayEnd },
+  }).select('staffProfileId status');
+};
+
+const findActiveByStaffAndResidents = async (staffProfileId, residentIds) => {
+  const ids = (residentIds || []).filter(Boolean);
+  if (!ids.length) return [];
+  return CareTask.find({
+    staffProfileId,
+    residentId: { $in: ids },
+    status: { $in: ['pending', 'in_progress'] },
+  }).populate(POPULATE);
+};
+
+const findActiveByShift = async (shiftId) =>
+  CareTask.find({ shiftId, status: { $in: ['pending', 'in_progress'] } }).populate(POPULATE);
+
 const updateById = async (id, data) =>
   CareTask.findByIdAndUpdate(id, data, { new: true, runValidators: true }).populate(POPULATE);
 
 const deleteById = async (id) => CareTask.findByIdAndDelete(id);
 
-module.exports = { create, findById, findAll, countAll, findByStaffAndDate, findByShift, findActiveByStaffIds, updateById, deleteById };
+module.exports = {
+  create,
+  findById,
+  findAll,
+  countAll,
+  findByStaffAndDate,
+  findByShift,
+  findActiveByStaffIds,
+  findActiveByStaffIdsOnDate,
+  findActiveByStaffAndResidents,
+  findActiveByShift,
+  updateById,
+  deleteById,
+};

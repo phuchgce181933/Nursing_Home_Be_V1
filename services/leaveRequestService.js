@@ -2,7 +2,17 @@ const ServiceError = require('./serviceError');
 const leaveRequestRepo = require('../repositories/leaveRequestRepository');
 const shiftRepo = require('../repositories/shiftRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
+const careTaskRepo = require('../repositories/careTaskRepository');
+const Resident = require('../models/resident');
+const StaffProfile = require('../models/staffProfile');
 const { LEAVE_REQUEST_TYPES, LEAVE_REQUEST_STATUSES } = require('../models/enums');
+const { residentCoversStaffArea } = require('../utils/staffAssignment');
+const {
+  formatShiftToCover,
+  getShiftsToCoverOnLeave,
+  assertReplacementEligible,
+  listReplacementCandidates,
+} = require('../utils/leaveReplacement');
 const {
   triggerReadinessSyncForRange,
   triggerReadinessSyncForWorkDate,
@@ -138,23 +148,158 @@ const getLeaveRequest = async (currentUser, id) => {
   return request;
 };
 
+// ── replacement / shift handover on approve ───────────────────────────────────
+
+const validateCareTasksForReassignment = async (
+  shiftsToCover,
+  requesterProfileId,
+  replacementProfileId
+) => {
+  const replacementProfile = await StaffProfile.findById(replacementProfileId)
+    .populate('responsibleAreaIds')
+    .populate('responsibleRoomIds');
+
+  const blockingTasks = [];
+  const tasksToReassign = [];
+
+  for (const shift of shiftsToCover) {
+    const tasks = await careTaskRepo.findActiveByShift(shift._id);
+    for (const task of tasks) {
+      const taskStaffId = (task.staffProfileId?._id || task.staffProfileId)?.toString();
+      if (taskStaffId !== requesterProfileId.toString()) continue;
+
+      const residentId = task.residentId?._id || task.residentId;
+      let resident = task.residentId;
+      const room = resident?.roomId;
+      const hasFloor =
+        room &&
+        (room.floorId?._id || room.floorId);
+      if (!resident || !hasFloor) {
+        resident = await Resident.findById(residentId).populate({
+          path: 'roomId',
+          select: 'roomNumber floorId',
+        });
+      }
+
+      if (!resident || !residentCoversStaffArea(resident, replacementProfile)) {
+        blockingTasks.push({
+          taskId: task._id,
+          shiftId: shift._id,
+          residentId,
+          message:
+            'Replacement staff is not responsible for this resident\'s floor/room; update assignments first',
+        });
+        continue;
+      }
+
+      tasksToReassign.push(task);
+    }
+  }
+
+  if (blockingTasks.length) {
+    const err = new ServiceError(
+      'Cannot approve leave: some care tasks cannot be reassigned to the replacement staff',
+      409
+    );
+    err.blockingTasks = blockingTasks;
+    throw err;
+  }
+
+  return tasksToReassign;
+};
+
+const getReplacementCandidates = async (currentUser, id) => {
+  if (!['admin', 'manager'].includes(currentUser.role)) {
+    throw new ServiceError('Access forbidden', 403);
+  }
+
+  const request = await leaveRequestRepo.findById(id);
+  if (!request) throw new ServiceError('Leave request not found', 404);
+  if (request.status !== 'pending') {
+    throw new ServiceError('Replacement candidates are only available for pending requests', 400);
+  }
+
+  const staffUserId = request.staffId._id || request.staffId;
+  const requesterRole = request.staffId.role;
+  const profile = await staffProfileRepo.findByUserId(staffUserId);
+  if (!profile) throw new ServiceError('Staff profile not found for leave requester', 404);
+
+  const shiftsToCover = profile
+    ? await getShiftsToCoverOnLeave(profile._id, request.startDate, request.endDate)
+    : [];
+
+  const candidates = await listReplacementCandidates({
+    requesterRole,
+    requesterUserId: staffUserId,
+    shiftsToCover,
+  });
+
+  return {
+    requester: {
+      userId: staffUserId,
+      fullName: request.staffId.fullName,
+      role: requesterRole,
+      staffProfileId: profile._id,
+    },
+    shiftsToCover: shiftsToCover.map(formatShiftToCover),
+    candidates,
+  };
+};
+
 // ── STT 12 – approve leave request ───────────────────────────────────────────
 
-const approveLeaveRequest = async (currentUser, id, { reviewNote } = {}) => {
+const approveLeaveRequest = async (
+  currentUser,
+  id,
+  { reviewNote, replacementStaffProfileId } = {}
+) => {
   const request = await leaveRequestRepo.findById(id);
   if (!request) throw new ServiceError('Leave request not found', 404);
   if (request.status !== 'pending') throw new ServiceError('Only pending requests can be approved', 400);
 
-  const updated = await leaveRequestRepo.updateById(id, {
+  const staffUserId = request.staffId._id || request.staffId;
+  const requesterRole = request.staffId.role;
+  const profile = await staffProfileRepo.findByUserId(staffUserId);
+
+  let shiftsToCover = [];
+  let replacementProfileId = null;
+  let tasksToReassign = [];
+
+  if (profile) {
+    shiftsToCover = await getShiftsToCoverOnLeave(
+      profile._id,
+      request.startDate,
+      request.endDate
+    );
+  }
+
+  if (shiftsToCover.length > 0) {
+    const replacement = await assertReplacementEligible({
+      requesterUserId: staffUserId,
+      requesterRole,
+      replacementProfileIdInput: replacementStaffProfileId,
+      shiftsToCover,
+    });
+    replacementProfileId = replacement.replacementProfileId;
+
+    tasksToReassign = await validateCareTasksForReassignment(
+      shiftsToCover,
+      profile._id,
+      replacementProfileId
+    );
+  }
+
+  await leaveRequestRepo.updateById(id, {
     status: 'approved',
     reviewedBy: currentUser._id,
     reviewedAt: new Date(),
     reviewNote: reviewNote?.trim(),
+    ...(replacementProfileId && {
+      replacementStaffProfileId: replacementProfileId,
+      replacementAssignedAt: new Date(),
+    }),
   });
 
-  // Deduct leave balance
-  const staffUserId = request.staffId._id || request.staffId;
-  const profile = await staffProfileRepo.findByUserId(staffUserId);
   if (profile && request.daysRequested && request.type !== 'unpaid') {
     const field = `leaveBalance.${request.type}`;
     const currentBalance = profile.leaveBalance?.[request.type] ?? 0;
@@ -162,42 +307,53 @@ const approveLeaveRequest = async (currentUser, id, { reviewNote } = {}) => {
     await staffProfileRepo.updateById(profile._id, { [field]: newBalance });
   }
 
-  // Auto-cancel shifts in leave period
-  let cancelledShifts = [];
-  if (profile) {
-    const shiftsInRange = await shiftRepo.findByStaffAndDateRange(
-      profile._id,
-      request.startDate,
-      request.endDate
-    );
-    const toCancel = shiftsInRange.filter((s) => !['completed', 'cancelled'].includes(s.status));
-    for (const shift of toCancel) {
+  const reassignedShifts = [];
+  let reassignedCareTaskCount = 0;
+
+  if (shiftsToCover.length > 0 && replacementProfileId) {
+    for (const shift of shiftsToCover) {
+      const previousStaffProfileId = shift.assignedStaffId?._id || shift.assignedStaffId;
       await shiftRepo.updateById(shift._id, {
-        status: 'cancelled',
+        assignedStaffId: replacementProfileId,
         $push: {
           changeLog: {
             changedBy: currentUser._id,
-            fieldsChanged: ['status'],
-            oldValues: { status: shift.status },
-            newValues: { status: 'cancelled' },
-            reason: `Auto-cancelled due to approved leave (LeaveRequest: ${id})`,
+            fieldsChanged: ['assignedStaffId'],
+            oldValues: { assignedStaffId: previousStaffProfileId },
+            newValues: { assignedStaffId: replacementProfileId },
+            reason: `Reassigned to cover approved leave (LeaveRequest: ${id})`,
           },
         },
       });
-      cancelledShifts.push({ shiftId: shift._id, workDate: shift.workDate, name: shift.name });
+      reassignedShifts.push({
+        shiftId: shift._id,
+        workDate: shift.workDate,
+        name: shift.name,
+        previousStaffProfileId,
+      });
+    }
+
+    for (const task of tasksToReassign) {
+      await careTaskRepo.updateById(task._id, { staffProfileId: replacementProfileId });
+      reassignedCareTaskCount += 1;
     }
   }
 
   triggerReadinessSyncForRange(request.startDate, request.endDate);
-  for (const s of cancelledShifts) {
+  for (const s of reassignedShifts) {
     triggerReadinessSyncForWorkDate(s.workDate);
   }
 
+  const finalRequest = await leaveRequestRepo.findById(id);
+
   return {
     message: 'Leave request approved',
-    request: updated,
-    ...(cancelledShifts.length && {
-      cancelledShifts: { count: cancelledShifts.length, shifts: cancelledShifts },
+    request: finalRequest,
+    ...(reassignedShifts.length && {
+      reassignedShifts: { count: reassignedShifts.length, shifts: reassignedShifts },
+    }),
+    ...(reassignedCareTaskCount > 0 && {
+      reassignedCareTasks: { count: reassignedCareTaskCount },
     }),
   };
 };
@@ -241,6 +397,7 @@ module.exports = {
   submitLeaveRequest,
   listLeaveRequests,
   getLeaveRequest,
+  getReplacementCandidates,
   approveLeaveRequest,
   rejectLeaveRequest,
   cancelLeaveRequest,

@@ -357,7 +357,7 @@ const findByArea = async ({
   const [data, total] = await Promise.all([
     Resident.find(filter)
       .select(
-        'residentCode fullName dateOfBirth gender bloodType residencyStatus admittedAt chronicConditions roomId bedId'
+        'residentCode fullName dateOfBirth gender bloodType residencyStatus admittedAt chronicConditions drugAllergies roomId bedId'
       )
       .populate(ROOM_POPULATE)
       .populate({ path: 'bedId', select: 'bedCode status' })
@@ -420,9 +420,16 @@ const findForInitialHealthList = async ({
     });
   }
 
-  if (recorded === true || recorded === 'true') {
+  const recordedNorm =
+    recorded === true || recorded === 'true'
+      ? true
+      : recorded === false || recorded === 'false'
+        ? false
+        : null;
+
+  if (recordedNorm === true) {
     and.push({ initialHealthCondition: { $exists: true, $ne: '', $regex: /\S/ } });
-  } else if (recorded === false || recorded === 'false') {
+  } else if (recordedNorm === false) {
     and.push({
       $or: [
         { initialHealthCondition: { $exists: false } },
@@ -435,8 +442,8 @@ const findForInitialHealthList = async ({
 
   if (and.length) filter.$and = and;
 
-  const skip = (page - 1) * limit;
-  const limitNum = Math.min(100, Math.max(1, limit));
+  const skip = (Math.max(1, parseInt(page, 10) || 1) - 1) * Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
 
   const [data, total] = await Promise.all([
     Resident.find(filter)
@@ -451,7 +458,12 @@ const findForInitialHealthList = async ({
     Resident.countDocuments(filter),
   ]);
 
-  return { data, total, page, limit: limitNum };
+  return {
+    data,
+    total,
+    page: Math.max(1, parseInt(page, 10) || 1),
+    limit: limitNum,
+  };
 };
 
 const preExistingRecordedExpr = () => ({
@@ -487,16 +499,24 @@ const findForPreExistingList = async ({
     });
   }
 
-  if (recorded === true || recorded === 'true') {
+  const recordedNorm =
+    recorded === true || recorded === 'true'
+      ? true
+      : recorded === false || recorded === 'false'
+        ? false
+        : null;
+
+  if (recordedNorm === true) {
     and.push({ $expr: preExistingRecordedExpr() });
-  } else if (recorded === false || recorded === 'false') {
+  } else if (recordedNorm === false) {
     and.push({ $expr: { $not: [preExistingRecordedExpr()] } });
   }
 
   if (and.length) filter.$and = and;
 
-  const skip = (page - 1) * limit;
-  const limitNum = Math.min(100, Math.max(1, limit));
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
 
   const [data, total] = await Promise.all([
     Resident.find(filter)
@@ -511,7 +531,7 @@ const findForPreExistingList = async ({
     Resident.countDocuments(filter),
   ]);
 
-  return { data, total, page, limit: limitNum };
+  return { data, total, page: pageNum, limit: limitNum };
 };
 
 const drugAllergiesRecordedExpr = () => ({
@@ -539,16 +559,24 @@ const findForDrugAllergiesList = async ({
     });
   }
 
-  if (recorded === true || recorded === 'true') {
+  const recordedNorm =
+    recorded === true || recorded === 'true'
+      ? true
+      : recorded === false || recorded === 'false'
+        ? false
+        : null;
+
+  if (recordedNorm === true) {
     and.push({ $expr: drugAllergiesRecordedExpr() });
-  } else if (recorded === false || recorded === 'false') {
+  } else if (recordedNorm === false) {
     and.push({ $expr: { $not: [drugAllergiesRecordedExpr()] } });
   }
 
   if (and.length) filter.$and = and;
 
-  const skip = (page - 1) * limit;
-  const limitNum = Math.min(100, Math.max(1, limit));
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
 
   const [data, total] = await Promise.all([
     Resident.find(filter)
@@ -563,7 +591,7 @@ const findForDrugAllergiesList = async ({
     Resident.countDocuments(filter),
   ]);
 
-  return { data, total, page, limit: limitNum };
+  return { data, total, page: pageNum, limit: limitNum };
 };
 
 const findInitialHealthByResidentId = async (residentId) =>

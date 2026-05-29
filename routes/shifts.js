@@ -72,7 +72,7 @@ router.get('/schedule', protect, ctrl.getSchedule);
  * /api/shifts/check-conflicts:
  *   get:
  *     tags: [Shifts]
- *     summary: Preview shift validation conflicts (8 business rules)
+ *     summary: Preview shift validation conflicts (7 business rules)
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: query
@@ -84,20 +84,12 @@ router.get('/schedule', protect, ctrl.getSchedule);
  *         required: true
  *         schema: { type: string, format: date }
  *       - in: query
- *         name: startTime
+ *         name: shiftTemplateId
  *         required: true
- *         schema: { type: string, example: "07:00" }
- *       - in: query
- *         name: endTime
- *         required: true
- *         schema: { type: string, example: "15:00" }
+ *         schema: { type: string, description: "ObjectId of a default shift slot (morning/afternoon/night)" }
  *       - in: query
  *         name: excludeId
  *         schema: { type: string }
- *       - in: query
- *         name: shiftTemplateId
- *         schema: { type: string }
- *       - in: query
  *     responses:
  *       200: { description: Conflict list with hasErrors flag }
  */
@@ -126,7 +118,7 @@ router.get('/:id', protect, ctrl.getShift);
  * /api/shifts:
  *   post:
  *     tags: [Shifts]
- *     summary: Create a shift (status = draft, returns conflict warnings)
+ *     summary: Create a shift assignment (status = draft, times derived from shiftTemplateId)
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
@@ -134,14 +126,11 @@ router.get('/:id', protect, ctrl.getShift);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [name, startTime, endTime, workDate, assignedStaffId]
+ *             required: [shiftTemplateId, workDate, assignedStaffId]
  *             properties:
- *               name: { type: string }
- *               startTime: { type: string, example: "07:00" }
- *               endTime: { type: string, example: "15:00" }
+ *               shiftTemplateId: { type: string, description: "ObjectId of Ca Đêm/Sáng sớm, Ca Ngày, or Ca Chiều/Tối" }
  *               workDate: { type: string, format: date }
  *               assignedStaffId: { type: string }
- *               shiftTemplateId: { type: string }
  *               taskDescription: { type: string }
  *               notes: { type: string }
  *     responses:
@@ -210,6 +199,7 @@ router.put('/:id/confirm', protect, authorize(...MANAGER), ctrl.confirmShift);
  *               reason: { type: string }
  *     responses:
  *       200: { description: Cancelled }
+ *       409: { description: Active care tasks on this shift; blockingTasks in response }
  */
 router.put('/:id/cancel', protect, authorize(...MANAGER), ctrl.cancelShift);
 
@@ -235,13 +225,11 @@ router.put('/:id/cancel', protect, authorize(...MANAGER), ctrl.cancelShift);
  *             type: object
  *             required: [changeReason]
  *             properties:
- *               name: { type: string }
- *               startTime: { type: string }
- *               endTime: { type: string }
  *               workDate: { type: string, format: date }
  *               assignedStaffId: { type: string }
- *               shiftTemplateId: { type: string }
+ *               shiftTemplateId: { type: string, description: "Change shift slot; times are derived automatically" }
  *               taskDescription: { type: string }
+ *               notes: { type: string }
  *               changeReason: { type: string }
  *     responses:
  *       200: { description: Updated }
@@ -263,6 +251,7 @@ router.put('/:id', protect, authorize(...MANAGER), ctrl.updateShift);
  *     responses:
  *       200: { description: Deleted }
  *       400: { description: Shift is not in draft status }
+ *       409: { description: Active care tasks on this shift; blockingTasks in response }
  */
 router.delete('/:id', protect, authorize(...MANAGER), ctrl.deleteShift);
 

@@ -8,6 +8,7 @@ const { GENDERS, BLOOD_TYPES, RESIDENCY_STATUSES } = require('../models/enums');
 const { validateFullName, validatePhone } = require('../utils/validators');
 const User = require('../models/user');
 const { createAuditLog } = require('../utils/auditLog');
+const { syncStaffAreasAfterResidentTransfer } = require('../utils/syncStaffAreasAfterResidentTransfer');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -120,6 +121,8 @@ const mapAreaFromRoom = (room) => {
   };
 };
 
+const hasDrugAllergiesRecord = (resident) => (resident?.drugAllergies || []).length > 0;
+
 const formatResident = (residentDoc) => {
   const resident = residentDoc?.toObject ? residentDoc.toObject() : residentDoc;
   if (!resident) return null;
@@ -137,6 +140,9 @@ const formatResident = (residentDoc) => {
     personalAddress: resident.personalAddress,
     emergencyContacts: resident.emergencyContacts || [],
     allergies: resident.allergies || [],
+    drugAllergies: resident.drugAllergies || [],
+    hasDrugAllergiesRecord: hasDrugAllergiesRecord(resident),
+    drugAllergiesCount: (resident.drugAllergies || []).length,
     chronicConditions: resident.chronicConditions || [],
     medicalHistory: resident.medicalHistory || [],
     initialHealthCondition: resident.initialHealthCondition,
@@ -177,6 +183,69 @@ const formatResident = (residentDoc) => {
 
 const assertResidentId = (residentId) => {
   if (!residentRepo.assertValidObjectId(residentId)) throw new ServiceError('Invalid resident id', 400);
+};
+
+/** Resolve MongoDB resident _id from ObjectId string or residentCode (e.g. RES001). */
+const resolveResidentId = async (residentIdOrCode) => {
+  const raw = String(residentIdOrCode || '').trim();
+  if (!raw) throw new ServiceError('residentId is required', 400);
+
+  if (residentRepo.assertValidObjectId(raw)) {
+    const byId = await residentRepo.findById(raw);
+    if (byId) return byId._id;
+  }
+
+  const byCode = await residentRepo.findByResidentCode(raw);
+  if (byCode) return byCode._id;
+
+  throw new ServiceError('Resident not found', 404);
+};
+
+const RESIDENCY_STATUS_ALIASES = {
+  treating: 'admitted',
+  under_treatment: 'admitted',
+  in_treatment: 'admitted',
+  active: 'admitted',
+  'dang dieu tri': 'admitted',
+};
+
+const normalizeResidencyStatusFilter = (status) => {
+  if (status === undefined || status === null || status === '') return 'admitted';
+  const s = String(status).trim();
+  if (!s || s.toLowerCase() === 'all') return undefined;
+  const key = s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+  if (RESIDENCY_STATUS_ALIASES[key]) return RESIDENCY_STATUS_ALIASES[key];
+  if (RESIDENCY_STATUSES.includes(s)) return s;
+  return s;
+};
+
+const parseInitialHealthConditionFromBody = (body) => {
+  if (!body || typeof body !== 'object') return null;
+  const direct = body.initialHealthCondition ?? body.description ?? body.healthCondition;
+  if (direct !== undefined && direct !== null) return String(direct).trim();
+  if (body.initialHealth && typeof body.initialHealth === 'object') {
+    const nested =
+      body.initialHealth.initialHealthCondition ??
+      body.initialHealth.description ??
+      body.initialHealth.healthCondition;
+    if (nested !== undefined && nested !== null) return String(nested).trim();
+  }
+  return null;
+};
+
+const parseBloodTypeFromBody = (body) => {
+  if (!body) return undefined;
+  let value = body.bloodType;
+  if ((value === undefined || value === null) && body.initialHealth?.bloodType !== undefined) {
+    value = body.initialHealth.bloodType;
+  }
+  if (value === undefined || value === null) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed || undefined;
 };
 
 const assertContactId = (contactId) => {
@@ -370,7 +439,8 @@ const getResidentsAreaSummary = async ({ buildingId, status }) => {
 
 const listResidentsByArea = async ({ buildingId, floorId, roomId, search, status, page = 1, limit = 20 }) => {
   assertAreaFilter({ buildingId, floorId, roomId });
-  if (status && !RESIDENCY_STATUSES.includes(status)) {
+  const normalizedStatus = normalizeResidencyStatusFilter(status);
+  if (normalizedStatus && !RESIDENCY_STATUSES.includes(normalizedStatus)) {
     throw new ServiceError(`status must be one of: ${RESIDENCY_STATUSES.join(', ')}`, 400);
   }
   const result = await residentRepo.findByArea({
@@ -378,7 +448,7 @@ const listResidentsByArea = async ({ buildingId, floorId, roomId, search, status
     floorId,
     roomId,
     search,
-    status: status || 'admitted',
+    status: normalizedStatus,
     page: Math.max(1, parseInt(page, 10) || 1),
     limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 20)),
   });
@@ -392,8 +462,8 @@ const listResidentsByArea = async ({ buildingId, floorId, roomId, search, status
   };
 };
 
-const getResidentDetail = async (residentId) => {
-  assertResidentId(residentId);
+const getResidentDetail = async (residentIdOrCode) => {
+  const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findByIdWithDetail(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
   return { resident: formatResident(resident) };
@@ -486,6 +556,13 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
 
   const updatedResident = await residentRepo.updateRoomAssignment(residentId, { roomId: targetRoomId, bedId: targetBedId });
   if (!updatedResident) throw new ServiceError('Resident not found', 404);
+
+  const targetFloorId = targetRoom.floorId?._id || targetRoom.floorId;
+  const staffAreasSynced = await syncStaffAreasAfterResidentTransfer(residentId, {
+    targetRoomId,
+    targetFloorId,
+  });
+
   return {
     message: 'Resident transferred successfully',
     resident: {
@@ -498,6 +575,7 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
     },
     from: mapTransferAssignment(resident),
     to: mapTransferAssignment(updatedResident),
+    staffAreasSynced,
   };
 };
 
@@ -509,99 +587,255 @@ const mapInitialHealth = (resident) => ({
   updatedAt: resident.updatedAt,
 });
 
+const formatResidentForInitialHealthList = (residentDoc) => {
+  const base = formatResident(residentDoc);
+  if (!base) return null;
+  return {
+    ...base,
+    hasInitialHealthRecord: hasInitialHealthRecord(residentDoc),
+  };
+};
+
 const listResidentsForInitialHealth = async ({ search, status, recorded, page = 1, limit = 20 }) => {
+  const normalizedStatus = normalizeResidencyStatusFilter(status);
   const { data, total, page: currentPage, limit: currentLimit } = await residentRepo.findForInitialHealthList({
     search,
-    status: status || 'admitted',
+    status: normalizedStatus,
     recorded,
     page: Math.max(1, parseInt(page, 10) || 1),
     limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 20)),
   });
-  return { data: data.map((r) => formatResident(r)), total, page: currentPage, limit: currentLimit, totalPages: Math.ceil(total / currentLimit) || 0 };
+  return {
+    data: data.map((r) => formatResidentForInitialHealthList(r)),
+    total,
+    page: currentPage,
+    limit: currentLimit,
+    totalPages: Math.ceil(total / currentLimit) || 0,
+  };
+};
+
+const hasPreExistingRecord = (resident) => {
+  const chronic = resident?.chronicConditions || [];
+  const history = resident?.medicalHistory || [];
+  return chronic.length > 0 || history.length > 0;
+};
+
+const mapPreExistingConditions = (resident) => ({
+  chronicConditions: resident?.chronicConditions || [],
+  medicalHistory: resident?.medicalHistory || [],
+  hasPreExistingRecord: hasPreExistingRecord(resident),
+  chronicConditionsCount: (resident?.chronicConditions || []).length,
+  medicalHistoryCount: (resident?.medicalHistory || []).length,
+  updatedAt: resident?.updatedAt,
+});
+
+const parsePreExistingBody = (body) => {
+  if (!body || typeof body !== 'object') {
+    return { chronicConditions: undefined, medicalHistory: undefined };
+  }
+  const nested =
+    body.preExistingConditions && typeof body.preExistingConditions === 'object'
+      ? body.preExistingConditions
+      : null;
+  const source = nested || body;
+  return {
+    chronicConditions:
+      source.chronicConditions !== undefined
+        ? normalizeStringArray(source.chronicConditions)
+        : undefined,
+    medicalHistory:
+      source.medicalHistory !== undefined
+        ? normalizeStringArray(source.medicalHistory)
+        : undefined,
+  };
+};
+
+const formatResidentForPreExistingList = (residentDoc) => {
+  const base = formatResident(residentDoc);
+  if (!base) return null;
+  const chronic = residentDoc?.chronicConditions || [];
+  const history = residentDoc?.medicalHistory || [];
+  return {
+    ...base,
+    hasPreExistingRecord: hasPreExistingRecord(residentDoc),
+    chronicConditionsCount: chronic.length,
+    medicalHistoryCount: history.length,
+  };
 };
 
 const listResidentsForPreExisting = async ({ search, status, recorded, page = 1, limit = 20 }) => {
+  const normalizedStatus = normalizeResidencyStatusFilter(status);
   const { data, total, page: currentPage, limit: currentLimit } = await residentRepo.findForPreExistingList({
     search,
-    status: status || 'admitted',
+    status: normalizedStatus,
     recorded,
     page: Math.max(1, parseInt(page, 10) || 1),
     limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 20)),
   });
-  return { data: data.map((r) => formatResident(r)), total, page: currentPage, limit: currentLimit, totalPages: Math.ceil(total / currentLimit) || 0 };
+  return {
+    data: data.map((r) => formatResidentForPreExistingList(r)),
+    total,
+    page: currentPage,
+    limit: currentLimit,
+    totalPages: Math.ceil(total / currentLimit) || 0,
+  };
+};
+
+const mapDrugAllergies = (resident) => ({
+  drugAllergies: resident?.drugAllergies || [],
+  hasDrugAllergiesRecord: hasDrugAllergiesRecord(resident),
+  drugAllergiesCount: (resident?.drugAllergies || []).length,
+  updatedAt: resident?.updatedAt,
+});
+
+const parseDrugAllergiesBody = (body) => {
+  if (!body || typeof body !== 'object') return undefined;
+
+  if (Array.isArray(body.drugAllergies)) {
+    return normalizeStringArray(body.drugAllergies);
+  }
+
+  if (body.drugAllergies && typeof body.drugAllergies === 'object' && !Array.isArray(body.drugAllergies)) {
+    const nested = body.drugAllergies.drugAllergies ?? body.drugAllergies.items;
+    if (nested !== undefined) return normalizeStringArray(nested);
+  }
+
+  if (body.allergies !== undefined) {
+    return normalizeStringArray(body.allergies);
+  }
+
+  if (body.drugAllergies !== undefined) {
+    return normalizeStringArray(body.drugAllergies);
+  }
+
+  return undefined;
+};
+
+const formatResidentForDrugAllergiesList = (residentDoc) => {
+  const base = formatResident(residentDoc);
+  if (!base) return null;
+  const allergies = residentDoc?.drugAllergies || [];
+  return {
+    ...base,
+    hasDrugAllergiesRecord: hasDrugAllergiesRecord(residentDoc),
+    drugAllergiesCount: allergies.length,
+  };
 };
 
 const listResidentsForDrugAllergies = async ({ search, status, recorded, page = 1, limit = 20 }) => {
+  const normalizedStatus = normalizeResidencyStatusFilter(status);
   const { data, total, page: currentPage, limit: currentLimit } = await residentRepo.findForDrugAllergiesList({
     search,
-    status: status || 'admitted',
+    status: normalizedStatus,
     recorded,
     page: Math.max(1, parseInt(page, 10) || 1),
     limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 20)),
   });
-  return { data: data.map((r) => formatResident(r)), total, page: currentPage, limit: currentLimit, totalPages: Math.ceil(total / currentLimit) || 0 };
+  return {
+    data: data.map((r) => formatResidentForDrugAllergiesList(r)),
+    total,
+    page: currentPage,
+    limit: currentLimit,
+    totalPages: Math.ceil(total / currentLimit) || 0,
+  };
 };
 
-const getInitialHealth = async (residentId) => {
-  assertResidentId(residentId);
+const getInitialHealth = async (residentIdOrCode) => {
+  const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findInitialHealthByResidentId(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
   return { resident: formatResident(resident), initialHealth: mapInitialHealth(resident) };
 };
 
-const recordInitialHealth = async (residentId, body) => {
-  assertResidentId(residentId);
-  const description = body.initialHealthCondition?.trim();
-  if (!description) throw new ServiceError('initialHealthCondition is required', 400);
-  if (description.length < 10) throw new ServiceError('initialHealthCondition must be at least 10 characters', 400);
-  const update = { initialHealthCondition: description };
-  if (body.bloodType !== undefined) {
-    if (!BLOOD_TYPES.includes(body.bloodType)) throw new ServiceError(`bloodType must be one of: ${BLOOD_TYPES.join(', ')}`, 400);
-    update.bloodType = body.bloodType;
+const recordInitialHealth = async (residentIdOrCode, body) => {
+  const residentId = await resolveResidentId(residentIdOrCode);
+  const description = parseInitialHealthConditionFromBody(body);
+  if (!description) {
+    throw new ServiceError('initialHealthCondition is required', 400);
   }
+  if (description.length < 10) {
+    throw new ServiceError('initialHealthCondition must be at least 10 characters', 400);
+  }
+
+  const update = { initialHealthCondition: description };
+  const bloodType =
+    parseBloodTypeFromBody(body) ??
+    (body.initialHealth?.bloodType !== undefined
+      ? String(body.initialHealth.bloodType || '').trim() || undefined
+      : undefined);
+  if (bloodType !== undefined) {
+    if (!BLOOD_TYPES.includes(bloodType)) {
+      throw new ServiceError(`bloodType must be one of: ${BLOOD_TYPES.join(', ')}`, 400);
+    }
+    update.bloodType = bloodType;
+  }
+
   const existing = await residentRepo.findById(residentId);
   if (!existing) throw new ServiceError('Resident not found', 404);
+
   const updated = await residentRepo.updateInitialHealth(residentId, update);
+  if (!updated) throw new ServiceError('Failed to save initial health condition', 500);
+
   return {
-    message: hasInitialHealthRecord(existing) ? 'Initial health condition updated' : 'Initial health condition recorded',
+    message: hasInitialHealthRecord(existing)
+      ? 'Initial health condition updated'
+      : 'Initial health condition recorded',
+    resident: formatResident(updated),
     initialHealth: mapInitialHealth(updated),
   };
 };
 
-const getPreExistingConditions = async (residentId) => {
-  assertResidentId(residentId);
+const getPreExistingConditions = async (residentIdOrCode) => {
+  const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findPreExistingByResidentId(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
-  return { resident: formatResident(resident), preExistingConditions: { chronicConditions: resident.chronicConditions || [], medicalHistory: resident.medicalHistory || [] } };
+  return {
+    resident: formatResident(resident),
+    preExistingConditions: mapPreExistingConditions(resident),
+  };
 };
 
-const updatePreExistingConditions = async (residentId, body) => {
-  assertResidentId(residentId);
+const updatePreExistingConditions = async (residentIdOrCode, body) => {
+  const residentId = await resolveResidentId(residentIdOrCode);
+  const { chronicConditions: chronic, medicalHistory: history } = parsePreExistingBody(body);
   const update = {};
-  const chronic = normalizeStringArray(body.chronicConditions);
-  const history = normalizeStringArray(body.medicalHistory);
   if (chronic !== undefined) update.chronicConditions = chronic;
   if (history !== undefined) update.medicalHistory = history;
-  if (Object.keys(update).length === 0) throw new ServiceError('Provide at least one of chronicConditions or medicalHistory', 400);
+  if (Object.keys(update).length === 0) {
+    throw new ServiceError('Provide at least one of chronicConditions or medicalHistory', 400);
+  }
   const updated = await residentRepo.updatePreExistingConditions(residentId, update);
-  if (!updated) throw new ServiceError('Resident not found', 404);
-  return { message: 'Pre-existing medical conditions updated', preExistingConditions: { chronicConditions: updated.chronicConditions || [], medicalHistory: updated.medicalHistory || [] } };
+  if (!updated) throw new ServiceError('Failed to save pre-existing conditions', 500);
+  return {
+    message: 'Pre-existing medical conditions updated',
+    resident: formatResident(updated),
+    preExistingConditions: mapPreExistingConditions(updated),
+  };
 };
 
-const getDrugAllergies = async (residentId) => {
-  assertResidentId(residentId);
+const getDrugAllergies = async (residentIdOrCode) => {
+  const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findDrugAllergiesByResidentId(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
-  return { resident: formatResident(resident), drugAllergies: { drugAllergies: resident.drugAllergies || [] } };
+  return {
+    resident: formatResident(resident),
+    drugAllergies: mapDrugAllergies(resident),
+  };
 };
 
-const updateDrugAllergies = async (residentId, body) => {
-  assertResidentId(residentId);
-  const parsed = normalizeStringArray(body.drugAllergies);
-  if (parsed === undefined) throw new ServiceError('drugAllergies is required', 400);
+const updateDrugAllergies = async (residentIdOrCode, body) => {
+  const residentId = await resolveResidentId(residentIdOrCode);
+  const parsed = parseDrugAllergiesBody(body);
+  if (parsed === undefined) {
+    throw new ServiceError('drugAllergies is required (array, may be empty)', 400);
+  }
   const updated = await residentRepo.updateDrugAllergies(residentId, { drugAllergies: parsed });
-  if (!updated) throw new ServiceError('Resident not found', 404);
-  return { message: 'Drug allergies updated', drugAllergies: { drugAllergies: updated.drugAllergies || [] } };
+  if (!updated) throw new ServiceError('Failed to save drug allergies', 500);
+  return {
+    message: 'Drug allergies updated',
+    resident: formatResident(updated),
+    drugAllergies: mapDrugAllergies(updated),
+  };
 };
 
 const adminCreateResident = async (user, body, req) => {

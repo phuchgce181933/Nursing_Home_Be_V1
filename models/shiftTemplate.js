@@ -10,12 +10,12 @@ const shiftTemplateSchema = new Schema(
     shiftType: { type: String, required: true, enum: SHIFT_TYPES },
     startTime: { type: String, required: true, trim: true },
     endTime: { type: String, required: true, trim: true },
-    durationHours: { type: Number },
+    totalHours: { type: Number },
     crossesMidnight: { type: Boolean, default: false },
     department: { type: Types.ObjectId, ref: 'Floor', index: true },
     colorLabel: { type: String, trim: true, default: '#607D8B' },
-    minStaff: { type: Number, default: 1, min: 1 },
     status: { type: String, enum: SHIFT_TEMPLATE_STATUSES, default: 'active', index: true },
+    isSystem: { type: Boolean, default: false, index: true },
     description: { type: String, trim: true },
     createdBy: { type: Types.ObjectId, ref: 'User' },
   },
@@ -25,7 +25,7 @@ const shiftTemplateSchema = new Schema(
 // Uniqueness: same name allowed across different departments, but not within the same department
 shiftTemplateSchema.index({ name: 1, department: 1 }, { unique: true, sparse: true });
 
-// Auto-calculate durationHours before save
+// Auto-calculate totalHours before save
 shiftTemplateSchema.pre('save', async function () {
   const toMinutes = (t) => {
     const [h, m] = t.split(':').map(Number);
@@ -34,7 +34,7 @@ shiftTemplateSchema.pre('save', async function () {
   const start = toMinutes(this.startTime);
   const end = toMinutes(this.endTime);
   const diff = end > start ? end - start : 1440 - start + end;
-  this.durationHours = Math.round((diff / 60) * 100) / 100;
+  this.totalHours = Math.round((diff / 60) * 100) / 100;
   this.crossesMidnight = end <= start;
 });
 

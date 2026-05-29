@@ -65,6 +65,28 @@ const validateObjectIds = (ids, label = 'id') => {
   return ids.map((id) => new mongoose.Types.ObjectId(id));
 };
 
+/**
+ * When staff has specific responsibleRoomIds, only those rooms count (not the whole floor).
+ * Floor-wide access applies only when no rooms are explicitly assigned.
+ */
+const residentCoversStaffArea = (resident, profile) => {
+  const roomId = resident.roomId?._id?.toString() || resident.roomId?.toString();
+  if (!roomId) return false;
+
+  const assignedRoomIds = (profile.responsibleRoomIds || []).map((r) => String(r._id || r));
+  if (assignedRoomIds.length > 0) {
+    return assignedRoomIds.includes(roomId);
+  }
+
+  const floorId =
+    resident.roomId?.floorId?._id?.toString() ||
+    resident.roomId?.floorId?.toString();
+  if (!floorId) return false;
+
+  const floorIds = (profile.responsibleAreaIds || []).map((f) => String(f._id || f));
+  return floorIds.includes(floorId);
+};
+
 module.exports = {
   isAssignableRole,
   getAssignableFlags,
@@ -73,4 +95,5 @@ module.exports = {
   assertAssignableStaffProfile,
   parseResidentIds,
   validateObjectIds,
+  residentCoversStaffArea,
 };

@@ -4,7 +4,12 @@ const respond = (res, promise) =>
   promise
     .then((data) => res.json({ success: true, data }))
     .catch((err) =>
-      res.status(err.status || 500).json({ success: false, message: err.message, ...(err.conflicts && { conflicts: err.conflicts }) })
+      res.status(err.status || err.statusCode || 500).json({
+        success: false,
+        message: err.message,
+        ...(err.conflicts && { conflicts: err.conflicts }),
+        ...(err.blockingTasks && { blockingTasks: err.blockingTasks }),
+      })
     );
 
 const listShifts = (req, res) => respond(res, svc.listShifts(req.query, req.query));
@@ -16,10 +21,11 @@ const createShift = (req, res) =>
     .createShift(req.body, req.user._id)
     .then((result) => res.status(201).json({ success: true, ...result }))
     .catch((err) =>
-      res.status(err.status || 500).json({
+      res.status(err.status || err.statusCode || 500).json({
         success: false,
         message: err.message,
         ...(err.conflicts && { conflicts: err.conflicts }),
+        ...(err.blockingTasks && { blockingTasks: err.blockingTasks }),
       })
     );
 
@@ -36,10 +42,11 @@ const updateShift = (req, res) => {
     .updateShift(req.params.id, req.body, req.user._id, isAdmin)
     .then((result) => res.json({ success: true, ...result }))
     .catch((err) =>
-      res.status(err.status || 500).json({
+      res.status(err.status || err.statusCode || 500).json({
         success: false,
         message: err.message,
         ...(err.conflicts && { conflicts: err.conflicts }),
+        ...(err.blockingTasks && { blockingTasks: err.blockingTasks }),
       })
     );
 };

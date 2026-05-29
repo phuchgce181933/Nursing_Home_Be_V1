@@ -139,7 +139,9 @@ router.get('/areas/summary', protect, adminManager, getResidentsAreaSummary);
  *           default: 20
  *     responses:
  *       200:
- *         description: Residents with room, floor, building, and bed labels
+ *         description: |
+ *           Residents with room, floor, building, bed labels, and drugAllergies
+ *           (hasDrugAllergiesRecord, drugAllergiesCount on each item).
  *       400:
  *         description: buildingId or floorId required
  */
@@ -369,12 +371,15 @@ router.put('/:residentId/initial-health', protect, adminManager, recordInitialHe
  *         required: true
  *         schema:
  *           type: string
+ *         description: Resident MongoDB _id or residentCode (e.g. RES003)
  *     responses:
  *       200:
- *         description: Resident with area (building, floor, room, bed) and preExistingConditions
+ *         description: Resident with area (building, floor, room, bed) and preExistingConditions (includes hasPreExistingRecord, counts)
  *   put:
  *     summary: Update pre-admission conditions and medical history
- *     description: For illnesses before entering the nursing home — not admission-time fitness (use initial-health).
+ *     description: |
+ *       For illnesses before entering the nursing home — not admission-time fitness (use initial-health).
+ *       Accepts fields at root or nested under `preExistingConditions`. residentId may be _id or residentCode.
  *     tags: [Residents]
  *     security:
  *       - BearerAuth: []
@@ -401,9 +406,21 @@ router.put('/:residentId/initial-health', protect, adminManager, recordInitialHe
  *                 items:
  *                   type: string
  *                 description: Past medical episodes before admission (e.g. dengue); array or CSV; 2-200 chars/item; max 30
+ *               preExistingConditions:
+ *                 type: object
+ *                 description: Optional wrapper; same chronicConditions/medicalHistory fields inside
+ *                 properties:
+ *                   chronicConditions:
+ *                     type: array
+ *                     items:
+ *                       type: string
+ *                   medicalHistory:
+ *                     type: array
+ *                     items:
+ *                       type: string
  *     responses:
  *       200:
- *         description: Pre-existing conditions updated
+ *         description: Pre-existing conditions updated (includes resident and preExistingConditions with record flags)
  *       400:
  *         description: Validation error
  */
@@ -425,11 +442,15 @@ router.put('/:residentId/pre-existing-conditions', protect, adminManager, update
  *         required: true
  *         schema:
  *           type: string
+ *         description: Resident MongoDB _id or residentCode (e.g. RES002)
  *     responses:
  *       200:
- *         description: Resident with area (building, floor, room, bed) and drugAllergies
+ *         description: Resident with area and drugAllergies (includes hasDrugAllergiesRecord, drugAllergiesCount)
  *   put:
  *     summary: Update drug allergies
+ *     description: |
+ *       residentId may be _id or residentCode. Accepts drugAllergies at root (array, may be empty),
+ *       nested object with drugAllergies/items, or legacy `allergies` field name.
  *     tags: [Residents]
  *     security:
  *       - BearerAuth: []
@@ -451,12 +472,17 @@ router.put('/:residentId/pre-existing-conditions', protect, adminManager, update
  *                 type: array
  *                 items:
  *                   type: string
- *                 description: Array or comma-separated string; each item 2-200 chars; max 30 items
+ *                 description: Array or comma-separated string; may be empty to clear all; max 30 items
+ *               allergies:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Legacy alias for drugAllergies
  *     responses:
  *       200:
- *         description: Drug allergies updated
+ *         description: Drug allergies updated (includes resident and record flags)
  *       400:
- *         description: Validation error
+ *         description: Validation error or missing drugAllergies field
  */
 router.get('/:residentId/drug-allergies', protect, adminManager, getDrugAllergies);
 router.put('/:residentId/drug-allergies', protect, adminManager, updateDrugAllergies);
@@ -647,7 +673,38 @@ router.get('/:residentId/transfer-room/targets', protect, adminManager, getTrans
  *                 type: string
  *     responses:
  *       200:
- *         description: Resident transferred successfully
+ *         description: Resident transferred successfully; staff with this resident in assignedResidentIds get destination floor/room added to responsible areas
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 resident:
+ *                   type: object
+ *                 from:
+ *                   type: object
+ *                 to:
+ *                   type: object
+ *                 staffAreasSynced:
+ *                   type: array
+ *                   description: Doctor/nurse profiles whose responsibleAreaIds or responsibleRoomIds were expanded
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       staffProfileId:
+ *                         type: string
+ *                       staffCode:
+ *                         type: string
+ *                       addedFloorIds:
+ *                         type: array
+ *                         items:
+ *                           type: string
+ *                       addedRoomIds:
+ *                         type: array
+ *                         items:
+ *                           type: string
  *       400:
  *         description: Validation error or target unavailable
  *       404:
@@ -669,9 +726,12 @@ router.post('/:residentId/transfer-room', protect, adminManager, transferResiden
  *         required: true
  *         schema:
  *           type: string
+ *         description: Resident MongoDB _id or residentCode (e.g. RES005)
  *     responses:
  *       200:
- *         description: Full resident profile with area (room, floor, building, bed)
+ *         description: |
+ *           Full resident profile with area (room, floor, building, bed) and drugAllergies
+ *           (hasDrugAllergiesRecord, drugAllergiesCount).
  *       404:
  *         description: Resident not found
  */

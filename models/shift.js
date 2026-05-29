@@ -20,6 +20,7 @@ const shiftSchema = new Schema(
     name: { type: String, required: true, trim: true },
     startTime: { type: String, required: true, trim: true },
     endTime: { type: String, required: true, trim: true },
+    totalHours: { type: Number },
     workDate: { type: Date, required: true, index: true },
     assignedStaffId: { type: Types.ObjectId, ref: 'StaffProfile', required: true, index: true },
     floorId: { type: Types.ObjectId, ref: 'Floor' },
@@ -36,5 +37,11 @@ const shiftSchema = new Schema(
 );
 
 shiftSchema.index({ assignedStaffId: 1, workDate: 1, startTime: 1, endTime: 1 });
+
+shiftSchema.pre('save', async function () {
+  if (!this.startTime || !this.endTime) return;
+  const { calcShiftDurationHours } = require('../utils/shiftValidation');
+  this.totalHours = Math.round(calcShiftDurationHours(this.startTime, this.endTime) * 100) / 100;
+});
 
 module.exports = mongoose.models.Shift || mongoose.model('Shift', shiftSchema);

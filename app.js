@@ -59,6 +59,8 @@ app.use(
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+// Must be registered before /api/staff so /care-tasks is not handled by GET /api/staff/:id
+app.use('/api/staff/care-tasks', require('./routes/careTasks'));
 app.use('/api/staff', require('./routes/staff'));
 app.use('/api/shift-templates', require('./routes/shiftTemplates'));
 app.use('/api/shifts', require('./routes/shifts'));
@@ -79,6 +81,9 @@ app.use('/api/pharmacy', require('./routes/pharmacy'));
 const initDB = async () => {
   try {
     await connectDB();
+
+    const { ensureDefaultShiftTemplates } = require('./services/defaultShiftBootstrap');
+    await ensureDefaultShiftTemplates();
 
     for (let key in models) {
       const model = models[key];

@@ -17,8 +17,20 @@ const assignCareTask = (req, res) =>
 const listCareTasks = (req, res) =>
   svc
     .listCareTasks(req.query, req.query)
-    .then((result) => res.json({ success: true, ...result }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .then((result) =>
+      res.json({
+        success: true,
+        data: result.data,
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      })
+    )
+    .catch((err) => {
+      console.error('[listCareTasks]', err);
+      res.status(statusCode(err)).json({ success: false, message: err.message });
+    });
 
 const getCareTask = (req, res) =>
   svc

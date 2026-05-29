@@ -1,7 +1,10 @@
 const Shift = require('../models/shift');
 
 const STAFF_POPULATE = { path: 'assignedStaffId', select: 'staffCode roleCategory userId', populate: { path: 'userId', select: 'fullName role avatarUrl' } };
-const TEMPLATE_POPULATE = { path: 'shiftTemplateId', select: 'name shiftCode shiftType startTime endTime colorLabel minStaff crossesMidnight' };
+const TEMPLATE_POPULATE = {
+  path: 'shiftTemplateId',
+  select: 'name shiftCode shiftType startTime endTime colorLabel totalHours crossesMidnight',
+};
 const FLOOR_POPULATE = { path: 'floorId', select: 'floorNumber name' };
 const ROOM_POPULATE = { path: 'roomId', select: 'roomNumber roomType' };
 
@@ -104,7 +107,7 @@ const findActiveShiftsForStaffOnDate = async (assignedStaffId, workDate) => {
     .lean();
 };
 
-// Batch: published/confirmed shifts for many staff on one date (staff assignment UI).
+// Batch: published/confirmed shifts for many staff on one date (emergency readiness, assignment UI).
 const findShiftsByStaffIdsOnDate = async (staffProfileIds, workDate) => {
   if (!staffProfileIds?.length) return [];
   const dayStart = new Date(workDate);

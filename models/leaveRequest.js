@@ -15,6 +15,8 @@ const leaveRequestSchema = new Schema(
     reviewedAt: { type: Date },
     reviewNote: { type: String, trim: true },
     daysRequested: { type: Number },
+    replacementStaffProfileId: { type: Types.ObjectId, ref: 'StaffProfile' },
+    replacementAssignedAt: { type: Date },
   },
   { timestamps: true }
 );

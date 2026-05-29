@@ -27,6 +27,9 @@ const findByRoomId = async (roomId) =>
   StaffProfile.find({ responsibleRoomIds: roomId })
     .populate('userId', 'fullName role avatarUrl isActive isBanned');
 
+const findByAssignedResidentId = async (residentId) =>
+  StaffProfile.find({ assignedResidentIds: residentId }).populate('userId', 'role');
+
 module.exports = {
   findByUserId,
   findById,
@@ -36,6 +39,7 @@ module.exports = {
   findByIds,
   findByAreaId,
   findByRoomId,
+  findByAssignedResidentId,
   createStaffProfile,
   updateById,
 };

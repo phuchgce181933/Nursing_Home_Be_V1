@@ -7,11 +7,11 @@ const careTaskSchema = new Schema(
   {
     staffProfileId: { type: Types.ObjectId, ref: 'StaffProfile', required: true, index: true },
     residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
-    shiftId: { type: Types.ObjectId, ref: 'Shift' },
+    shiftId: { type: Types.ObjectId, ref: 'Shift', required: true },
     taskType: { type: String, required: true, enum: CARE_TASK_TYPES },
     careLevel: { type: String, required: true, enum: CARE_LEVELS },
     workDate: { type: Date, required: true, index: true },
-    scheduledTime: { type: String, trim: true },
+    scheduledTime: { type: String, required: true, trim: true },
     status: { type: String, enum: CARE_TASK_STATUSES, default: 'pending', index: true },
     notes: { type: String, trim: true },
     assignedBy: { type: Types.ObjectId, ref: 'User' },

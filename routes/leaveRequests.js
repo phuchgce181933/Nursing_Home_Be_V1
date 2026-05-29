@@ -52,7 +52,7 @@ router.post('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'staf
  * @swagger
  * /api/leave-requests:
  *   get:
- *     summary: List leave requests (admin/manager sees all; staff sees own)
+ *     summary: List leave requests (admin/manager sees all; staff sees own). Pending requests past endDate are auto-rejected before listing.
  *     tags: [Leave Requests]
  *     security:
  *       - BearerAuth: []

@@ -57,6 +57,22 @@ const findActiveByStaffAndResidents = async (staffProfileId, residentIds) => {
 const findActiveByShift = async (shiftId) =>
   CareTask.find({ shiftId, status: { $in: ['pending', 'in_progress'] } }).populate(POPULATE);
 
+const findActiveWithShift = async () =>
+  CareTask.find({
+    shiftId: { $ne: null },
+    status: { $in: ['pending', 'in_progress'] },
+  })
+    .populate({ path: 'shiftId', select: 'workDate startTime endTime status' })
+    .lean();
+
+const findSkippedWithLegacyAutoShiftNote = async () =>
+  CareTask.find({
+    status: 'skipped',
+    notes: /Tự động bỏ qua: đã hết ca/,
+  })
+    .select('_id notes workDate')
+    .lean();
+
 const updateById = async (id, data) =>
   CareTask.findByIdAndUpdate(id, data, { new: true, runValidators: true }).populate(POPULATE);
 
@@ -73,6 +89,8 @@ module.exports = {
   findActiveByStaffIdsOnDate,
   findActiveByStaffAndResidents,
   findActiveByShift,
+  findActiveWithShift,
+  findSkippedWithLegacyAutoShiftNote,
   updateById,
   deleteById,
 };

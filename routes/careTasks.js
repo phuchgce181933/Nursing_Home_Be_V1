@@ -17,7 +17,7 @@ const MANAGER = ['admin', 'manager'];
  * /api/care-tasks:
  *   post:
  *     tags: [CareTasks]
- *     summary: Assign a care task to a staff member for a resident (staff must have a published/confirmed shift on workDate)
+ *     summary: Assign a care task linked to a shift (VN rules; auto-missed when shift ends without completion)
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
@@ -25,24 +25,24 @@ const MANAGER = ['admin', 'manager'];
  *         application/json:
  *           schema:
  *             type: object
- *             required: [staffProfileId, residentId, taskType, careLevel, workDate]
+ *             required: [staffProfileId, residentId, shiftId, taskType, careLevel, workDate, scheduledTime]
  *             properties:
  *               staffProfileId: { type: string, description: "StaffProfile _id (or use userId)" }
  *               userId: { type: string, description: "User _id alias for staffProfileId" }
  *               residentId: { type: string, description: "Must be in staff assignedResidentIds" }
- *               shiftId: { type: string, description: "Optional; must be staff shift on workDate" }
+ *               shiftId: { type: string, description: "Required; staff published/confirmed shift on workDate" }
  *               taskType:
  *                 type: string
  *                 enum: [morning_care, medication, physical_therapy, meal_assistance, evening_check, emergency_response]
  *               careLevel:
  *                 type: string
  *                 enum: [low, medium, high]
- *               workDate: { type: string, format: date, description: "Staff must have a published/confirmed shift on this date" }
- *               scheduledTime: { type: string, example: "07:30" }
+ *               workDate: { type: string, format: date, description: "Must be today or future (VN). Staff must have shift on this date." }
+ *               scheduledTime: { type: string, example: "07:30", description: "Required HH:mm within shift; must not be in the past" }
  *               notes: { type: string }
  *     responses:
- *       201: { description: Task created and auto-linked to staff shift }
- *       400: { description: Validation error or staff has no shift on workDate }
+ *       201: { description: Task created with shiftId }
+ *       400: { description: Validation error, past datetime, or ended shift }
  */
 router.post('/', protect, authorize(...MANAGER), ctrl.assignCareTask);
 
@@ -63,7 +63,9 @@ router.post('/', protect, authorize(...MANAGER), ctrl.assignCareTask);
  *           example: '2026-05-26'
  *     responses:
  *       200:
- *         description: staffWithShifts, taskTypes (labelVi), careLevels (labelVi)
+ *         description: staffWithShifts (only non-ended shifts for today), taskTypes, careLevels, minScheduledTime, serverNow
+ *       400:
+ *         description: workDate in the past
  */
 router.get('/assignment-context', protect, authorize(...MANAGER), ctrl.getAssignmentContext);
 
@@ -103,7 +105,7 @@ router.get('/by-shift/:shiftId', protect, authorize(...MANAGER), ctrl.getCareTas
  *         schema: { type: string, format: date }
  *       - in: query
  *         name: status
- *         schema: { type: string, enum: [pending, in_progress, completed, skipped] }
+ *         schema: { type: string, enum: [pending, in_progress, completed, skipped, missed] }
  *       - in: query
  *         name: taskType
  *         schema: { type: string }
@@ -159,10 +161,11 @@ router.get('/:id', protect, authorize(...MANAGER), ctrl.getCareTask);
  *               status:
  *                 type: string
  *                 enum: [in_progress, completed, skipped]
+ *                 description: "Manual only. missed (bỏ lỡ) is set by the system when the shift ends."
  *               notes: { type: string }
  *     responses:
  *       200: { description: Status updated }
- *       400: { description: Invalid transition }
+ *       400: { description: Invalid transition or attempted manual missed }
  */
 router.put('/:id/status', protect, authorize(...MANAGER), ctrl.updateCareTaskStatus);
 

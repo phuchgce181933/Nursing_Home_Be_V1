@@ -57,7 +57,9 @@ const { uploadAvatar } = require('../middleware/uploadMiddleware');
  *           Each item has readinessLevel (ready|caring|off_duty|on_leave), readinessLabelVi,
  *           isOnShift, onShift, hasTasks (date-scoped; requires shift + active task on that date),
  *           currentShift (published/confirmed shift for the date, active window when today),
- *           and legacy availabilityStatus.
+ *           legacy availabilityStatus, and contact fields for emergency call UI:
+ *           phone (User), staffCode, specialty, certifications[] (StaffProfile; top-level for convenience).
+ *           Nested staffProfile is retained for backward compatibility.
  *       400:
  *         description: Invalid date format (must be YYYY-MM-DD) or invalid role
  */
@@ -239,8 +241,7 @@ router.put('/:id', protect, authorize('admin', 'manager'), uploadAvatar, updateS
  *               role:
  *                 type: string
  *                 enum: [doctor, nurse, manager, staff, admin]
- *               roleCategory:
- *                 type: string
+ *                 description: System role; StaffProfile.roleCategory is set to the same value automatically.
  *     responses:
  *       200:
  *         description: Role updated

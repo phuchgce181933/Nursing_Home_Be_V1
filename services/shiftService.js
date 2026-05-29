@@ -488,8 +488,12 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
 const cancelShift = async (id, actorUserId, reason = 'Cancelled') => {
   const shift = await shiftRepo.findById(id);
   if (!shift) throw Object.assign(new Error('Shift not found'), { status: 404 });
-  if (shift.status === 'completed')
-    throw Object.assign(new Error('Cannot cancel a completed shift'), { status: 400 });
+  if (!['published', 'confirmed'].includes(shift.status)) {
+    throw Object.assign(
+      new Error('Chỉ được hủy ca ở trạng thái Đã đăng hoặc Đã xác nhận. Ca nháp hãy dùng Xóa.'),
+      { status: 400 }
+    );
+  }
 
   await assertNoActiveCareTasksForShift(id);
 

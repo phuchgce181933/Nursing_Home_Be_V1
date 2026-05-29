@@ -257,6 +257,9 @@ const updateStaffProfile = async (id, body, currentUser) => {
     const profileUpdate = {};
     if (specialty !== undefined) profileUpdate.specialty = specialty?.trim() || undefined;
     if (certifications !== undefined) profileUpdate.certifications = Array.isArray(certifications) ? certifications : [];
+    if (profile.roleCategory !== user.role) {
+      profileUpdate.roleCategory = user.role;
+    }
     if (Object.keys(profileUpdate).length) {
       profile = await staffProfileRepo.updateById(profile._id, profileUpdate);
     }
@@ -272,8 +275,8 @@ const updateStaffProfile = async (id, body, currentUser) => {
 
 // ── STT 2 – classify staff role ─────────────────────────────────────────────
 
-const updateStaffRole = async (id, { role, roleCategory }, currentUser) => {
-  if (!role && !roleCategory) throw new ServiceError('role or roleCategory is required', 400);
+const updateStaffRole = async (id, { role }, currentUser) => {
+  if (!role) throw new ServiceError('role is required', 400);
 
   const user = await userRepo.findById(id);
   if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Staff not found', 404);
@@ -282,20 +285,18 @@ const updateStaffRole = async (id, { role, roleCategory }, currentUser) => {
   }
   assertActorMayManageUser(currentUser, user);
 
-  if (role) {
-    assertActorMayAssignRole(currentUser, role);
-    const allowedRoles = getCreatableRolesForActor(currentUser) || STAFF_ROLES;
-    if (!allowedRoles.includes(role)) {
-      throw new ServiceError(`role must be one of: ${allowedRoles.join(', ')}`, 400);
-    }
-    user.role = role;
-    await userRepo.saveUser(user);
+  assertActorMayAssignRole(currentUser, role);
+  const allowedRoles = getCreatableRolesForActor(currentUser) || STAFF_ROLES;
+  if (!allowedRoles.includes(role)) {
+    throw new ServiceError(`role must be one of: ${allowedRoles.join(', ')}`, 400);
   }
 
+  user.role = role;
+  await userRepo.saveUser(user);
+
   let profile = await staffProfileRepo.findByUserId(id);
-  if (profile && roleCategory) {
-    assertActorMayAssignRole(currentUser, roleCategory);
-    profile = await staffProfileRepo.updateById(profile._id, { roleCategory });
+  if (profile) {
+    profile = await staffProfileRepo.updateById(profile._id, { roleCategory: role });
   }
 
   return { message: 'Staff role updated', user: { _id: user._id, role: user.role }, staffProfile: profile };
@@ -596,6 +597,21 @@ const isShiftActiveForCheck = (startTime, endTime, isToday, now) => {
   return isShiftActiveNow(startTime, endTime, now);
 };
 
+const formatAvailabilityStaffRow = (user, profile, readinessFields, shiftFields) => ({
+  _id: user._id,
+  fullName: user.fullName,
+  email: user.email,
+  role: user.role,
+  avatarUrl: user.avatarUrl,
+  phone: user.phone ?? null,
+  staffCode: profile?.staffCode ?? null,
+  specialty: profile?.specialty ?? null,
+  certifications: profile?.certifications ?? [],
+  staffProfile: profile || null,
+  ...readinessFields,
+  ...shiftFields,
+});
+
 const classifyReadiness = (onLeave, onShift, hasTasks) => {
   if (onLeave) {
     return {
@@ -732,22 +748,20 @@ const getAvailability = async ({ role, date, floorId }) => {
 
     summary[readinessLevel === 'off_duty' ? 'offDuty' : readinessLevel === 'on_leave' ? 'onLeave' : readinessLevel] += 1;
 
-    return {
-      _id: u._id,
-      fullName: u.fullName,
-      email: u.email,
-      role: u.role,
-      avatarUrl: u.avatarUrl,
-      staffProfile: profile || null,
-      availabilityStatus,
-      readinessLevel,
-      readinessLabelVi,
-      isOnShift: onShift && !onLeave,
-      onLeave,
-      onShift,
-      hasTasks,
-      currentShift: formatCurrentShift(shiftDoc),
-    };
+    return formatAvailabilityStaffRow(
+      u,
+      profile,
+      {
+        availabilityStatus,
+        readinessLevel,
+        readinessLabelVi,
+        isOnShift: onShift && !onLeave,
+        onLeave,
+        onShift,
+        hasTasks,
+      },
+      { currentShift: formatCurrentShift(shiftDoc) }
+    );
   });
 
   const PRIORITY = { ready: 0, caring: 1, off_duty: 2, on_leave: 3 };

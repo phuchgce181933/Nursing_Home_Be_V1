@@ -43,6 +43,20 @@ const findOverlappingApprovedByDate = async (startDate, endDate) =>
 const updateById = async (id, data) =>
   LeaveRequest.findByIdAndUpdate(id, data, { new: true, runValidators: true });
 
+/** Pending requests whose leave period has ended (endDate strictly before asOf). */
+const rejectExpiredPending = async (asOf, reviewNote) =>
+  LeaveRequest.updateMany(
+    { status: 'pending', endDate: { $lt: asOf } },
+    {
+      $set: {
+        status: 'rejected',
+        reviewedAt: asOf,
+        reviewNote,
+      },
+      $unset: { reviewedBy: '' },
+    }
+  );
+
 const deleteById = async (id) => LeaveRequest.findByIdAndDelete(id);
 
 module.exports = {
@@ -53,5 +67,6 @@ module.exports = {
   findApprovedOverlapping,
   findOverlappingApprovedByDate,
   updateById,
+  rejectExpiredPending,
   deleteById,
 };

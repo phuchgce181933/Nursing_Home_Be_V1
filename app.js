@@ -82,6 +82,9 @@ const initDB = async () => {
   try {
     await connectDB();
 
+    const { runAutoSeedIfNeeded } = require('./services/autoSeedService');
+    await runAutoSeedIfNeeded();
+
     const { ensureDefaultShiftTemplates } = require('./services/defaultShiftBootstrap');
     await ensureDefaultShiftTemplates();
 

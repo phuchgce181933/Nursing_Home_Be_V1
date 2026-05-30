@@ -6,5 +6,6 @@ router.use('/tours', require('./adminTours'));
 router.use('/service-packages', require('./adminServicePackages'));
 router.use('/residents', require('./adminResidents'));
 router.use('/activities', require('./adminActivities'));
+router.use('/reports', require('./adminReports'));
 
 module.exports = router;

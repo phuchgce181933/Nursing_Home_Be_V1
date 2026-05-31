@@ -737,4 +737,7 @@ router.post('/:residentId/transfer-room', protect, adminManager, transferResiden
  */
 router.get('/:residentId', protect, adminManager, getResidentDetail);
 
+// Merge param router for vital logs & medical records
+router.use('/:residentId/medical-records', require('./medicalRecords'));
+
 module.exports = router;

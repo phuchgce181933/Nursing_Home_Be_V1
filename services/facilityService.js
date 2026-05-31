@@ -58,9 +58,15 @@ const listRoomsByFloor = async (floorId) => {
   }));
 };
 
+const listAvailableBedsByRoom = async (roomId) => {
+  const Bed = require('../models/bed');
+  return Bed.find({ roomId, status: 'available' }).sort({ bedCode: 1 }).lean();
+};
+
 module.exports = {
   listBuildings,
   listFloors,
   getFloor,
   listRoomsByFloor,
+  listAvailableBedsByRoom,
 };

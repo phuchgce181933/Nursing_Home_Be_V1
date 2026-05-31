@@ -62,8 +62,14 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
     contractStartDate: admission.contractStartDate,
     contractEndDate: admission.contractEndDate,
     contractTerms: admission.contractTerms,
-    assignedBedId: admission.assignedBedId || null,
-    assignedRoomId: admission.assignedRoomId || null,
+    assignedBedId: admission.assignedBedId?._id || admission.assignedBedId || null,
+    assignedBed: admission.assignedBedId?.bedCode
+      ? { _id: admission.assignedBedId._id, bedCode: admission.assignedBedId.bedCode }
+      : null,
+    assignedRoomId: admission.assignedRoomId?._id || admission.assignedRoomId || null,
+    assignedRoom: admission.assignedRoomId?.roomNumber
+      ? { _id: admission.assignedRoomId._id, roomNumber: admission.assignedRoomId.roomNumber }
+      : null,
     checkInAt: admission.checkInAt,
     cancelledAt: admission.cancelledAt,
     cancellationReason: admission.cancellationReason,
@@ -86,6 +92,51 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
   }
 
   return base;
+};
+
+const getCareAppointmentForResident = async (residentId) => {
+  if (!residentId) return null;
+  const CareAppointment = require('../models/careAppointment');
+  try {
+    const careAppt = await CareAppointment.findOne({
+      residentId,
+      appointmentType: 'Khám lâm sàng đầu vào',
+    })
+      .populate({
+        path: 'doctorStaffId',
+        populate: { path: 'userId', select: 'fullName email' }
+      })
+      .populate({
+        path: 'nurseStaffId',
+        populate: { path: 'userId', select: 'fullName email' }
+      });
+
+    if (careAppt) {
+      return {
+        _id: careAppt._id,
+        scheduledStartAt: careAppt.scheduledStartAt,
+        scheduledEndAt: careAppt.scheduledEndAt,
+        status: careAppt.status,
+        doctor: careAppt.doctorStaffId
+          ? {
+              _id: careAppt.doctorStaffId._id,
+              fullName: careAppt.doctorStaffId.userId?.fullName || careAppt.doctorStaffId.fullName || 'Bác sĩ',
+              email: careAppt.doctorStaffId.userId?.email || careAppt.doctorStaffId.email || '',
+            }
+          : null,
+        nurse: careAppt.nurseStaffId
+          ? {
+              _id: careAppt.nurseStaffId._id,
+              fullName: careAppt.nurseStaffId.userId?.fullName || careAppt.nurseStaffId.fullName || 'Điều dưỡng',
+              email: careAppt.nurseStaffId.userId?.email || careAppt.nurseStaffId.email || '',
+            }
+          : null,
+      };
+    }
+  } catch (err) {
+    console.error('Failed to fetch assigned care appointment for drawer:', err);
+  }
+  return null;
 };
 
 const generateRequestCode = async () => {
@@ -328,8 +379,12 @@ const getAdmissionRequest = async (user, admissionId) => {
     { path: 'consultedBy', select: 'fullName email role' },
     { path: 'assessedBy', select: 'fullName email role' },
     { path: 'servicePackageId', select: 'packageCode name tier monthlyPrice' },
+    { path: 'assignedBedId', select: 'bedCode' },
+    { path: 'assignedRoomId', select: 'roomNumber' },
   ]);
-  return { admission: formatAdmission(admission) };
+  const formatted = formatAdmission(admission);
+  formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
+  return { admission: formatted };
 };
 
 const cancelAdmissionRequest = async (user, admissionId, body, req) => {
@@ -381,7 +436,7 @@ const adminListAdmissions = async (query, user) => {
   const filter = {};
 
   if (user && ['doctor', 'nurse'].includes(user.role)) {
-    const medicalStatuses = ['new_request', 'consulting', 'assessing'];
+    const medicalStatuses = ADMISSION_STATUSES;
     if (query.status) {
       const statuses = String(query.status)
         .split(',')
@@ -426,6 +481,13 @@ const adminListAdmissions = async (query, user) => {
     }
   }
 
+  if (query.residentId) {
+    const mongoose = require('mongoose');
+    if (mongoose.Types.ObjectId.isValid(query.residentId)) {
+      filter.residentId = new mongoose.Types.ObjectId(String(query.residentId));
+    }
+  }
+
   if (query.search) {
     const term = query.search.trim();
     filter.$or = [
@@ -459,12 +521,14 @@ const adminGetAdmission = async (admissionId, user) => {
     throw new ServiceError('Admission request not found', 404);
   }
   if (user && ['doctor', 'nurse'].includes(user.role)) {
-    const medicalStatuses = ['new_request', 'consulting', 'assessing'];
+    const medicalStatuses = ADMISSION_STATUSES;
     if (!medicalStatuses.includes(admission.status)) {
-      throw new ServiceError('Access denied: medical staff can only view requests in consultation or assessment phases', 403);
+      throw new ServiceError('Access denied: medical staff can only view requests in allowed phases', 403);
     }
   }
-  return { admission: formatAdmission(admission, { includeFamily: true }) };
+  const formatted = formatAdmission(admission, { includeFamily: true });
+  formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
+  return { admission: formatted };
 };
 
 const approveAdmission = async (admin, admissionId, body, req) => {
@@ -480,10 +544,12 @@ const approveAdmission = async (admin, admissionId, body, req) => {
     );
   }
 
-  const nextStatus = 'contracting';
+  // Admin approval moves to 'assessing' so Doctor can perform clinical check-up first
+  // Status only moves to 'contracting' after Doctor evaluates eligibility as 'eligible'
+  const nextStatus = 'assessing';
   const updateData = {
     status: nextStatus,
-    eligibilityStatus: 'eligible',
+    // Do NOT set eligibilityStatus: 'eligible' here - that's determined by the Doctor
     approvedAt: new Date(),
   };
 
@@ -598,9 +664,10 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
     throw new ServiceError('Admission request not found', 404);
   }
 
-  if (!['new_request', 'consulting'].includes(admission.status)) {
+  // Allow consultation when admission is in any pre-contracting medical phase or contracting
+  if (!['new_request', 'consulting', 'assessing', 'contracting'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot perform consultation on admission with status: ${admission.status}. Only new_request, consulting are allowed.`,
+      `Cannot perform consultation on admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting are allowed.`,
       400
     );
   }
@@ -625,7 +692,7 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
     consultationNotes,
     consultedBy: user._id,
     consultedAt: new Date(),
-    status: 'consulting',
+    status: ['contracting', 'checked_in'].includes(admission.status) ? admission.status : 'consulting',
   };
   if (body?.notes) updateData.notes = String(body.notes).trim();
 
@@ -760,9 +827,9 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     throw new ServiceError('Admission request not found', 404);
   }
 
-  if (!['consulting', 'assessing'].includes(admission.status)) {
+  if (!['consulting', 'assessing', 'contracting'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only consulting, assessing are allowed.`,
+      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only consulting, assessing, contracting are allowed.`,
       400
     );
   }
@@ -790,6 +857,8 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     updateData.rejectedAt = new Date();
     updateData.cancelledAt = new Date();
     updateData.cancellationReason = `[Doctor evaluation] ${updateData.rejectionReason}`;
+  } else if (eligibilityStatus === 'eligible') {
+    updateData.status = 'contracting';
   }
 
   if (body?.notes) updateData.notes = String(body.notes).trim();
@@ -1070,3 +1139,4 @@ module.exports = {
   createAdmissionContract,
   checkInResident,
 };
+

@@ -58,6 +58,12 @@ const { protect, authorize } = require('../middleware/auth');
  *         schema:
  *           type: integer
  *           default: 20
+ *       - in: query
+ *         name: residentId
+ *         schema:
+ *           type: string
+ *         description: Filter by resident MongoDB ObjectId (for wizard pre-fill)
+
  *     responses:
  *       200:
  *         description: Paginated list of all admission requests

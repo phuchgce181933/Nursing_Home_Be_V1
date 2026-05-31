@@ -417,6 +417,7 @@ router.delete('/:id', protect, authorize('admin', 'manager', 'doctor'), deleteAp
  *         description: Appointment not found
  */
 router.put('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
+router.patch('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
 
 /**
  * @swagger

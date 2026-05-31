@@ -46,7 +46,7 @@ const cancelAdmissionRequest = async (req, res) => {
 // ── Admin controllers ──────────────────────────────────────────────────
 const adminListAdmissions = async (req, res) => {
   try {
-    const result = await admissionService.adminListAdmissions(req.query);
+    const result = await admissionService.adminListAdmissions(req.query, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -55,7 +55,7 @@ const adminListAdmissions = async (req, res) => {
 
 const adminGetAdmission = async (req, res) => {
   try {
-    const result = await admissionService.adminGetAdmission(req.params.admissionId);
+    const result = await admissionService.adminGetAdmission(req.params.admissionId, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });

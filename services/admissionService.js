@@ -377,10 +377,21 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
 };
 
 // ── Admin services ─────────────────────────────────────────────────────────────────
-const adminListAdmissions = async (query) => {
+const adminListAdmissions = async (query, user) => {
   const filter = {};
 
-  if (query.status) {
+  if (user && ['doctor', 'nurse'].includes(user.role)) {
+    const medicalStatuses = ['new_request', 'consulting', 'assessing'];
+    if (query.status) {
+      const statuses = String(query.status)
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => medicalStatuses.includes(s));
+      filter.status = statuses.length === 1 ? statuses[0] : { $in: statuses.length ? statuses : medicalStatuses };
+    } else {
+      filter.status = { $in: medicalStatuses };
+    }
+  } else if (query.status) {
     const statuses = String(query.status)
       .split(',')
       .map((s) => s.trim())
@@ -442,10 +453,16 @@ const adminListAdmissions = async (query) => {
   };
 };
 
-const adminGetAdmission = async (admissionId) => {
+const adminGetAdmission = async (admissionId, user) => {
   const admission = await admissionRepo.findByIdForAdmin(admissionId);
   if (!admission) {
     throw new ServiceError('Admission request not found', 404);
+  }
+  if (user && ['doctor', 'nurse'].includes(user.role)) {
+    const medicalStatuses = ['new_request', 'consulting', 'assessing'];
+    if (!medicalStatuses.includes(admission.status)) {
+      throw new ServiceError('Access denied: medical staff can only view requests in consultation or assessment phases', 403);
+    }
   }
   return { admission: formatAdmission(admission, { includeFamily: true }) };
 };

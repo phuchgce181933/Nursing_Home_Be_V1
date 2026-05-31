@@ -6,8 +6,8 @@ const { ADMISSION_STATUSES } = require('../models/enums');
 
 const ACTIVE_ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracting'];
 const CANCELLABLE_STATUSES = [...ACTIVE_ADMISSION_STATUSES];
-const APPROVABLE_STATUSES = ['new_request', 'consulting', 'assessing'];
-const REJECTABLE_STATUSES = ['new_request', 'consulting', 'assessing'];
+const APPROVABLE_STATUSES = ['new_request', 'consulting'];
+const REJECTABLE_STATUSES = ['new_request', 'consulting'];
 
 const findActiveAdmission = (filter) =>
   Admission.findOne({ ...filter, status: { $in: ACTIVE_ADMISSION_STATUSES } });

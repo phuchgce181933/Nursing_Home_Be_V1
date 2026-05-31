@@ -109,15 +109,25 @@ const getResidentMedicalHistory = async (user, residentId, query) => {
   const page = Math.max(1, parseInt(query.page || 1, 10));
   const limit = Math.min(100, Math.max(1, parseInt(query.limit || 50, 10)));
   const skip = (page - 1) * limit;
+  const { from, to } = query;
 
-  const data = await medicalRecordRepo.findByResidentId(residentId, {
-    sort: { measuredAt: -1 },
-    skip,
-    limit,
-  });
+  const [data, total] = await Promise.all([
+    medicalRecordRepo.findByResidentId(residentId, {
+      sort: { measuredAt: -1 },
+      skip,
+      limit,
+      from,
+      to,
+    }),
+    medicalRecordRepo.countByResidentId(residentId, { from, to }),
+  ]);
 
   return {
     data,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
     resident: {
       _id: resident._id,
       fullName: resident.fullName,

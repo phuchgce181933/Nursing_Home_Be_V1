@@ -859,6 +859,46 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     updateData.cancellationReason = `[Doctor evaluation] ${updateData.rejectionReason}`;
   } else if (eligibilityStatus === 'eligible') {
     updateData.status = 'contracting';
+
+    // Auto-assign resident to the doctor/nurse's assignedResidentIds so they can monitor in "Theo dõi sức khỏe"
+    try {
+      const residentId = admission.residentId?._id || admission.residentId;
+      if (residentId) {
+        const ridStr = residentId.toString();
+        const staffProfileRepo = require('../repositories/staffProfileRepository');
+        
+        const addResidentToStaff = async (profile) => {
+          if (!profile) return;
+          const currentIds = (profile.assignedResidentIds || []).map(id => id.toString());
+          if (!currentIds.includes(ridStr)) {
+            const newIds = [...(profile.assignedResidentIds || []), residentId];
+            await staffProfileRepo.updateById(profile._id, { assignedResidentIds: newIds });
+          }
+        };
+
+        // 1. Logged in doctor/nurse who evaluated the request
+        const evaluatorProfile = await staffProfileRepo.findByUserId(doctor._id);
+        await addResidentToStaff(evaluatorProfile);
+
+        // 2. Doctor/Nurse assigned to the intake Care Appointment
+        const appt = await CareAppointment.findOne({
+          residentId: residentId,
+          appointmentType: 'Khám lâm sàng đầu vào'
+        });
+        if (appt) {
+          if (appt.doctorStaffId) {
+            const docProfile = await staffProfileRepo.findById(appt.doctorStaffId);
+            await addResidentToStaff(docProfile);
+          }
+          if (appt.nurseStaffId) {
+            const nurProfile = await staffProfileRepo.findById(appt.nurseStaffId);
+            await addResidentToStaff(nurProfile);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to automatically assign resident to staff assigned list:', err);
+    }
   }
 
   if (body?.notes) updateData.notes = String(body.notes).trim();

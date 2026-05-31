@@ -90,26 +90,6 @@ const preAdmissionConsultation = async (req, res) => {
   }
 };
 
-// ── UC-6.17: Initial Assessment Scheduling ─────────────────────────────────────
-const scheduleInitialAssessment = async (req, res) => {
-  try {
-    const result = await admissionService.scheduleInitialAssessment(req.user, req.params.admissionId, req.body, req);
-    res.json(result);
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-};
-
-// ── UC-6.18: Assign Consultant ─────────────────────────────────────────────────
-const assignConsultant = async (req, res) => {
-  try {
-    const result = await admissionService.assignConsultant(req.user, req.params.admissionId, req.body, req);
-    res.json(result);
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-};
-
 // ── UC-6.19: Evaluate Admission Eligibility ────────────────────────────────────
 const evaluateAdmissionEligibility = async (req, res) => {
   try {

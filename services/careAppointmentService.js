@@ -7,6 +7,8 @@ const { createAuditLog } = require('../utils/auditLog');
 const CareAppointment = require('../models/careAppointment');
 const shiftRepo = require('../repositories/shiftRepository');
 const { getShiftStartDateTime, getShiftEndDateTime } = require('../utils/shiftTime');
+const userRepo = require('../repositories/userRepository');
+
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: VN_TZ });
@@ -535,6 +537,55 @@ const sendReminder = async (user, id, req) => {
       familyNotified: recipientGroups.familyCount,
     },
   };
+const getAvailableStaffForAppointment = async (user, query) => {
+  const { start, end, appointmentId } = query;
+  if (!start || !end) {
+    throw new ServiceError('start and end query parameters are required', 400);
+  }
+
+  const startAt = new Date(start);
+  const endAt = new Date(end);
+  validateAppointmentWindow(startAt, endAt);
+
+  // Lấy tất cả staff doctor và nurse đang hoạt động
+  const staffUsers = await userRepo.findStaffUsers(
+    { role: { $in: ['doctor', 'nurse'] }, isActive: true, isBanned: false },
+    { skip: 0, limit: 1000 }
+  );
+
+  const staffUserMap = Object.fromEntries(staffUsers.map(u => [u._id.toString(), u]));
+  const userIds = staffUsers.map(u => u._id);
+  const profiles = await staffProfileRepo.findByUserIdList(userIds);
+
+  const doctors = [];
+  const nurses = [];
+
+  for (const profile of profiles) {
+    const u = staffUserMap[profile.userId.toString()];
+    if (!u) continue;
+
+    try {
+      // validateStaffAvailability throws if staff is not active on shift or has an appointment overlap
+      await validateStaffAvailability(profile._id, u.role, startAt, endAt, appointmentId || null);
+      
+      const staffInfo = {
+        _id: profile._id,
+        fullName: u.fullName,
+        role: u.role,
+        specialty: profile.specialty || '',
+      };
+
+      if (u.role === 'doctor') {
+        doctors.push(staffInfo);
+      } else if (u.role === 'nurse') {
+        nurses.push(staffInfo);
+      }
+    } catch (err) {
+      // Skip staff who are unavailable (no shift or overlap conflict)
+    }
+  }
+
+  return { doctors, nurses };
 };
 
 module.exports = {
@@ -550,4 +601,5 @@ module.exports = {
   assignDoctor,
   assignNurse,
   sendReminder,
+  getAvailableStaffForAppointment,
 };

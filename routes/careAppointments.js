@@ -13,6 +13,7 @@ const {
   assignDoctor,
   assignNurse,
   sendReminder,
+  getAvailableStaff,
 } = require('../controllers/careAppointmentController');
 const { protect, authorize } = require('../middleware/auth');
 const { attachStaffProfile } = require('../middleware/attachStaffProfile');
@@ -240,6 +241,37 @@ router.get('/daily', protect, authorize(...STAFF_ROLES), attachStaffProfile, get
  *         description: Weekly schedule
  */
 router.get('/weekly', protect, authorize(...STAFF_ROLES), attachStaffProfile, getWeeklySchedule);
+
+/**
+ * @swagger
+ * /api/care-appointments/available-staff:
+ *   get:
+ *     summary: List doctors and nurses scheduled and available at a given time window
+ *     tags: [Care Appointments]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: start
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: end
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: appointmentId
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Available doctors and nurses list
+ */
+router.get('/available-staff', protect, authorize('admin', 'manager'), getAvailableStaff);
 
 /**
  * @swagger

@@ -537,6 +537,8 @@ const sendReminder = async (user, id, req) => {
       familyNotified: recipientGroups.familyCount,
     },
   };
+};
+
 const getAvailableStaffForAppointment = async (user, query) => {
   const { start, end, appointmentId } = query;
   if (!start || !end) {

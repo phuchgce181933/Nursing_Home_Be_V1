@@ -11,13 +11,22 @@ const {
 } = require('../controllers/careNoteController');
 const { protect, authorize } = require('../middleware/auth');
 
-const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
+// Doctor and Nurse write; admin/manager can view for oversight
+const WRITE_ROLES = ['doctor', 'nurse'];
+const READ_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
+
+/**
+ * @swagger
+ * tags:
+ *   name: Care Notes
+ *   description: UC13 — Care Notes Management (Doctor & Nurse)
+ */
 
 /**
  * @swagger
  * /api/care-notes:
  *   post:
- *     summary: Create a new care note
+ *     summary: Create a care note (UC13 — Record Meal / Activity / Health / General note)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -40,17 +49,22 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *                 type: string
  *                 enum: [meal, activity, health, general]
  *                 default: general
+ *                 description: |
+ *                   - meal: ghi nhận bữa ăn (Record Meal Intake Notes)
+ *                   - activity: ghi nhận hoạt động sinh hoạt (Record Daily Activity Notes)
+ *                   - health: ghi nhận tình trạng sức khỏe (Record Health Condition Notes)
+ *                   - general: ghi chú chung
  *               noteAt:
  *                 type: string
  *                 format: date-time
- *                 description: Thời điểm ghi chú (mặc định là lúc tạo)
+ *                 description: Thời điểm ghi chú (mặc định là lúc tạo, không được ở tương lai)
  *               metadata:
  *                 type: object
  *                 description: |
  *                   Dữ liệu có cấu trúc theo noteType:
- *                   - meal: { mealType, intakeAmount, appetite }
- *                   - activity: { activityType, duration(phút), participationLevel, mood }
- *                   - health: { symptoms(mảng), consciousness, fallRisk, skinCondition, observations }
+ *                   - meal: { mealType: breakfast|lunch|dinner|snack, intakeAmount: none|little|half|most|all, appetite: poor|fair|good|excellent }
+ *                   - activity: { activityType: walking|exercise|physiotherapy|bathing|grooming|reading|socializing|other, duration(phút), participationLevel: refused|assisted|supervised|independent, mood: happy|neutral|sad|agitated|anxious }
+ *                   - health: { symptoms(mảng chuỗi), consciousness: alert|confused|drowsy|unresponsive, fallRisk: low|medium|high, skinCondition(chuỗi tự do), observations(chuỗi tự do) }
  *                 example:
  *                   mealType: "lunch"
  *                   intakeAmount: "most"
@@ -59,15 +73,17 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *       201:
  *         description: Care note created
  *       400:
- *         description: Missing required fields, content too short, or invalid metadata values
+ *         description: Missing required fields, content too short, resident not admitted, or invalid metadata
+ *       404:
+ *         description: Resident not found
  */
-router.post('/', protect, authorize(...STAFF_ROLES), createNote);
+router.post('/', protect, authorize(...WRITE_ROLES), createNote);
 
 /**
  * @swagger
  * /api/care-notes:
  *   get:
- *     summary: List all care notes with filters and pagination
+ *     summary: List care notes with filters, search, and pagination (UC13 — View List / Search / Filter)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -76,34 +92,35 @@ router.post('/', protect, authorize(...STAFF_ROLES), createNote);
  *         name: residentId
  *         schema:
  *           type: string
- *         description: Filter by resident ObjectId
+ *         description: Lọc theo cư dân
  *       - in: query
  *         name: noteType
  *         schema:
  *           type: string
  *           enum: [meal, activity, health, general]
+ *         description: Lọc theo loại ghi chú (Filter by Type)
  *       - in: query
  *         name: authorStaffId
  *         schema:
  *           type: string
- *         description: Filter by author StaffProfile ObjectId
+ *         description: Lọc theo StaffProfile._id của tác giả
  *       - in: query
  *         name: search
  *         schema:
  *           type: string
- *         description: Full-text search in note content (case-insensitive)
+ *         description: Tìm kiếm trong nội dung ghi chú (Search Care Notes)
  *       - in: query
  *         name: from
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter noteAt >= from
+ *         description: noteAt >= from
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter noteAt <= to
+ *         description: noteAt <= to
  *       - in: query
  *         name: page
  *         schema:
@@ -118,7 +135,7 @@ router.post('/', protect, authorize(...STAFF_ROLES), createNote);
  *       200:
  *         description: Paginated list of care notes
  */
-router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
+router.get('/', protect, authorize(...READ_ROLES), listNotes);
 
 /**
  * @swagger
@@ -166,13 +183,13 @@ router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
  *       200:
  *         description: Paginated list of the current staff's care notes
  */
-router.get('/my-notes', protect, authorize(...STAFF_ROLES), getMyNotes);
+router.get('/my-notes', protect, authorize(...WRITE_ROLES), getMyNotes);
 
 /**
  * @swagger
  * /api/care-notes/history/{residentId}:
  *   get:
- *     summary: Get full care note history for a resident (all records, no pagination)
+ *     summary: Get paginated care note history for a resident (UC13 — View Care Note History)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -188,6 +205,11 @@ router.get('/my-notes', protect, authorize(...STAFF_ROLES), getMyNotes);
  *           type: string
  *           enum: [meal, activity, health, general]
  *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Tìm kiếm trong nội dung ghi chú
+ *       - in: query
  *         name: from
  *         schema:
  *           type: string
@@ -197,17 +219,29 @@ router.get('/my-notes', protect, authorize(...STAFF_ROLES), getMyNotes);
  *         schema:
  *           type: string
  *           format: date-time
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
  *     responses:
  *       200:
- *         description: Note history retrieved
+ *         description: Paginated note history with resident info
+ *       404:
+ *         description: Resident not found
  */
-router.get('/history/:residentId', protect, authorize(...STAFF_ROLES), getNoteHistory);
+router.get('/history/:residentId', protect, authorize(...READ_ROLES), getNoteHistory);
 
 /**
  * @swagger
  * /api/care-notes/{id}:
  *   get:
- *     summary: Get care note by ID
+ *     summary: Get care note detail by ID
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -223,13 +257,13 @@ router.get('/history/:residentId', protect, authorize(...STAFF_ROLES), getNoteHi
  *       404:
  *         description: Care note not found
  */
-router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
+router.get('/:id', protect, authorize(...READ_ROLES), getNote);
 
 /**
  * @swagger
  * /api/care-notes/{id}:
  *   put:
- *     summary: Update a care note (nurses can only update their own notes)
+ *     summary: Update a care note (UC13 — Edit Care Notes; nurse can only edit own notes)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -252,28 +286,30 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
  *               noteType:
  *                 type: string
  *                 enum: [meal, activity, health, general]
+ *                 description: Thay đổi noteType sẽ xóa metadata cũ (nếu không cung cấp metadata mới)
  *               noteAt:
  *                 type: string
  *                 format: date-time
+ *                 description: Không được ở tương lai
  *               metadata:
  *                 type: object
  *     responses:
  *       200:
  *         description: Care note updated
  *       400:
- *         description: Content too short or invalid noteType/metadata values
+ *         description: Content too short, invalid noteType/metadata, or noteAt in the future
  *       403:
  *         description: Nurse attempting to edit another staff's note
  *       404:
  *         description: Care note not found
  */
-router.put('/:id', protect, authorize(...STAFF_ROLES), updateNote);
+router.put('/:id', protect, authorize(...WRITE_ROLES), updateNote);
 
 /**
  * @swagger
  * /api/care-notes/{id}:
  *   delete:
- *     summary: Delete care note (nurses can only delete their own notes)
+ *     summary: Delete a care note (UC13 — Delete Care Notes; nurse can only delete own notes)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -291,6 +327,6 @@ router.put('/:id', protect, authorize(...STAFF_ROLES), updateNote);
  *       404:
  *         description: Care note not found
  */
-router.delete('/:id', protect, authorize('admin', 'manager', 'doctor', 'nurse'), deleteNote);
+router.delete('/:id', protect, authorize(...WRITE_ROLES), deleteNote);
 
 module.exports = router;

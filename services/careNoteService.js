@@ -1,11 +1,12 @@
+const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
+const Resident = require('../models/resident');
 const { createAuditLog } = require('../utils/auditLog');
 
 const VALID_NOTE_TYPES = ['meal', 'activity', 'health', 'general'];
 
-// Metadata enum values for structured note types
 const VALID_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 const VALID_INTAKE_AMOUNTS = ['none', 'little', 'half', 'most', 'all'];
 const VALID_APPETITE = ['poor', 'fair', 'good', 'excellent'];
@@ -25,6 +26,12 @@ const parsePagination = (query) => {
   const limitNum = Math.min(100, Math.max(1, parseInt(query.limit || 20, 10)));
   const skip = (pageNum - 1) * limitNum;
   return { pageNum, limitNum, skip };
+};
+
+const assertValidObjectId = (id, label = 'id') => {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new ServiceError(`${label} is not a valid ObjectId`, 400);
+  }
 };
 
 const validateMetadata = (noteType, metadata) => {
@@ -73,9 +80,25 @@ const validateMetadata = (noteType, metadata) => {
   }
 };
 
+// noteAt must not be more than 30 minutes in the future (allows for slight clock drift / late entry)
+const validateNoteAt = (noteAt) => {
+  const noteAtDate = new Date(noteAt);
+  if (isNaN(noteAtDate.getTime())) {
+    throw new ServiceError('noteAt is not a valid date', 400);
+  }
+  const maxAllowed = new Date(Date.now() + 30 * 60 * 1000);
+  if (noteAtDate > maxAllowed) {
+    throw new ServiceError('noteAt cannot be set in the future', 400);
+  }
+  return noteAtDate;
+};
+
 const createNote = async (user, body, req) => {
   const { residentId, noteType, content, noteAt, metadata } = body;
+
   if (!residentId) throw new ServiceError('residentId is required', 400);
+  assertValidObjectId(residentId, 'residentId');
+
   if (!content || content.trim().length < 5) {
     throw new ServiceError('content is required and must be at least 5 characters', 400);
   }
@@ -83,6 +106,16 @@ const createNote = async (user, body, req) => {
     throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
   }
 
+  const resident = await Resident.findById(residentId).select('fullName residentCode residencyStatus');
+  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (resident.residencyStatus !== 'admitted') {
+    throw new ServiceError(
+      `Care notes can only be created for admitted residents (current status: ${resident.residencyStatus})`,
+      400
+    );
+  }
+
+  const resolvedNoteAt = noteAt ? validateNoteAt(noteAt) : new Date();
   const resolvedType = noteType || 'general';
   if (metadata) validateMetadata(resolvedType, metadata);
 
@@ -96,7 +129,7 @@ const createNote = async (user, body, req) => {
     authorStaffId: staffProfile._id,
     noteType: resolvedType,
     content: content.trim(),
-    noteAt: noteAt ? new Date(noteAt) : new Date(),
+    noteAt: resolvedNoteAt,
     metadata: metadata || {},
   });
 
@@ -116,14 +149,20 @@ const createNote = async (user, body, req) => {
 
 const listNotes = async (query) => {
   const filter = {};
-  if (query.residentId) filter.residentId = query.residentId;
+  if (query.residentId) {
+    assertValidObjectId(query.residentId, 'residentId');
+    filter.residentId = query.residentId;
+  }
   if (query.noteType) {
     if (!VALID_NOTE_TYPES.includes(query.noteType)) {
       throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
     }
     filter.noteType = query.noteType;
   }
-  if (query.authorStaffId) filter.authorStaffId = query.authorStaffId;
+  if (query.authorStaffId) {
+    assertValidObjectId(query.authorStaffId, 'authorStaffId');
+    filter.authorStaffId = query.authorStaffId;
+  }
   if (query.search) filter.content = { $regex: query.search.trim(), $options: 'i' };
   if (query.from || query.to) {
     filter.noteAt = {};
@@ -140,25 +179,58 @@ const listNotes = async (query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
+// Paginated history for a specific resident, with optional search + type + date filters.
 const getNoteHistory = async (residentId, query) => {
+  assertValidObjectId(residentId, 'residentId');
+
+  const resident = await Resident.findById(residentId).select('fullName residentCode residencyStatus');
+  if (!resident) throw new ServiceError('Resident not found', 404);
+
   const filter = { residentId };
-  if (query.noteType) filter.noteType = query.noteType;
+  if (query.noteType) {
+    if (!VALID_NOTE_TYPES.includes(query.noteType)) {
+      throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+    }
+    filter.noteType = query.noteType;
+  }
+  if (query.search) filter.content = { $regex: query.search.trim(), $options: 'i' };
   if (query.from || query.to) {
     filter.noteAt = {};
     if (query.from) filter.noteAt.$gte = new Date(query.from);
     if (query.to) filter.noteAt.$lte = new Date(query.to);
   }
-  return careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: -1 }, limit: 0 });
+
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const [data, total] = await Promise.all([
+    careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: -1 }, skip, limit: limitNum }),
+    careNoteRepo.countDocuments(filter),
+  ]);
+
+  return {
+    resident: {
+      _id: resident._id,
+      fullName: resident.fullName,
+      residentCode: resident.residentCode,
+      residencyStatus: resident.residencyStatus,
+    },
+    data,
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages: Math.ceil(total / limitNum),
+  };
 };
 
 const getNote = async (id) => {
+  assertValidObjectId(id, 'id');
   const note = await careNoteRepo.findByIdWithPopulate(id);
   if (!note) throw new ServiceError('Care note not found', 404);
   return note;
 };
 
-// Nurses can only update their own notes; admin/manager/doctor can update any note.
+// Nurses can only update their own notes; doctors can update any note.
 const updateNote = async (user, id, body, req) => {
+  assertValidObjectId(id, 'id');
   const note = await careNoteRepo.findById(id);
   if (!note) throw new ServiceError('Care note not found', 404);
 
@@ -175,9 +247,20 @@ const updateNote = async (user, id, body, req) => {
   if (body.noteType && !VALID_NOTE_TYPES.includes(body.noteType)) {
     throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
   }
+  if (body.noteAt !== undefined) {
+    validateNoteAt(body.noteAt);
+  }
 
-  const resolvedType = body.noteType || note.noteType;
-  if (body.metadata) validateMetadata(resolvedType, body.metadata);
+  const newNoteType = body.noteType || note.noteType;
+  const noteTypeChanged = body.noteType && body.noteType !== note.noteType.toString();
+
+  // Validate metadata against the effective note type
+  if (body.metadata) {
+    validateMetadata(newNoteType, body.metadata);
+  } else if (noteTypeChanged) {
+    // noteType changed without new metadata — clear stale metadata
+    body.metadata = {};
+  }
 
   const before = note.toObject();
   if (body.noteType !== undefined) note.noteType = body.noteType;
@@ -204,8 +287,9 @@ const updateNote = async (user, id, body, req) => {
   return careNoteRepo.findByIdWithPopulate(note._id);
 };
 
-// Nurses can only delete their own notes; admin/manager/doctor can delete any note.
+// Nurses can only delete their own notes; doctors can delete any note.
 const deleteNote = async (user, id, req) => {
+  assertValidObjectId(id, 'id');
   const note = await careNoteRepo.findById(id);
   if (!note) throw new ServiceError('Care note not found', 404);
 
@@ -233,7 +317,7 @@ const deleteNote = async (user, id, req) => {
   return { message: 'Care note deleted successfully' };
 };
 
-// Returns paginated list of care notes written by the currently authenticated staff.
+// Paginated list of care notes written by the currently authenticated staff.
 const getMyNotes = async (user, query) => {
   const staffProfile = await staffProfileRepo.findByUserId(user._id);
   if (!staffProfile) throw new ServiceError('Staff profile not found', 400);

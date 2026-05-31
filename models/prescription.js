@@ -17,6 +17,9 @@ const prescriptionSchema = new Schema(
     startDate:           { type: Date },
     endDate:             { type: Date },
     status:              { type: String, enum: PRESCRIPTION_STATUSES, default: 'active', index: true },
+    isVerified:          { type: Boolean, default: false, index: true },
+    verifiedByUserId:    { type: Types.ObjectId, ref: 'User' },
+    verifiedAt:          { type: Date },
     notes:               { type: String, trim: true },
   },
   { timestamps: true }

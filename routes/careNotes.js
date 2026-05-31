@@ -1,6 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { createNote, listNotes, getNoteHistory, getNote, updateNote, deleteNote } = require('../controllers/careNoteController');
+const {
+  createNote,
+  listNotes,
+  getNoteHistory,
+  getNote,
+  updateNote,
+  deleteNote,
+  getMyNotes,
+} = require('../controllers/careNoteController');
 const { protect, authorize } = require('../middleware/auth');
 
 const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
@@ -32,17 +40,26 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *                 type: string
  *                 enum: [meal, activity, health, general]
  *                 default: general
- *                 example: "health"
  *               noteAt:
  *                 type: string
  *                 format: date-time
- *                 description: Thời điểm ghi chú (mặc định là lúc tạo). Dùng để ghi nhận ngược thời gian.
- *                 example: "2025-06-01T07:30:00.000Z"
+ *                 description: Thời điểm ghi chú (mặc định là lúc tạo)
+ *               metadata:
+ *                 type: object
+ *                 description: |
+ *                   Dữ liệu có cấu trúc theo noteType:
+ *                   - meal: { mealType, intakeAmount, appetite }
+ *                   - activity: { activityType, duration(phút), participationLevel, mood }
+ *                   - health: { symptoms(mảng), consciousness, fallRisk, skinCondition, observations }
+ *                 example:
+ *                   mealType: "lunch"
+ *                   intakeAmount: "most"
+ *                   appetite: "good"
  *     responses:
  *       201:
  *         description: Care note created
  *       400:
- *         description: Missing required fields or content too short
+ *         description: Missing required fields, content too short, or invalid metadata values
  */
 router.post('/', protect, authorize(...STAFF_ROLES), createNote);
 
@@ -50,7 +67,7 @@ router.post('/', protect, authorize(...STAFF_ROLES), createNote);
  * @swagger
  * /api/care-notes:
  *   get:
- *     summary: List all care notes with filters
+ *     summary: List all care notes with filters and pagination
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -74,7 +91,7 @@ router.post('/', protect, authorize(...STAFF_ROLES), createNote);
  *         name: search
  *         schema:
  *           type: string
- *         description: Full-text search in note content
+ *         description: Full-text search in note content (case-insensitive)
  *       - in: query
  *         name: from
  *         schema:
@@ -99,15 +116,63 @@ router.post('/', protect, authorize(...STAFF_ROLES), createNote);
  *           default: 20
  *     responses:
  *       200:
- *         description: List of care notes
+ *         description: Paginated list of care notes
  */
 router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
 
 /**
  * @swagger
+ * /api/care-notes/my-notes:
+ *   get:
+ *     summary: Get care notes written by the currently authenticated staff
+ *     tags: [Care Notes]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: residentId
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: noteType
+ *         schema:
+ *           type: string
+ *           enum: [meal, activity, health, general]
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Paginated list of the current staff's care notes
+ */
+router.get('/my-notes', protect, authorize(...STAFF_ROLES), getMyNotes);
+
+/**
+ * @swagger
  * /api/care-notes/history/{residentId}:
  *   get:
- *     summary: Get full care note history for a resident (no pagination, all records)
+ *     summary: Get full care note history for a resident (all records, no pagination)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -164,7 +229,7 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
  * @swagger
  * /api/care-notes/{id}:
  *   put:
- *     summary: Update a care note
+ *     summary: Update a care note (nurses can only update their own notes)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -184,20 +249,21 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
  *               content:
  *                 type: string
  *                 minLength: 5
- *                 example: "Cụ ăn được nửa bát cháo, nghỉ ngơi tốt"
  *               noteType:
  *                 type: string
  *                 enum: [meal, activity, health, general]
- *                 example: "meal"
  *               noteAt:
  *                 type: string
  *                 format: date-time
- *                 example: "2025-06-01T12:00:00.000Z"
+ *               metadata:
+ *                 type: object
  *     responses:
  *       200:
  *         description: Care note updated
  *       400:
- *         description: Content too short or invalid noteType
+ *         description: Content too short or invalid noteType/metadata values
+ *       403:
+ *         description: Nurse attempting to edit another staff's note
  *       404:
  *         description: Care note not found
  */
@@ -207,7 +273,7 @@ router.put('/:id', protect, authorize(...STAFF_ROLES), updateNote);
  * @swagger
  * /api/care-notes/{id}:
  *   delete:
- *     summary: Delete care note (Admin/Manager/Doctor only)
+ *     summary: Delete care note (nurses can only delete their own notes)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -220,9 +286,11 @@ router.put('/:id', protect, authorize(...STAFF_ROLES), updateNote);
  *     responses:
  *       200:
  *         description: Care note deleted
+ *       403:
+ *         description: Nurse attempting to delete another staff's note
  *       404:
  *         description: Care note not found
  */
-router.delete('/:id', protect, authorize('admin', 'manager', 'doctor'), deleteNote);
+router.delete('/:id', protect, authorize('admin', 'manager', 'doctor', 'nurse'), deleteNote);
 
 module.exports = router;

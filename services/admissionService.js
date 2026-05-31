@@ -6,6 +6,7 @@ const User = require('../models/user');
 const Resident = require('../models/resident');
 const Bed = require('../models/bed');
 const Room = require('../models/room');
+const CareAppointment = require('../models/careAppointment');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 
 const parsePagination = (query) => {
@@ -470,18 +471,45 @@ const approveAdmission = async (admin, admissionId, body, req) => {
   };
 
   if (body?.notes) updateData.notes = String(body.notes).trim();
-  
-  if (body?.servicePackageId) {
-    const pkg = await servicePackageRepo.findById(body.servicePackageId);
-    if (pkg) {
-      updateData.servicePackageId = pkg._id;
-      updateData.assignedServicePackage = pkg.name;
-    }
-  } else if (body?.assignedServicePackage) {
-    updateData.assignedServicePackage = String(body.assignedServicePackage).trim();
+
+  // Create Resident at UC-6.7 if not already exists (status: 'pending')
+  let residentId = admission.residentId;
+  if (!residentId) {
+    const residentCode = await generateResidentCode();
+    const applicant = admission.applicant || {};
+    const resident = await Resident.create({
+      residentCode,
+      fullName: applicant.fullName || 'Unknown',
+      dateOfBirth: applicant.dateOfBirth,
+      gender: applicant.gender || 'unknown',
+      citizenId: applicant.citizenId,
+      bloodType: applicant.bloodType || 'unknown',
+      personalAddress: applicant.personalAddress,
+      allergies: applicant.allergies || [],
+      chronicConditions: applicant.chronicConditions || [],
+      initialHealthCondition: applicant.initialHealthCondition,
+      residencyStatus: 'pending',
+      familyPortalAccountIds: [admission.familyAccountId],
+    });
+    residentId = resident._id;
+    updateData.residentId = residentId;
   }
 
   const updated = await admissionRepo.updateAdmission(admissionId, updateData);
+
+  // Automatically create first Care Appointment at UC-12
+  const start = admission.preferredAdmissionDate ? new Date(admission.preferredAdmissionDate) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+  start.setHours(8, 0, 0, 0);
+  const end = new Date(start.getTime() + 60 * 60 * 1000); // 1 hour duration
+
+  await CareAppointment.create({
+    residentId: residentId,
+    scheduledStartAt: start,
+    scheduledEndAt: end,
+    appointmentType: 'Khám lâm sàng đầu vào',
+    status: 'scheduled',
+    notes: `Lịch hẹn khám lâm sàng đầu vào được tạo tự động từ việc phê duyệt đơn nhập viện mã ${admission.requestCode || admission._id}.`,
+  });
 
   await createAuditLog({
     actorUserId: admin._id,
@@ -491,7 +519,7 @@ const approveAdmission = async (admin, admissionId, body, req) => {
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
     beforeData: { requestCode: admission.requestCode, status: admission.status, eligibilityStatus: admission.eligibilityStatus },
-    afterData: { requestCode: updated.requestCode, status: updated.status, eligibilityStatus: updated.eligibilityStatus },
+    afterData: { requestCode: updated.requestCode, status: updated.status, eligibilityStatus: updated.eligibilityStatus, residentId: residentId },
     req,
   });
 

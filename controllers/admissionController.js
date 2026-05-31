@@ -160,8 +160,6 @@ module.exports = {
   approveAdmission,
   rejectAdmission,
   preAdmissionConsultation,
-  scheduleInitialAssessment,
-  assignConsultant,
   evaluateAdmissionEligibility,
   assignServicePackage,
   createAdmissionContract,

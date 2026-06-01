@@ -12,6 +12,7 @@ const {
   getActivities,
   getCareAppointments,
   getHealthReport,
+  downloadHealthReport,
 } = require('../controllers/familyPortalController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -19,15 +20,22 @@ router.use(protect, authorize('family'));
 
 /**
  * @swagger
+ * tags:
+ *   name: Family Portal
+ *   description: UC14 — Family Portal & Remote Monitoring (role family)
+ */
+
+/**
+ * @swagger
  * /api/family/residents:
  *   get:
- *     summary: Get all residents linked to the logged-in family account
+ *     summary: Danh sách cư dân liên kết với tài khoản gia đình (Remote Monitoring)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
  *     responses:
  *       200:
- *         description: List of linked residents
+ *         description: Danh sách cư dân kèm thông tin phòng/giường
  */
 router.get('/residents', getResidents);
 
@@ -35,7 +43,7 @@ router.get('/residents', getResidents);
  * @swagger
  * /api/family/residents/{residentId}:
  *   get:
- *     summary: Get resident details
+ *     summary: Xem thông tin cá nhân cơ bản của cư dân (View Basic Profile Information)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -47,11 +55,11 @@ router.get('/residents', getResidents);
  *           type: string
  *     responses:
  *       200:
- *         description: Resident details
+ *         description: Thông tin cá nhân cư dân
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  *       404:
- *         description: Resident not found
+ *         description: Không tìm thấy cư dân
  */
 router.get('/residents/:residentId', getResident);
 
@@ -59,7 +67,7 @@ router.get('/residents/:residentId', getResident);
  * @swagger
  * /api/family/residents/{residentId}/vitals:
  *   get:
- *     summary: Get latest vitals record for a resident
+ *     summary: Xem chỉ số sức khỏe hiện tại (View Current Health Indicators)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -71,9 +79,9 @@ router.get('/residents/:residentId', getResident);
  *           type: string
  *     responses:
  *       200:
- *         description: Latest vitals record (or null if none)
+ *         description: Bản ghi đo lường mới nhất (null nếu chưa có dữ liệu)
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  */
 router.get('/residents/:residentId/vitals', getVitals);
 
@@ -81,7 +89,7 @@ router.get('/residents/:residentId/vitals', getVitals);
  * @swagger
  * /api/family/residents/{residentId}/health-history:
  *   get:
- *     summary: Get paginated medical record history
+ *     summary: Lịch sử chỉ số sức khỏe (View Health Indicator History / Search / Filter)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -96,18 +104,23 @@ router.get('/residents/:residentId/vitals', getVitals);
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter measuredAt >= from
+ *         description: Lọc measuredAt >= from
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter measuredAt <= to
+ *         description: Lọc measuredAt <= to
  *       - in: query
  *         name: search
  *         schema:
  *           type: string
- *         description: Search in summary text
+ *         description: Tìm kiếm trong trường summary
+ *       - in: query
+ *         name: abnormalOnly
+ *         schema:
+ *           type: boolean
+ *         description: "true = chỉ lấy bản ghi bất thường"
  *       - in: query
  *         name: page
  *         schema:
@@ -120,9 +133,9 @@ router.get('/residents/:residentId/vitals', getVitals);
  *           default: 20
  *     responses:
  *       200:
- *         description: Paginated medical records
+ *         description: Danh sách bản ghi sức khỏe phân trang
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  */
 router.get('/residents/:residentId/health-history', getHealthHistory);
 
@@ -130,7 +143,7 @@ router.get('/residents/:residentId/health-history', getHealthHistory);
  * @swagger
  * /api/family/residents/{residentId}/health-chart:
  *   get:
- *     summary: Get time-series vitals data for charting (default last 30 days)
+ *     summary: Dữ liệu biểu đồ sức khỏe (View Health Charts) — mặc định 30 ngày gần nhất
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -145,7 +158,7 @@ router.get('/residents/:residentId/health-history', getHealthHistory);
  *         schema:
  *           type: string
  *           enum: [bloodPressureSystolic, bloodPressureDiastolic, pulse, temperatureCelsius, oxygenSaturation, bloodSugar, weightKg]
- *         description: Specific metric to return (returns all metrics if omitted)
+ *         description: Chỉ số cụ thể cần lấy (bỏ trống = lấy tất cả)
  *       - in: query
  *         name: from
  *         schema:
@@ -158,11 +171,11 @@ router.get('/residents/:residentId/health-history', getHealthHistory);
  *           format: date-time
  *     responses:
  *       200:
- *         description: Time-series vitals array
+ *         description: Mảng dữ liệu chuỗi thời gian (measuredAt + các chỉ số)
  *       400:
- *         description: Invalid metric value
+ *         description: metric không hợp lệ
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  */
 router.get('/residents/:residentId/health-chart', getHealthChart);
 
@@ -170,7 +183,7 @@ router.get('/residents/:residentId/health-chart', getHealthChart);
  * @swagger
  * /api/family/residents/{residentId}/care-notes:
  *   get:
- *     summary: Get paginated care notes for a resident
+ *     summary: Nhật ký chăm sóc (View Care Logs / Search / Filter by Type)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -185,11 +198,12 @@ router.get('/residents/:residentId/health-chart', getHealthChart);
  *         schema:
  *           type: string
  *           enum: [meal, activity, health, general]
+ *         description: Lọc theo loại ghi chú
  *       - in: query
  *         name: search
  *         schema:
  *           type: string
- *         description: Search in note content
+ *         description: Tìm kiếm trong nội dung ghi chú
  *       - in: query
  *         name: from
  *         schema:
@@ -212,9 +226,9 @@ router.get('/residents/:residentId/health-chart', getHealthChart);
  *           default: 20
  *     responses:
  *       200:
- *         description: Paginated care notes
+ *         description: Nhật ký chăm sóc phân trang
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  */
 router.get('/residents/:residentId/care-notes', getCareNotes);
 
@@ -222,7 +236,7 @@ router.get('/residents/:residentId/care-notes', getCareNotes);
  * @swagger
  * /api/family/residents/{residentId}/medications:
  *   get:
- *     summary: Get paginated medication schedule records for a resident
+ *     summary: Lịch sử dùng thuốc (View Medication History / Filter)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -236,19 +250,25 @@ router.get('/residents/:residentId/care-notes', getCareNotes);
  *         name: status
  *         schema:
  *           type: string
- *           enum: [PENDING, TAKEN, LATE_TAKEN, MISSED, SKIPPED]
+ *           enum: [PENDING, TAKEN, LATE_TAKEN, MISSED, SKIPPED, OVERDUE]
+ *         description: Lọc theo trạng thái uống thuốc
+ *       - in: query
+ *         name: medicationName
+ *         schema:
+ *           type: string
+ *         description: Tìm kiếm theo tên thuốc
  *       - in: query
  *         name: from
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter scheduledTime >= from
+ *         description: Lọc scheduledTime >= from
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter scheduledTime <= to
+ *         description: Lọc scheduledTime <= to
  *       - in: query
  *         name: page
  *         schema:
@@ -261,9 +281,9 @@ router.get('/residents/:residentId/care-notes', getCareNotes);
  *           default: 20
  *     responses:
  *       200:
- *         description: Paginated medication schedule records
+ *         description: Lịch sử dùng thuốc phân trang
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  */
 router.get('/residents/:residentId/medications', getMedications);
 
@@ -271,7 +291,7 @@ router.get('/residents/:residentId/medications', getMedications);
  * @swagger
  * /api/family/residents/{residentId}/prescriptions:
  *   get:
- *     summary: Get prescriptions for a resident
+ *     summary: Danh sách đơn thuốc (View Medication History)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -285,12 +305,28 @@ router.get('/residents/:residentId/medications', getMedications);
  *         name: status
  *         schema:
  *           type: string
- *           enum: [ACTIVE, COMPLETED, CANCELLED]
+ *           enum: [ACTIVE, COMPLETED, CANCELLED, PAUSED]
+ *         description: Lọc theo trạng thái đơn thuốc
+ *       - in: query
+ *         name: medicationName
+ *         schema:
+ *           type: string
+ *         description: Tìm kiếm theo tên thuốc
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
  *     responses:
  *       200:
- *         description: List of prescriptions (sorted by prescriptionDate desc)
+ *         description: Danh sách đơn thuốc phân trang (sắp xếp theo prescriptionDate giảm dần)
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  */
 router.get('/residents/:residentId/prescriptions', getPrescriptions);
 
@@ -298,7 +334,7 @@ router.get('/residents/:residentId/prescriptions', getPrescriptions);
  * @swagger
  * /api/family/residents/{residentId}/activities:
  *   get:
- *     summary: Get activities the resident participates in
+ *     summary: Lịch hoạt động hằng ngày (View Daily Activity Schedule)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -314,22 +350,37 @@ router.get('/residents/:residentId/prescriptions', getPrescriptions);
  *           type: string
  *           enum: [draft, scheduled, ongoing, completed, cancelled]
  *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Tìm theo tên hoạt động hoặc danh mục
+ *       - in: query
  *         name: from
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter scheduledAt >= from
+ *         description: Lọc scheduledAt >= from
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter scheduledAt <= to
+ *         description: Lọc scheduledAt <= to
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
  *     responses:
  *       200:
- *         description: List of activities
+ *         description: Lịch hoạt động phân trang
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  */
 router.get('/residents/:residentId/activities', getActivities);
 
@@ -337,7 +388,7 @@ router.get('/residents/:residentId/activities', getActivities);
  * @swagger
  * /api/family/residents/{residentId}/care-appointments:
  *   get:
- *     summary: Get care appointments for a resident
+ *     summary: Lịch chăm sóc và lịch khám bệnh (View Medical and Care Schedules)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -353,22 +404,37 @@ router.get('/residents/:residentId/activities', getActivities);
  *           type: string
  *           enum: [scheduled, in_progress, completed, cancelled]
  *       - in: query
+ *         name: appointmentType
+ *         schema:
+ *           type: string
+ *         description: Lọc/tìm kiếm theo loại hẹn
+ *       - in: query
  *         name: from
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter scheduledStartAt >= from
+ *         description: Lọc scheduledStartAt >= from
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter scheduledStartAt <= to
+ *         description: Lọc scheduledStartAt <= to
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
  *     responses:
  *       200:
- *         description: List of care appointments
+ *         description: Lịch chăm sóc & khám bệnh phân trang
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  */
 router.get('/residents/:residentId/care-appointments', getCareAppointments);
 
@@ -376,7 +442,7 @@ router.get('/residents/:residentId/care-appointments', getCareAppointments);
  * @swagger
  * /api/family/residents/{residentId}/report:
  *   get:
- *     summary: Get comprehensive health report for a resident
+ *     summary: Báo cáo sức khỏe tổng hợp dạng JSON (Remote Monitoring)
  *     tags: [Family Portal]
  *     security:
  *       - BearerAuth: []
@@ -391,21 +457,65 @@ router.get('/residents/:residentId/care-appointments', getCareAppointments);
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Report period start (no filter if omitted)
+ *         description: Từ ngày (không bắt buộc)
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Report period end (no filter if omitted)
+ *         description: Đến ngày (không bắt buộc)
  *     responses:
  *       200:
- *         description: Health report with vitals, care notes, appointments, medications
+ *         description: Báo cáo JSON gồm vitals, care notes, appointments, medications, prescriptions
  *       403:
- *         description: Access denied
+ *         description: Không có quyền truy cập
  *       404:
- *         description: Resident not found
+ *         description: Không tìm thấy cư dân
  */
 router.get('/residents/:residentId/report', getHealthReport);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/report/download:
+ *   get:
+ *     summary: Tải báo cáo sức khỏe dạng CSV (Download Health Reports)
+ *     description: |
+ *       Trả về file CSV UTF-8 (có BOM để Excel mở đúng tiếng Việt).
+ *       File gồm 5 section: Chỉ số sức khỏe, Nhật ký chăm sóc, Lịch sử dùng thuốc, Đơn thuốc, Lịch chăm sóc.
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Từ ngày (không bắt buộc)
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Đến ngày (không bắt buộc)
+ *     responses:
+ *       200:
+ *         description: File CSV — Content-Disposition attachment
+ *         content:
+ *           text/csv:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       403:
+ *         description: Không có quyền truy cập
+ *       404:
+ *         description: Không tìm thấy cư dân
+ */
+router.get('/residents/:residentId/report/download', downloadHealthReport);
 
 module.exports = router;

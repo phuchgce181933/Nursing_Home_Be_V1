@@ -57,10 +57,11 @@ router.get('/current', protect, authorize('doctor', 'nurse'), getCurrentMedicati
  *                 type: array
  *                 items:
  *                   type: object
- *                   required: [itemId]
+ *                   required: [prescriptionItemId]
  *                   properties:
- *                     itemId:
+ *                     prescriptionItemId:
  *                       type: string
+ *                       description: "items[]._id from the prescription document"
  *                     startDate:
  *                       type: string
  *                       format: date

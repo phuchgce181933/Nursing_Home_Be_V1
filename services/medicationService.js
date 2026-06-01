@@ -91,7 +91,7 @@ const createPrescription = async (user, body) => {
     startDate: new Date(startDate),
     endDate: body.endDate ? new Date(body.endDate) : undefined,
     scheduleTimes: body.scheduleTimes || [],
-    status: 'active',
+    status: 'ACTIVE',
     notes: body.notes || '',
   });
 

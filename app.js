@@ -73,6 +73,10 @@ app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
 app.use('/api/medications', require('./routes/medications'));
+// Complex prescription management (Doctor workflow with safety checks + items[])
+app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
+// Medication schedule management (daily view, mark taken/missed, compliance history)
+app.use('/api/medications', require('./routes/scheduleRoutes'));
 app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/medical', require('./routes/medicalServicePackages'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));

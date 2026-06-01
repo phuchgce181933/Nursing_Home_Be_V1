@@ -21,9 +21,12 @@ const getFloor = (req, res) => respond(res, svc.getFloor(req.params.floorId));
 
 const listRoomsByFloor = (req, res) => respond(res, svc.listRoomsByFloor(req.params.floorId));
 
+const listAvailableBedsByRoom = (req, res) => respond(res, svc.listAvailableBedsByRoom(req.params.roomId));
+
 module.exports = {
   listBuildings,
   listFloors,
   getFloor,
   listRoomsByFloor,
+  listAvailableBedsByRoom,
 };

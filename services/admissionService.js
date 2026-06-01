@@ -405,6 +405,22 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
     throw new ServiceError(`Cannot cancel request with status: ${admission.status}`, 400);
   }
 
+  // Block cancellation if the intake clinical appointment has already been completed by the doctor
+  const residentId = admission.residentId?._id || admission.residentId;
+  if (residentId) {
+    const completedAppt = await CareAppointment.findOne({
+      residentId: residentId,
+      appointmentType: 'Khám lâm sàng đầu vào',
+      status: 'completed',
+    });
+    if (completedAppt) {
+      throw new ServiceError(
+        'Không thể hủy yêu cầu nhập viện sau khi bác sĩ đã hoàn thành khám lâm sàng đầu vào. Vui lòng liên hệ ban quản lý để được hỗ trợ.',
+        403
+      );
+    }
+  }
+
   const cancellationReason = body?.cancellationReason?.trim() || body?.reason?.trim() || '';
 
   const updated = await admissionRepo.updateAdmission(admission._id, {
@@ -544,6 +560,14 @@ const approveAdmission = async (admin, admissionId, body, req) => {
     );
   }
 
+  // Guard: prevent double-approval — if already approved once, reject
+  if (admission.approvedAt) {
+    throw new ServiceError(
+      'Yêu cầu nhập viện này đã được duyệt trước đó. Không thể duyệt lại một yêu cầu đã được phê duyệt.',
+      409
+    );
+  }
+
   // Admin approval moves to 'assessing' so Doctor can perform clinical check-up first
   // Status only moves to 'contracting' after Doctor evaluates eligibility as 'eligible'
   const nextStatus = 'assessing';
@@ -581,18 +605,27 @@ const approveAdmission = async (admin, admissionId, body, req) => {
   const updated = await admissionRepo.updateAdmission(admissionId, updateData);
 
   // Automatically create first Care Appointment at UC-12
-  const start = admission.preferredAdmissionDate ? new Date(admission.preferredAdmissionDate) : new Date(Date.now() + 24 * 60 * 60 * 1000);
-  start.setHours(8, 0, 0, 0);
-  const end = new Date(start.getTime() + 60 * 60 * 1000); // 1 hour duration
-
-  await CareAppointment.create({
+  // Guard: only create if no intake appointment already exists for this resident
+  const existingAppt = await CareAppointment.findOne({
     residentId: residentId,
-    scheduledStartAt: start,
-    scheduledEndAt: end,
     appointmentType: 'Khám lâm sàng đầu vào',
-    status: 'scheduled',
-    notes: `Lịch hẹn khám lâm sàng đầu vào được tạo tự động từ việc phê duyệt đơn nhập viện mã ${admission.requestCode || admission._id}.`,
+    status: { $ne: 'cancelled' },
   });
+
+  if (!existingAppt) {
+    const start = admission.preferredAdmissionDate ? new Date(admission.preferredAdmissionDate) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+    start.setHours(8, 0, 0, 0);
+    const end = new Date(start.getTime() + 60 * 60 * 1000); // 1 hour duration
+
+    await CareAppointment.create({
+      residentId: residentId,
+      scheduledStartAt: start,
+      scheduledEndAt: end,
+      appointmentType: 'Khám lâm sàng đầu vào',
+      status: 'scheduled',
+      notes: `Lịch hẹn khám lâm sàng đầu vào được tạo tự động từ việc phê duyệt đơn nhập viện mã ${admission.requestCode || admission._id}.`,
+    });
+  }
 
   await createAuditLog({
     actorUserId: admin._id,
@@ -835,8 +868,8 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
   }
 
   const eligibilityStatus = body?.eligibilityStatus;
-  if (!eligibilityStatus || !ADMISSION_ELIGIBILITY_STATUSES.includes(eligibilityStatus)) {
-    throw new ServiceError(`eligibilityStatus is required and must be one of: ${ADMISSION_ELIGIBILITY_STATUSES.join(', ')}`, 400);
+  if (!eligibilityStatus || !['eligible', 'not_eligible'].includes(eligibilityStatus)) {
+    throw new ServiceError(`eligibilityStatus phải là 'eligible' hoặc 'not_eligible'. Bác sĩ cần đưa ra kết luận rõ ràng khi đánh giá điều kiện nhập viện.`, 400);
   }
 
   const assessmentResult = body?.assessmentResult?.trim();

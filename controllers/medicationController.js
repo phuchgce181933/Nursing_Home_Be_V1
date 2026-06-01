@@ -1,3 +1,4 @@
+// DEPRECATED — This controller is no longer used. Use prescriptionController.js and scheduleController.js instead.
 const medicationService = require('../services/medicationService');
 
 const wrap = (fn) => async (req, res) => {

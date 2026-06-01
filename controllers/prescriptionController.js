@@ -1,6 +1,8 @@
 const { isValidObjectId } = require('mongoose');
 const Prescription = require('../models/prescription');
 const Resident = require('../models/resident');
+const Medication = require('../models/medication');
+const StaffProfile = require('../models/staffProfile');
 const MedicationSchedule = require('../models/MedicationSchedule');
 const {
   checkAllergies,
@@ -16,6 +18,38 @@ const {
 const ACK_REQUIRED_INTERACTION = new Set(['SEVERE']);
 const ACK_REQUIRED_CONTRAINDICATION = new Set(['HIGH', 'CRITICAL']);
 
+// ── Scope helpers ─────────────────────────────────────────────────────────────
+
+// Returns null (unrestricted) for admin/manager, or array of resident ID strings for doctor/nurse
+const getResidentScope = async (userId, role) => {
+  if (['admin', 'manager'].includes(role)) return null;
+  const profile = await StaffProfile.findOne({ userId }).select('assignedResidentIds');
+  if (!profile) return [];
+  return profile.assignedResidentIds.map(String);
+};
+
+const isInScope = (residentId, scope) =>
+  scope === null || scope.includes(String(residentId));
+
+// ── Medication DB helpers ─────────────────────────────────────────────────────
+
+// Validates that every medicationId in items[] exists and is active in the pharmacy DB.
+// Returns a Map<id_string → Medication doc> on success, throws on any missing.
+const resolveMedicationsFromDB = async (items) => {
+  const ids = [...new Set(items.map((i) => String(i.medicationId)))];
+  const meds = await Medication.find({ _id: { $in: ids }, isActive: true })
+    .select('_id name genericName form strength unit');
+  if (meds.length !== ids.length) {
+    const foundIds = new Set(meds.map((m) => m._id.toString()));
+    const missing = ids.filter((id) => !foundIds.has(id));
+    throw Object.assign(
+      new Error(`Medication(s) not found in pharmacy database or inactive: ${missing.join(', ')}`),
+      { statusCode: 400 }
+    );
+  }
+  return new Map(meds.map((m) => [m._id.toString(), m]));
+};
+
 const hasSevereWarning = (contraWarnings, interactionWarnings) =>
   interactionWarnings.some((w) => ACK_REQUIRED_INTERACTION.has(w.severity)) ||
   contraWarnings.some((w) => ACK_REQUIRED_CONTRAINDICATION.has(w.severity));
@@ -26,14 +60,33 @@ const createPrescription = async (req, res) => {
   try {
     const { residentId, diagnosisNote, validUntil, items, acknowledgeWarnings } = req.body;
 
-    const resident = await Resident.findById(residentId).select('_id');
+    // 1. Scope check — doctor can only prescribe for their assigned residents
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+    }
+
+    // 2. Resident exists
+    const resident = await Resident.findById(residentId).select('_id residencyStatus');
     if (!resident) {
       return res.status(404).json({ success: false, message: 'Resident not found' });
     }
+    if (resident.residencyStatus !== 'admitted') {
+      return res.status(400).json({ success: false, message: 'Resident is not currently admitted' });
+    }
 
-    const drugNames = items.map((i) => i.medicationName);
+    // 3. Resolve medications from pharmacy DB — prevents free-text drug names
+    let medMap;
+    try {
+      medMap = await resolveMedicationsFromDB(items);
+    } catch (e) {
+      return res.status(e.statusCode || 400).json({ success: false, message: e.message });
+    }
 
-    // Allergy check — hard block, no acknowledgment bypass
+    // 4. Build drug name list from pharmacy records (not user input)
+    const drugNames = items.map((i) => medMap.get(String(i.medicationId)).name);
+
+    // 5. Allergy check — hard block
     const { allergies: allergyHits } = await checkAllergies(residentId, drugNames);
     if (allergyHits.length) {
       return res.status(400).json({
@@ -44,11 +97,12 @@ const createPrescription = async (req, res) => {
       });
     }
 
+    // 6. Safety checks
     const dosageItems = items.map((i) => ({
-      medicationName: i.medicationName,
+      medicationName: medMap.get(String(i.medicationId)).name,
       dosage: Number(i.dosage),
       frequency: Number(i.frequency),
-      unit: i.unit,
+      unit: i.unit || medMap.get(String(i.medicationId)).unit,
     }));
 
     const [contraResult, interactResult, dosageResult] = await Promise.all([
@@ -90,6 +144,7 @@ const createPrescription = async (req, res) => {
 
     const overdosedDrugs = new Set(dosageWarnings.map((w) => w.medicationName));
 
+    // 7. Build prescription items — medicationName comes from pharmacy DB, not user input
     const prescription = await Prescription.create({
       residentId,
       doctorId: req.user._id,
@@ -97,24 +152,29 @@ const createPrescription = async (req, res) => {
       prescriptionDate: new Date(),
       validUntil: new Date(validUntil),
       status: 'ACTIVE',
-      items: items.map((item) => ({
-        medicationName: item.medicationName,
-        genericName: item.genericName,
-        dosage: String(item.dosage),
-        unit: item.unit,
-        frequency: Number(item.frequency),
-        times: Array.isArray(item.times) ? item.times : [],
-        route: item.route || 'oral',
-        duration: item.duration,
-        startDate: item.startDate ? new Date(item.startDate) : undefined,
-        endDate: item.endDate ? new Date(item.endDate) : undefined,
-        instructions: item.instructions,
-        elderlyDosageAdjusted: overdosedDrugs.has(item.medicationName),
-        isActive: true,
-      })),
+      items: items.map((item) => {
+        const med = medMap.get(String(item.medicationId));
+        return {
+          medicationId: med._id,
+          medicationName: med.name,
+          genericName: item.genericName || med.genericName || null,
+          dosage: String(item.dosage),
+          unit: item.unit || med.unit || null,
+          frequency: Number(item.frequency),
+          times: Array.isArray(item.times) ? item.times : [],
+          route: item.route || 'oral',
+          duration: item.duration,
+          startDate: item.startDate ? new Date(item.startDate) : undefined,
+          endDate: item.endDate ? new Date(item.endDate) : undefined,
+          instructions: item.instructions,
+          elderlyDosageAdjusted: overdosedDrugs.has(med.name),
+          isActive: true,
+        };
+      }),
       acknowledgments,
     });
 
+    // 8. Auto-generate medication schedules for items that have startDate + endDate + times
     await generateSchedules(prescription);
 
     return res.status(201).json({
@@ -123,10 +183,7 @@ const createPrescription = async (req, res) => {
       warnings: allWarnings,
     });
   } catch (err) {
-    return res.status(err.statusCode || 500).json({
-      success: false,
-      message: err.message,
-    });
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };
 
@@ -147,17 +204,20 @@ const editPrescription = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Prescription not found' });
     }
     if (prescription.status !== 'ACTIVE') {
-      return res.status(400).json({
-        success: false,
-        message: 'Only ACTIVE prescriptions can be edited',
-      });
+      return res.status(400).json({ success: false, message: 'Only ACTIVE prescriptions can be edited' });
+    }
+
+    // Scope check
+    const scope = await getResidentScope(req.user._id, role);
+    if (!isInScope(prescription.residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
     }
 
     const changeLog = [];
     let allWarnings = [];
 
     if (role === 'nurse') {
-      // Nurse: only instructions and times per item (matched by _id)
+      // ── Nurse: only times and instructions per item (matched by _id) ──────
       if (!Array.isArray(items) || !items.length) {
         return res.status(400).json({
           success: false,
@@ -185,11 +245,9 @@ const editPrescription = async (req, res) => {
         }
       }
 
-      // Apply changes in memory and collect items that need schedule regeneration
       const rescheduleItems = [];
       for (const patch of items) {
         const existing = prescription.items.id(patch._id);
-
         if (patch.times !== undefined) {
           const timesChanged =
             JSON.stringify(existing.times.slice().sort()) !==
@@ -200,7 +258,6 @@ const editPrescription = async (req, res) => {
             rescheduleItems.push(existing);
           }
         }
-
         if (patch.instructions !== undefined && patch.instructions !== existing.instructions) {
           changeLog.push(`Updated ${existing.medicationName} instructions: "${patch.instructions}"`);
           existing.instructions = patch.instructions;
@@ -214,7 +271,6 @@ const editPrescription = async (req, res) => {
       prescription.editHistory.push({ editedBy: req.user._id, editedAt: new Date(), changes: changeLog.join('; ') });
       await prescription.save();
 
-      // Regenerate schedules AFTER successful save
       for (const item of rescheduleItems) {
         await generateSchedulesForItem(prescription, item);
       }
@@ -222,98 +278,116 @@ const editPrescription = async (req, res) => {
       const populatedNurse = await Prescription.findById(prescription._id)
         .populate('residentId', 'fullName dateOfBirth')
         .populate('doctorId', 'fullName')
+        .populate('items.medicationId', 'name medicationCode form strength unit')
         .populate('editHistory.editedBy', 'fullName role');
 
       return res.status(200).json({ success: true, data: populatedNurse, warnings: [] });
-    } else {
-      // Doctor: full edit — diagnosisNote, validUntil, items[]
-      if (diagnosisNote !== undefined && diagnosisNote !== prescription.diagnosisNote) {
-        changeLog.push('Updated diagnosisNote');
-        prescription.diagnosisNote = diagnosisNote;
+    }
+
+    // ── Doctor: full edit — diagnosisNote, validUntil, items[] ────────────────
+    if (diagnosisNote !== undefined && diagnosisNote !== prescription.diagnosisNote) {
+      changeLog.push('Updated diagnosisNote');
+      prescription.diagnosisNote = diagnosisNote;
+    }
+
+    if (validUntil !== undefined) {
+      const newUntil = new Date(validUntil);
+      if (newUntil.getTime() !== prescription.validUntil.getTime()) {
+        changeLog.push(`Updated validUntil to ${newUntil.toISOString().slice(0, 10)}`);
+        prescription.validUntil = newUntil;
       }
+    }
 
-      if (validUntil !== undefined) {
-        const newUntil = new Date(validUntil);
-        if (newUntil.getTime() !== prescription.validUntil.getTime()) {
-          changeLog.push(`Updated validUntil to ${newUntil.toISOString().slice(0, 10)}`);
-          prescription.validUntil = newUntil;
-        }
-      }
-
-      if (Array.isArray(items) && items.length) {
-        const drugNames = items.map((i) => i.medicationName);
-
-        // Allergy hard block
-        const { allergies: allergyHits } = await checkAllergies(
-          prescription.residentId,
-          drugNames
-        );
-        if (allergyHits.length) {
-          return res.status(400).json({
-            success: false,
-            errorCode: 'ALLERGY',
-            detail: allergyHits,
-            requiresAcknowledgment: false,
-          });
-        }
-
-        const dosageItems = items.map((i) => ({
-          medicationName: i.medicationName,
-          dosage: Number(i.dosage),
-          frequency: Number(i.frequency),
-          unit: i.unit,
-        }));
-
-        const [contraResult, interactResult, dosageResult] = await Promise.all([
-          checkContraindications(prescription.residentId, drugNames),
-          checkDrugInteractions(prescription.residentId, drugNames, prescription._id),
-          checkElderlyDosage(prescription.residentId, dosageItems),
-        ]);
-
-        const contraWarnings = contraResult.violations;
-        const interactionWarnings = interactResult.interactions;
-        const dosageWarnings = dosageResult.warnings;
-
-        allWarnings = [
-          ...contraWarnings.map((w) => ({ type: 'CONTRAINDICATION', ...w })),
-          ...interactionWarnings.map((w) => ({ type: 'DRUG_INTERACTION', ...w })),
-          ...dosageWarnings.map((w) => ({ type: 'ELDERLY_DOSAGE', ...w })),
-        ];
-
-        if (hasSevereWarning(contraWarnings, interactionWarnings) && !acknowledgeWarnings) {
-          return res.status(400).json({
-            success: false,
-            errorCode: 'REQUIRES_ACKNOWLEDGMENT',
-            warnings: allWarnings,
-            requiresAcknowledgment: true,
-          });
-        }
-
-        if (acknowledgeWarnings && allWarnings.length) {
-          const uniqueTypes = [...new Set(allWarnings.map((w) => w.type))];
-          for (const warningType of uniqueTypes) {
-            prescription.acknowledgments.push({
-              warningType,
-              acknowledgedBy: req.user._id,
-              acknowledgedAt: new Date(),
-            });
-          }
-        }
-
-        // Delete all future PENDING schedules for this prescription before full item replacement
-        await MedicationSchedule.deleteMany({
-          prescriptionId: prescription._id,
-          status: 'PENDING',
-          scheduledTime: { $gt: new Date() },
+    if (Array.isArray(items) && items.length) {
+      // All items must have medicationId from pharmacy DB
+      const missingMedId = items.find((i) => !i.medicationId);
+      if (missingMedId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Each item must include medicationId from the pharmacy database',
         });
+      }
 
-        const overdosedDrugs = new Set(dosageWarnings.map((w) => w.medicationName));
+      let medMap;
+      try {
+        medMap = await resolveMedicationsFromDB(items);
+      } catch (e) {
+        return res.status(e.statusCode || 400).json({ success: false, message: e.message });
+      }
 
-        prescription.items = items.map((item) => ({
-          medicationName: item.medicationName,
-          genericName: item.genericName,
+      const drugNames = items.map((i) => medMap.get(String(i.medicationId)).name);
+
+      // Allergy hard block
+      const { allergies: allergyHits } = await checkAllergies(prescription.residentId, drugNames);
+      if (allergyHits.length) {
+        return res.status(400).json({
+          success: false,
+          errorCode: 'ALLERGY',
+          detail: allergyHits,
+          requiresAcknowledgment: false,
+        });
+      }
+
+      const dosageItems = items.map((i) => ({
+        medicationName: medMap.get(String(i.medicationId)).name,
+        dosage: Number(i.dosage),
+        frequency: Number(i.frequency),
+        unit: i.unit || medMap.get(String(i.medicationId)).unit,
+      }));
+
+      const [contraResult, interactResult, dosageResult] = await Promise.all([
+        checkContraindications(prescription.residentId, drugNames),
+        checkDrugInteractions(prescription.residentId, drugNames, prescription._id),
+        checkElderlyDosage(prescription.residentId, dosageItems),
+      ]);
+
+      const contraWarnings = contraResult.violations;
+      const interactionWarnings = interactResult.interactions;
+      const dosageWarnings = dosageResult.warnings;
+
+      allWarnings = [
+        ...contraWarnings.map((w) => ({ type: 'CONTRAINDICATION', ...w })),
+        ...interactionWarnings.map((w) => ({ type: 'DRUG_INTERACTION', ...w })),
+        ...dosageWarnings.map((w) => ({ type: 'ELDERLY_DOSAGE', ...w })),
+      ];
+
+      if (hasSevereWarning(contraWarnings, interactionWarnings) && !acknowledgeWarnings) {
+        return res.status(400).json({
+          success: false,
+          errorCode: 'REQUIRES_ACKNOWLEDGMENT',
+          warnings: allWarnings,
+          requiresAcknowledgment: true,
+        });
+      }
+
+      if (acknowledgeWarnings && allWarnings.length) {
+        const uniqueTypes = [...new Set(allWarnings.map((w) => w.type))];
+        for (const warningType of uniqueTypes) {
+          prescription.acknowledgments.push({
+            warningType,
+            acknowledgedBy: req.user._id,
+            acknowledgedAt: new Date(),
+          });
+        }
+      }
+
+      // Drop future pending schedules before replacing items
+      await MedicationSchedule.deleteMany({
+        prescriptionId: prescription._id,
+        status: 'PENDING',
+        scheduledTime: { $gt: new Date() },
+      });
+
+      const overdosedDrugs = new Set(dosageWarnings.map((w) => w.medicationName));
+
+      prescription.items = items.map((item) => {
+        const med = medMap.get(String(item.medicationId));
+        return {
+          medicationId: med._id,
+          medicationName: med.name,
+          genericName: item.genericName || med.genericName || null,
           dosage: String(item.dosage),
-          unit: item.unit,
+          unit: item.unit || med.unit || null,
           frequency: Number(item.frequency),
           times: Array.isArray(item.times) ? item.times : [],
           route: item.route || 'oral',
@@ -321,21 +395,16 @@ const editPrescription = async (req, res) => {
           startDate: item.startDate ? new Date(item.startDate) : undefined,
           endDate: item.endDate ? new Date(item.endDate) : undefined,
           instructions: item.instructions,
-          elderlyDosageAdjusted: overdosedDrugs.has(item.medicationName),
+          elderlyDosageAdjusted: overdosedDrugs.has(med.name),
           isActive: true,
-        }));
+        };
+      });
 
-        changeLog.push(`Replaced items (${items.length} medication(s))`);
-      }
+      changeLog.push(`Replaced items (${items.length} medication(s))`);
     }
 
     if (!changeLog.length) {
-      return res.status(200).json({
-        success: true,
-        message: 'No changes detected',
-        data: prescription,
-        warnings: allWarnings,
-      });
+      return res.status(200).json({ success: true, message: 'No changes detected', data: prescription, warnings: allWarnings });
     }
 
     prescription.editHistory.push({
@@ -346,7 +415,6 @@ const editPrescription = async (req, res) => {
 
     await prescription.save();
 
-    // After save, new items have stable _ids — bulk-generate all schedules
     if (Array.isArray(items) && items.length) {
       await generateSchedules(prescription);
     }
@@ -354,18 +422,12 @@ const editPrescription = async (req, res) => {
     const populated = await Prescription.findById(prescription._id)
       .populate('residentId', 'fullName dateOfBirth')
       .populate('doctorId', 'fullName')
+      .populate('items.medicationId', 'name medicationCode form strength unit')
       .populate('editHistory.editedBy', 'fullName role');
 
-    return res.status(200).json({
-      success: true,
-      data: populated,
-      warnings: allWarnings,
-    });
+    return res.status(200).json({ success: true, data: populated, warnings: allWarnings });
   } catch (err) {
-    return res.status(err.statusCode || 500).json({
-      success: false,
-      message: err.message,
-    });
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };
 
@@ -376,14 +438,16 @@ const listPrescriptions = async (req, res) => {
     const { residentId, status, page = 1, limit = 10 } = req.query;
 
     if (!residentId) {
-      return res.status(400).json({
-        success: false,
-        message: 'residentId query parameter is required',
-      });
+      return res.status(400).json({ success: false, message: 'residentId query parameter is required' });
     }
-
     if (!isValidObjectId(residentId)) {
       return res.status(400).json({ success: false, message: 'Invalid residentId' });
+    }
+
+    // Scope check
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
     }
 
     const filter = { residentId };
@@ -395,6 +459,7 @@ const listPrescriptions = async (req, res) => {
       Prescription.find(filter)
         .populate('residentId', 'fullName dateOfBirth')
         .populate('doctorId', 'fullName')
+        .populate('items.medicationId', 'name medicationCode form strength unit')
         .sort({ prescriptionDate: -1 })
         .skip(skip)
         .limit(Number(limit)),
@@ -418,10 +483,7 @@ const listPrescriptions = async (req, res) => {
       },
     });
   } catch (err) {
-    return res.status(err.statusCode || 500).json({
-      success: false,
-      message: err.message,
-    });
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };
 
@@ -436,6 +498,7 @@ const getPrescription = async (req, res) => {
     const prescription = await Prescription.findById(req.params.id)
       .populate('residentId', 'fullName dateOfBirth chronicConditions allergies')
       .populate('doctorId', 'fullName')
+      .populate('items.medicationId', 'name medicationCode form strength unit description')
       .populate('acknowledgments.acknowledgedBy', 'fullName role')
       .populate('editHistory.editedBy', 'fullName role');
 
@@ -443,21 +506,19 @@ const getPrescription = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Prescription not found' });
     }
 
-    // Compute compliance rate from MedicationSchedule
+    // Scope check
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(prescription.residentId._id || prescription.residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+    }
+
     const [takenCount, missedCount] = await Promise.all([
-      MedicationSchedule.countDocuments({
-        prescriptionId: prescription._id,
-        status: { $in: ['TAKEN', 'LATE_TAKEN'] },
-      }),
-      MedicationSchedule.countDocuments({
-        prescriptionId: prescription._id,
-        status: 'MISSED',
-      }),
+      MedicationSchedule.countDocuments({ prescriptionId: prescription._id, status: { $in: ['TAKEN', 'LATE_TAKEN'] } }),
+      MedicationSchedule.countDocuments({ prescriptionId: prescription._id, status: 'MISSED' }),
     ]);
 
     const denominator = takenCount + missedCount;
-    const complianceRate =
-      denominator > 0 ? Math.round((takenCount / denominator) * 1000) / 10 : null;
+    const complianceRate = denominator > 0 ? Math.round((takenCount / denominator) * 1000) / 10 : null;
 
     return res.status(200).json({
       success: true,
@@ -469,10 +530,7 @@ const getPrescription = async (req, res) => {
       },
     });
   } catch (err) {
-    return res.status(err.statusCode || 500).json({
-      success: false,
-      message: err.message,
-    });
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };
 

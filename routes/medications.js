@@ -1,3 +1,5 @@
+// DEPRECATED — NOT MOUNTED IN app.js. Use routes/prescriptionRoutes.js and routes/scheduleRoutes.js instead.
+// DO NOT require() this file or register it in app.js.
 const express = require('express');
 const router = express.Router();
 const {

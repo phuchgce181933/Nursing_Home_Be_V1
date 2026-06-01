@@ -1,3 +1,5 @@
+// DEPRECATED — This service is no longer used. Clinical prescription logic is in prescriptionController.js
+// and scheduleController.js. Pharmacy logic is in pharmacyService.js.
 const ServiceError = require('./serviceError');
 const medRepo = require('../repositories/medicationRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');

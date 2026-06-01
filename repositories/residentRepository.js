@@ -9,9 +9,14 @@ const findForAssignment = async ({
   search,
   status = 'admitted',
   limit = 200,
+  residentIds,
 } = {}) => {
   const filter = {};
-  if (status) filter.residencyStatus = status;
+  if (status) filter.residencyStatus = Array.isArray(status) ? { $in: status } : status;
+
+  if (residentIds) {
+    filter._id = { $in: residentIds };
+  }
 
   const Room = require('../models/room');
 
@@ -36,7 +41,7 @@ const findForAssignment = async ({
   }
 
   return Resident.find(filter)
-    .select('residentCode fullName roomId residencyStatus')
+    .select('residentCode fullName roomId residencyStatus dateOfBirth gender bloodType')
     .populate({ path: 'roomId', select: 'roomNumber floorId roomType' })
     .sort({ fullName: 1 })
     .limit(Math.min(limit, 500))
@@ -45,7 +50,7 @@ const findForAssignment = async ({
 
 const buildSearchFilter = (search, status) => {
   const filter = {};
-  if (status) filter.residencyStatus = status;
+  if (status) filter.residencyStatus = Array.isArray(status) ? { $in: status } : status;
   if (search) {
     const s = search.trim();
     filter.$or = [

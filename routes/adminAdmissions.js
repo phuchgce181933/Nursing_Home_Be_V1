@@ -5,7 +5,6 @@ const {
   adminGetAdmission,
   approveAdmission,
   rejectAdmission,
-  assignConsultant,
   assignServicePackage,
   createAdmissionContract,
   checkInResident,
@@ -59,6 +58,12 @@ const { protect, authorize } = require('../middleware/auth');
  *         schema:
  *           type: integer
  *           default: 20
+ *       - in: query
+ *         name: residentId
+ *         schema:
+ *           type: string
+ *         description: Filter by resident MongoDB ObjectId (for wizard pre-fill)
+
  *     responses:
  *       200:
  *         description: Paginated list of all admission requests
@@ -194,41 +199,7 @@ router.patch('/:admissionId/approve', protect, authorize('admin', 'manager'), ap
  */
 router.patch('/:admissionId/reject', protect, authorize('admin', 'manager'), rejectAdmission);
 
-/**
- * @swagger
- * /api/admin/admission-requests/{admissionId}/assign-consultant:
- *   patch:
- *     summary: Assign a consultant to an admission request (UC-6.18)
- *     tags: [Admin - Admission Management]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: admissionId
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - consultantId
- *             properties:
- *               consultantId:
- *                 type: string
- *                 description: User ID of the doctor or nurse to assign
- *     responses:
- *       200:
- *         description: Consultant assigned successfully
- *       400:
- *         description: Invalid consultant or admission status
- *       404:
- *         description: Admission or consultant not found
- */
-router.patch('/:admissionId/assign-consultant', protect, authorize('admin', 'manager'), assignConsultant);
+
 
 /**
  * @swagger

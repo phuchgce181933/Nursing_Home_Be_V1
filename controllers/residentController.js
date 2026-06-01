@@ -6,7 +6,7 @@ const listResidents = async (req, res) => {
   try {
     const { page, limit, floorId, roomId, search, status } = req.query;
 
-    if (page !== undefined || limit !== undefined) {
+    if (page !== undefined) {
       const result = await residentService.listResidentsForFamilyManagement({
         search,
         status,
@@ -21,7 +21,7 @@ const listResidents = async (req, res) => {
       roomId,
       search,
       status,
-    });
+    }, req.user);
     res.json(result);
   } catch (err) {
     res.status(statusCode(err)).json({ message: err.message });

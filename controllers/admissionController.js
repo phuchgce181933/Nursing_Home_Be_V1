@@ -46,7 +46,7 @@ const cancelAdmissionRequest = async (req, res) => {
 // ── Admin controllers ──────────────────────────────────────────────────
 const adminListAdmissions = async (req, res) => {
   try {
-    const result = await admissionService.adminListAdmissions(req.query);
+    const result = await admissionService.adminListAdmissions(req.query, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -55,7 +55,7 @@ const adminListAdmissions = async (req, res) => {
 
 const adminGetAdmission = async (req, res) => {
   try {
-    const result = await admissionService.adminGetAdmission(req.params.admissionId);
+    const result = await admissionService.adminGetAdmission(req.params.admissionId, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -84,26 +84,6 @@ const rejectAdmission = async (req, res) => {
 const preAdmissionConsultation = async (req, res) => {
   try {
     const result = await admissionService.preAdmissionConsultation(req.user, req.params.admissionId, req.body, req);
-    res.json(result);
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-};
-
-// ── UC-6.17: Initial Assessment Scheduling ─────────────────────────────────────
-const scheduleInitialAssessment = async (req, res) => {
-  try {
-    const result = await admissionService.scheduleInitialAssessment(req.user, req.params.admissionId, req.body, req);
-    res.json(result);
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
-  }
-};
-
-// ── UC-6.18: Assign Consultant ─────────────────────────────────────────────────
-const assignConsultant = async (req, res) => {
-  try {
-    const result = await admissionService.assignConsultant(req.user, req.params.admissionId, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -160,8 +140,6 @@ module.exports = {
   approveAdmission,
   rejectAdmission,
   preAdmissionConsultation,
-  scheduleInitialAssessment,
-  assignConsultant,
   evaluateAdmissionEligibility,
   assignServicePackage,
   createAdmissionContract,

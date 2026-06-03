@@ -1,7 +1,11 @@
+const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
+const Resident = require('../models/resident');
 const { createAuditLog } = require('../utils/auditLog');
+
+const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 
 const VALID_NOTE_TYPES = ['meal', 'activity', 'health', 'general'];
 
@@ -76,12 +80,19 @@ const validateMetadata = (noteType, metadata) => {
 const createNote = async (user, body, req) => {
   const { residentId, noteType, content, noteAt, metadata } = body;
   if (!residentId) throw new ServiceError('residentId is required', 400);
+  if (!isValidId(residentId)) throw new ServiceError('residentId is not a valid ID', 400);
   if (!content || content.trim().length < 5) {
     throw new ServiceError('content is required and must be at least 5 characters', 400);
   }
   if (noteType && !VALID_NOTE_TYPES.includes(noteType)) {
     throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
   }
+  if (noteAt && new Date(noteAt) > new Date()) {
+    throw new ServiceError('noteAt cannot be a future date', 400);
+  }
+
+  const resident = await Resident.findById(residentId).select('_id');
+  if (!resident) throw new ServiceError('Resident not found', 404);
 
   const resolvedType = noteType || 'general';
   if (metadata) validateMetadata(resolvedType, metadata);
@@ -116,14 +127,20 @@ const createNote = async (user, body, req) => {
 
 const listNotes = async (query) => {
   const filter = {};
-  if (query.residentId) filter.residentId = query.residentId;
+  if (query.residentId) {
+    if (!isValidId(query.residentId)) throw new ServiceError('residentId is not a valid ID', 400);
+    filter.residentId = query.residentId;
+  }
   if (query.noteType) {
     if (!VALID_NOTE_TYPES.includes(query.noteType)) {
       throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
     }
     filter.noteType = query.noteType;
   }
-  if (query.authorStaffId) filter.authorStaffId = query.authorStaffId;
+  if (query.authorStaffId) {
+    if (!isValidId(query.authorStaffId)) throw new ServiceError('authorStaffId is not a valid ID', 400);
+    filter.authorStaffId = query.authorStaffId;
+  }
   if (query.search) filter.content = { $regex: query.search.trim(), $options: 'i' };
   if (query.from || query.to) {
     filter.noteAt = {};
@@ -141,6 +158,7 @@ const listNotes = async (query) => {
 };
 
 const getNoteHistory = async (residentId, query) => {
+  if (!isValidId(residentId)) throw new ServiceError('residentId is not a valid ID', 400);
   const filter = { residentId };
   if (query.noteType) filter.noteType = query.noteType;
   if (query.from || query.to) {
@@ -152,13 +170,20 @@ const getNoteHistory = async (residentId, query) => {
 };
 
 const getNote = async (id) => {
+  if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
   const note = await careNoteRepo.findByIdWithPopulate(id);
   if (!note) throw new ServiceError('Care note not found', 404);
   return note;
 };
 
-// Nurses can only update their own notes; admin/manager/doctor can update any note.
+// Nurses can only update their own notes; doctor can update any note.
 const updateNote = async (user, id, body, req) => {
+  if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
+
+  const hasUpdate = body.content !== undefined || body.noteType !== undefined ||
+    body.noteAt !== undefined || body.metadata !== undefined;
+  if (!hasUpdate) throw new ServiceError('No fields provided to update', 400);
+
   const note = await careNoteRepo.findById(id);
   if (!note) throw new ServiceError('Care note not found', 404);
 
@@ -174,6 +199,9 @@ const updateNote = async (user, id, body, req) => {
   }
   if (body.noteType && !VALID_NOTE_TYPES.includes(body.noteType)) {
     throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+  }
+  if (body.noteAt && new Date(body.noteAt) > new Date()) {
+    throw new ServiceError('noteAt cannot be a future date', 400);
   }
 
   const resolvedType = body.noteType || note.noteType;
@@ -204,8 +232,9 @@ const updateNote = async (user, id, body, req) => {
   return careNoteRepo.findByIdWithPopulate(note._id);
 };
 
-// Nurses can only delete their own notes; admin/manager/doctor can delete any note.
+// Nurses can only delete their own notes; doctor can delete any note.
 const deleteNote = async (user, id, req) => {
+  if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
   const note = await careNoteRepo.findById(id);
   if (!note) throw new ServiceError('Care note not found', 404);
 

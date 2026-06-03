@@ -61,7 +61,7 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *       400:
  *         description: Missing required fields, content too short, or invalid metadata values
  */
-router.post('/', protect, authorize(...STAFF_ROLES), createNote);
+router.post('/', protect, authorize('doctor', 'nurse'), createNote);
 
 /**
  * @swagger
@@ -166,7 +166,7 @@ router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
  *       200:
  *         description: Paginated list of the current staff's care notes
  */
-router.get('/my-notes', protect, authorize(...STAFF_ROLES), getMyNotes);
+router.get('/my-notes', protect, authorize('doctor', 'nurse'), getMyNotes);
 
 /**
  * @swagger
@@ -267,7 +267,7 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
  *       404:
  *         description: Care note not found
  */
-router.put('/:id', protect, authorize(...STAFF_ROLES), updateNote);
+router.put('/:id', protect, authorize('doctor', 'nurse'), updateNote);
 
 /**
  * @swagger
@@ -291,6 +291,6 @@ router.put('/:id', protect, authorize(...STAFF_ROLES), updateNote);
  *       404:
  *         description: Care note not found
  */
-router.delete('/:id', protect, authorize('admin', 'manager', 'doctor', 'nurse'), deleteNote);
+router.delete('/:id', protect, authorize('doctor', 'nurse'), deleteNote);
 
 module.exports = router;

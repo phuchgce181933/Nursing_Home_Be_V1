@@ -73,7 +73,8 @@ app.use('/api/care-notes', require('./routes/careNotes'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
-app.use('/api/medications', require('./routes/medications'));
+
+
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));
 app.use('/api/nurse/special-diets', require('./routes/specialDiets'));
 app.use('/api/nurse/meal-time-schedules', require('./routes/mealTimeSchedules'));
@@ -85,6 +86,10 @@ app.use('/api/caregiver/hygiene-activities', require('./routes/caregiverHygieneA
 app.use('/api/caregiver/daily-behaviors', require('./routes/caregiverDailyBehaviors'));
 app.use('/api/caregiver/diet-plans', require('./routes/caregiverDietPlans'));
 app.use('/api/caregiver/rehabilitation-schedules', require('./routes/caregiverRehabilitationSchedules'));
+
+app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
+app.use('/api/medications', require('./routes/scheduleRoutes'));
+
 app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/medical', require('./routes/medicalServicePackages'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
@@ -93,6 +98,9 @@ app.use('/api/pharmacy', require('./routes/pharmacy'));
 const initDB = async () => {
   try {
     await connectDB();
+
+    const { runAutoSeedIfNeeded } = require('./services/autoSeedService');
+    await runAutoSeedIfNeeded();
 
     const { ensureDefaultShiftTemplates } = require('./services/defaultShiftBootstrap');
     await ensureDefaultShiftTemplates();

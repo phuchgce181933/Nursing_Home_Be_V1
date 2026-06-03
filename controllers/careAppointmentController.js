@@ -108,6 +108,15 @@ const sendReminder = async (req, res) => {
   }
 };
 
+const getAvailableStaff = async (req, res) => {
+  try {
+    const result = await careAppointmentService.getAvailableStaffForAppointment(req.user, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   createAppointment,
   listAppointments,
@@ -121,4 +130,5 @@ module.exports = {
   assignDoctor,
   assignNurse,
   sendReminder,
+  getAvailableStaff,
 };

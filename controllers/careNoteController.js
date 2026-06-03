@@ -54,4 +54,13 @@ const deleteNote = async (req, res) => {
   }
 };
 
-module.exports = { createNote, listNotes, getNoteHistory, getNote, updateNote, deleteNote };
+const getMyNotes = async (req, res) => {
+  try {
+    const result = await careNoteService.getMyNotes(req.user, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+module.exports = { createNote, listNotes, getNoteHistory, getNote, updateNote, deleteNote, getMyNotes };

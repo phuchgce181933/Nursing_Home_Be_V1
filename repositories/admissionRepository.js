@@ -1,11 +1,13 @@
 const Admission = require('../models/admission');
 const Resident = require('../models/resident');
+const Bed = require('../models/bed');
+const Room = require('../models/room');
 const { ADMISSION_STATUSES } = require('../models/enums');
 
 const ACTIVE_ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracting'];
 const CANCELLABLE_STATUSES = [...ACTIVE_ADMISSION_STATUSES];
-const APPROVABLE_STATUSES = ['new_request', 'consulting', 'assessing'];
-const REJECTABLE_STATUSES = ['new_request', 'consulting', 'assessing'];
+const APPROVABLE_STATUSES = ['new_request', 'consulting'];
+const REJECTABLE_STATUSES = ['new_request', 'consulting'];
 
 const findActiveAdmission = (filter) =>
   Admission.findOne({ ...filter, status: { $in: ACTIVE_ADMISSION_STATUSES } });
@@ -36,7 +38,9 @@ const updateAdmission = (id, update) =>
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')
-    .populate('servicePackageId', 'packageCode name tier monthlyPrice');
+    .populate('servicePackageId', 'packageCode name tier monthlyPrice')
+    .populate('assignedBedId', 'bedCode')
+    .populate('assignedRoomId', 'roomNumber');
 
 const assertFamilyResidentAccess = async (userId, residentId) => {
   const resident = await Resident.findOne({
@@ -57,7 +61,9 @@ const findAll = (filter, { sort, skip, limit }) =>
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')
-    .populate('servicePackageId', 'packageCode name tier monthlyPrice');
+    .populate('servicePackageId', 'packageCode name tier monthlyPrice')
+    .populate('assignedBedId', 'bedCode')
+    .populate('assignedRoomId', 'roomNumber');
 
 const countAll = (filter) => Admission.countDocuments(filter);
 
@@ -68,7 +74,9 @@ const findByIdForAdmin = (id) =>
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')
-    .populate('servicePackageId', 'packageCode name tier monthlyPrice');
+    .populate('servicePackageId', 'packageCode name tier monthlyPrice')
+    .populate('assignedBedId', 'bedCode')
+    .populate('assignedRoomId', 'roomNumber');
 
 module.exports = {
   ACTIVE_ADMISSION_STATUSES,

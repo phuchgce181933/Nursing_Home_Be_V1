@@ -11,6 +11,7 @@ const medicationScheduleSchema = new Schema(
     prescriptionItemId: { type: Types.ObjectId, required: true },
     medicationName: { type: String, required: true, trim: true },
     dosage: { type: String, required: true, trim: true },
+    route: { type: String, trim: true },
     scheduledTime: { type: Date, required: true, index: true },
     status: { type: String, enum: SCHEDULE_STATUSES, default: 'PENDING', index: true },
     markedBy: { type: Types.ObjectId, ref: 'User' },

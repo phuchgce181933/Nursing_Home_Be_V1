@@ -6,6 +6,7 @@ const PRESCRIPTION_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];
 const ITEM_ROUTES = ['oral', 'injection', 'topical', 'inhaled'];
 
 const prescriptionItemSchema = new Schema({
+  medicationId: { type: Types.ObjectId, ref: 'Medication', required: true, index: true },
   medicationName: { type: String, required: true, trim: true },
   genericName: { type: String, trim: true },
   dosage: { type: String, required: true, trim: true },
@@ -21,6 +22,15 @@ const prescriptionItemSchema = new Schema({
   isActive: { type: Boolean, default: true },
 });
 
+const editHistorySchema = new Schema(
+  {
+    editedBy: { type: Types.ObjectId, ref: 'User', required: true },
+    editedAt: { type: Date, default: Date.now },
+    changes: { type: String, required: true, trim: true },
+  },
+  { _id: false }
+);
+
 const acknowledgmentSchema = new Schema(
   {
     warningType: { type: String, required: true, trim: true },
@@ -33,7 +43,6 @@ const acknowledgmentSchema = new Schema(
 const prescriptionSchema = new Schema(
   {
     residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
-   residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
     doctorId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
     diagnosisNote: { type: String, trim: true },
     prescriptionDate: { type: Date, required: true, default: Date.now },
@@ -41,23 +50,28 @@ const prescriptionSchema = new Schema(
     status: { type: String, enum: PRESCRIPTION_STATUSES, default: 'ACTIVE', index: true },
     items: { type: [prescriptionItemSchema], default: [] },
     acknowledgments: { type: [acknowledgmentSchema], default: [] },
+    editHistory: { type: [editHistorySchema], default: [] },
+    // pharmacy verification fields
+    isVerified: { type: Boolean, default: false, index: true },
+    verifiedByUserId: { type: Types.ObjectId, ref: 'User' },
+    verifiedAt: { type: Date },
   },
   { timestamps: true }
 );
 
-// validUntil must be within 30 days of prescriptionDate
-prescriptionSchema.pre('validate', function (next) {
+// validUntil must be within 30 days of prescriptionDate (Thông tư 52/2017/TT-BYT)
+// Using async form — Mongoose 9 no longer passes `next` for validate hooks
+prescriptionSchema.pre('validate', async function () {
   if (this.prescriptionDate && this.validUntil) {
     const maxValidUntil = new Date(this.prescriptionDate);
     maxValidUntil.setDate(maxValidUntil.getDate() + 30);
     if (this.validUntil > maxValidUntil) {
-      return next(new Error('validUntil must be within 30 days of prescriptionDate'));
+      throw new Error('validUntil must be within 30 days of prescriptionDate');
     }
     if (this.validUntil <= this.prescriptionDate) {
-      return next(new Error('validUntil must be after prescriptionDate'));
+      throw new Error('validUntil must be after prescriptionDate');
     }
   }
-  next();
 });
 
 module.exports = mongoose.models.Prescription || mongoose.model('Prescription', prescriptionSchema);

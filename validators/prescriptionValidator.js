@@ -18,15 +18,11 @@ const createPrescriptionRules = [
     .custom((value) => {
       const until = new Date(value);
       const now = new Date();
-      if (until <= now) {
-        throw new Error('validUntil must be a future date');
-      }
+      if (until <= now) throw new Error('validUntil must be a future date');
       const max = new Date();
       max.setDate(now.getDate() + MAX_DAYS);
       if (until > max) {
-        throw new Error(
-          `validUntil must be within ${MAX_DAYS} days from today (Thông tư 52/2017/TT-BYT)`
-        );
+        throw new Error(`validUntil must be within ${MAX_DAYS} days from today (Thông tư 52/2017/TT-BYT)`);
       }
       return true;
     }),
@@ -34,8 +30,10 @@ const createPrescriptionRules = [
   body('items')
     .isArray({ min: 1 }).withMessage('items must be an array with at least 1 item'),
 
-  body('items.*.medicationName')
-    .notEmpty().withMessage('items[*].medicationName is required'),
+  // Doctor selects medication from pharmacy DB — medicationId required, not free-text name
+  body('items.*.medicationId')
+    .notEmpty().withMessage('items[*].medicationId is required')
+    .isMongoId().withMessage('items[*].medicationId must be a valid ObjectId'),
 
   body('items.*.dosage')
     .notEmpty().withMessage('items[*].dosage is required')
@@ -61,38 +59,25 @@ const createPrescriptionRules = [
     .optional({ nullable: true })
     .isISO8601().withMessage('items[*].endDate must be a valid ISO date'),
 
-  // Cross-field validation: times length, startDate/endDate order, endDate vs duration
+  // Cross-field: times.length == frequency, date ordering, endDate vs duration
   body('items').custom((items) => {
     if (!Array.isArray(items)) return true;
-
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-
-      // times.length must equal frequency
       if (Array.isArray(item.times) && item.frequency !== undefined) {
         const freq = parseInt(item.frequency, 10);
         if (item.times.length !== freq) {
-          throw new Error(
-            `items[${i}].times must have exactly ${freq} entries (matching frequency)`
-          );
+          throw new Error(`items[${i}].times must have exactly ${freq} entries (matching frequency)`);
         }
       }
-
       if (item.startDate && item.endDate) {
         const start = new Date(item.startDate);
         const end = new Date(item.endDate);
-
-        // startDate must be before endDate
-        if (end <= start) {
-          throw new Error(`items[${i}].endDate must be after startDate`);
-        }
-
-        // endDate must equal startDate + duration days (within 1-day tolerance)
+        if (end <= start) throw new Error(`items[${i}].endDate must be after startDate`);
         if (item.duration) {
           const expected = new Date(start);
           expected.setDate(expected.getDate() + parseInt(item.duration, 10));
-          const diffMs = Math.abs(end.getTime() - expected.getTime());
-          if (diffMs > 24 * 60 * 60 * 1000) {
+          if (Math.abs(end.getTime() - expected.getTime()) > 24 * 60 * 60 * 1000) {
             throw new Error(
               `items[${i}].endDate should be startDate + ${item.duration} days` +
               ` (expected ~${expected.toISOString().slice(0, 10)})`
@@ -101,12 +86,12 @@ const createPrescriptionRules = [
         }
       }
     }
-
     return true;
   }),
 ];
 
-// All fields optional — only validate what's present
+// Nurse: only _id + times/instructions per item.
+// Doctor: medicationId required when replacing items[].
 const editPrescriptionRules = [
   body('diagnosisNote')
     .optional()
@@ -131,13 +116,15 @@ const editPrescriptionRules = [
     .optional()
     .isArray({ min: 1 }).withMessage('items must be an array with at least 1 item'),
 
+  // Nurse patch: _id required to identify item
   body('items.*._id')
     .optional()
     .isMongoId().withMessage('items[*]._id must be a valid ObjectId'),
 
-  body('items.*.medicationName')
+  // Doctor replacement: medicationId required (validated deeper in controller)
+  body('items.*.medicationId')
     .optional()
-    .notEmpty().withMessage('items[*].medicationName cannot be empty'),
+    .isMongoId().withMessage('items[*].medicationId must be a valid ObjectId'),
 
   body('items.*.dosage')
     .optional()

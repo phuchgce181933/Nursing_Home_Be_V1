@@ -174,7 +174,13 @@ const registerResident = async (activityId, residentId) => {
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Activity not found', 404);
 
-  const normalizedResidentId = mongoose.Types.ObjectId(residentId);
+  const resident = await Resident.findById(residentId);
+  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (resident.residencyStatus !== 'admitted') {
+    throw new ServiceError('Resident is not currently admitted', 400);
+  }
+
+  const normalizedResidentId = new mongoose.Types.ObjectId(residentId);
   const existing = activity.participantResidentIds?.map((id) => id.toString()) || [];
   if (existing.includes(normalizedResidentId.toString())) {
     throw new ServiceError('Resident already registered for this activity', 400);

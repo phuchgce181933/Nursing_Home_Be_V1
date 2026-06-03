@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const {
   preAdmissionConsultation,
-  scheduleInitialAssessment,
   evaluateAdmissionEligibility,
 } = require('../controllers/admissionController');
 const { protect, authorize } = require('../middleware/auth');
@@ -57,58 +56,7 @@ router.patch(
   preAdmissionConsultation
 );
 
-// ── UC-6.17: Initial Assessment Scheduling (Doctor, Nurse) ─────────────────────
 
-/**
- * @swagger
- * /api/medical/admission-requests/{admissionId}/schedule-assessment:
- *   patch:
- *     summary: Schedule initial health assessment (UC-6.17)
- *     tags: [Medical - Admission Management]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: admissionId
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - scheduledAt
- *             properties:
- *               scheduledAt:
- *                 type: string
- *                 format: date-time
- *                 description: Date and time for the assessment (must be future)
- *               initialAssessmentNotes:
- *                 type: string
- *                 description: Optional notes about the assessment
- *               notes:
- *                 type: string
- *     responses:
- *       200:
- *         description: Assessment scheduled, status moved to assessing
- *       400:
- *         description: Validation error or invalid date
- *       401:
- *         description: Not authenticated
- *       403:
- *         description: Access forbidden
- *       404:
- *         description: Admission request not found
- */
-router.patch(
-  '/:admissionId/schedule-assessment',
-  protect,
-  authorize('doctor', 'nurse'),
-  scheduleInitialAssessment
-);
 
 // ── UC-6.19: Evaluate Admission Eligibility (Doctor only) ──────────────────────
 

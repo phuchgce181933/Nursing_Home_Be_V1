@@ -6,6 +6,7 @@ const User = require('../models/user');
 const Resident = require('../models/resident');
 const Bed = require('../models/bed');
 const Room = require('../models/room');
+const CareAppointment = require('../models/careAppointment');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 
 const parsePagination = (query) => {
@@ -61,8 +62,14 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
     contractStartDate: admission.contractStartDate,
     contractEndDate: admission.contractEndDate,
     contractTerms: admission.contractTerms,
-    assignedBedId: admission.assignedBedId || null,
-    assignedRoomId: admission.assignedRoomId || null,
+    assignedBedId: admission.assignedBedId?._id || admission.assignedBedId || null,
+    assignedBed: admission.assignedBedId?.bedCode
+      ? { _id: admission.assignedBedId._id, bedCode: admission.assignedBedId.bedCode }
+      : null,
+    assignedRoomId: admission.assignedRoomId?._id || admission.assignedRoomId || null,
+    assignedRoom: admission.assignedRoomId?.roomNumber
+      ? { _id: admission.assignedRoomId._id, roomNumber: admission.assignedRoomId.roomNumber }
+      : null,
     checkInAt: admission.checkInAt,
     cancelledAt: admission.cancelledAt,
     cancellationReason: admission.cancellationReason,
@@ -85,6 +92,51 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
   }
 
   return base;
+};
+
+const getCareAppointmentForResident = async (residentId) => {
+  if (!residentId) return null;
+  const CareAppointment = require('../models/careAppointment');
+  try {
+    const careAppt = await CareAppointment.findOne({
+      residentId,
+      appointmentType: 'Khám lâm sàng đầu vào',
+    })
+      .populate({
+        path: 'doctorStaffId',
+        populate: { path: 'userId', select: 'fullName email' }
+      })
+      .populate({
+        path: 'nurseStaffId',
+        populate: { path: 'userId', select: 'fullName email' }
+      });
+
+    if (careAppt) {
+      return {
+        _id: careAppt._id,
+        scheduledStartAt: careAppt.scheduledStartAt,
+        scheduledEndAt: careAppt.scheduledEndAt,
+        status: careAppt.status,
+        doctor: careAppt.doctorStaffId
+          ? {
+              _id: careAppt.doctorStaffId._id,
+              fullName: careAppt.doctorStaffId.userId?.fullName || careAppt.doctorStaffId.fullName || 'Bác sĩ',
+              email: careAppt.doctorStaffId.userId?.email || careAppt.doctorStaffId.email || '',
+            }
+          : null,
+        nurse: careAppt.nurseStaffId
+          ? {
+              _id: careAppt.nurseStaffId._id,
+              fullName: careAppt.nurseStaffId.userId?.fullName || careAppt.nurseStaffId.fullName || 'Điều dưỡng',
+              email: careAppt.nurseStaffId.userId?.email || careAppt.nurseStaffId.email || '',
+            }
+          : null,
+      };
+    }
+  } catch (err) {
+    console.error('Failed to fetch assigned care appointment for drawer:', err);
+  }
+  return null;
 };
 
 const generateRequestCode = async () => {
@@ -327,8 +379,12 @@ const getAdmissionRequest = async (user, admissionId) => {
     { path: 'consultedBy', select: 'fullName email role' },
     { path: 'assessedBy', select: 'fullName email role' },
     { path: 'servicePackageId', select: 'packageCode name tier monthlyPrice' },
+    { path: 'assignedBedId', select: 'bedCode' },
+    { path: 'assignedRoomId', select: 'roomNumber' },
   ]);
-  return { admission: formatAdmission(admission) };
+  const formatted = formatAdmission(admission);
+  formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
+  return { admission: formatted };
 };
 
 const cancelAdmissionRequest = async (user, admissionId, body, req) => {
@@ -347,6 +403,22 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
 
   if (!admissionRepo.CANCELLABLE_STATUSES.includes(admission.status)) {
     throw new ServiceError(`Cannot cancel request with status: ${admission.status}`, 400);
+  }
+
+  // Block cancellation if the intake clinical appointment has already been completed by the doctor
+  const residentId = admission.residentId?._id || admission.residentId;
+  if (residentId) {
+    const completedAppt = await CareAppointment.findOne({
+      residentId: residentId,
+      appointmentType: 'Khám lâm sàng đầu vào',
+      status: 'completed',
+    });
+    if (completedAppt) {
+      throw new ServiceError(
+        'Không thể hủy yêu cầu nhập viện sau khi bác sĩ đã hoàn thành khám lâm sàng đầu vào. Vui lòng liên hệ ban quản lý để được hỗ trợ.',
+        403
+      );
+    }
   }
 
   const cancellationReason = body?.cancellationReason?.trim() || body?.reason?.trim() || '';
@@ -376,10 +448,21 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
 };
 
 // ── Admin services ─────────────────────────────────────────────────────────────────
-const adminListAdmissions = async (query) => {
+const adminListAdmissions = async (query, user) => {
   const filter = {};
 
-  if (query.status) {
+  if (user && ['doctor', 'nurse'].includes(user.role)) {
+    const medicalStatuses = ADMISSION_STATUSES;
+    if (query.status) {
+      const statuses = String(query.status)
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => medicalStatuses.includes(s));
+      filter.status = statuses.length === 1 ? statuses[0] : { $in: statuses.length ? statuses : medicalStatuses };
+    } else {
+      filter.status = { $in: medicalStatuses };
+    }
+  } else if (query.status) {
     const statuses = String(query.status)
       .split(',')
       .map((s) => s.trim())
@@ -414,6 +497,13 @@ const adminListAdmissions = async (query) => {
     }
   }
 
+  if (query.residentId) {
+    const mongoose = require('mongoose');
+    if (mongoose.Types.ObjectId.isValid(query.residentId)) {
+      filter.residentId = new mongoose.Types.ObjectId(String(query.residentId));
+    }
+  }
+
   if (query.search) {
     const term = query.search.trim();
     filter.$or = [
@@ -441,12 +531,20 @@ const adminListAdmissions = async (query) => {
   };
 };
 
-const adminGetAdmission = async (admissionId) => {
+const adminGetAdmission = async (admissionId, user) => {
   const admission = await admissionRepo.findByIdForAdmin(admissionId);
   if (!admission) {
     throw new ServiceError('Admission request not found', 404);
   }
-  return { admission: formatAdmission(admission, { includeFamily: true }) };
+  if (user && ['doctor', 'nurse'].includes(user.role)) {
+    const medicalStatuses = ADMISSION_STATUSES;
+    if (!medicalStatuses.includes(admission.status)) {
+      throw new ServiceError('Access denied: medical staff can only view requests in allowed phases', 403);
+    }
+  }
+  const formatted = formatAdmission(admission, { includeFamily: true });
+  formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
+  return { admission: formatted };
 };
 
 const approveAdmission = async (admin, admissionId, body, req) => {
@@ -462,26 +560,72 @@ const approveAdmission = async (admin, admissionId, body, req) => {
     );
   }
 
-  const nextStatus = 'contracting';
+  // Guard: prevent double-approval — if already approved once, reject
+  if (admission.approvedAt) {
+    throw new ServiceError(
+      'Yêu cầu nhập viện này đã được duyệt trước đó. Không thể duyệt lại một yêu cầu đã được phê duyệt.',
+      409
+    );
+  }
+
+  // Admin approval moves to 'assessing' so Doctor can perform clinical check-up first
+  // Status only moves to 'contracting' after Doctor evaluates eligibility as 'eligible'
+  const nextStatus = 'assessing';
   const updateData = {
     status: nextStatus,
-    eligibilityStatus: 'eligible',
+    // Do NOT set eligibilityStatus: 'eligible' here - that's determined by the Doctor
     approvedAt: new Date(),
   };
 
   if (body?.notes) updateData.notes = String(body.notes).trim();
-  
-  if (body?.servicePackageId) {
-    const pkg = await servicePackageRepo.findById(body.servicePackageId);
-    if (pkg) {
-      updateData.servicePackageId = pkg._id;
-      updateData.assignedServicePackage = pkg.name;
-    }
-  } else if (body?.assignedServicePackage) {
-    updateData.assignedServicePackage = String(body.assignedServicePackage).trim();
+
+  // Create Resident at UC-6.7 if not already exists (status: 'pending')
+  let residentId = admission.residentId;
+  if (!residentId) {
+    const residentCode = await generateResidentCode();
+    const applicant = admission.applicant || {};
+    const resident = await Resident.create({
+      residentCode,
+      fullName: applicant.fullName || 'Unknown',
+      dateOfBirth: applicant.dateOfBirth,
+      gender: applicant.gender || 'unknown',
+      citizenId: applicant.citizenId,
+      bloodType: applicant.bloodType || 'unknown',
+      personalAddress: applicant.personalAddress,
+      allergies: applicant.allergies || [],
+      chronicConditions: applicant.chronicConditions || [],
+      initialHealthCondition: applicant.initialHealthCondition,
+      residencyStatus: 'pending',
+      familyPortalAccountIds: [admission.familyAccountId],
+    });
+    residentId = resident._id;
+    updateData.residentId = residentId;
   }
 
   const updated = await admissionRepo.updateAdmission(admissionId, updateData);
+
+  // Automatically create first Care Appointment at UC-12
+  // Guard: only create if no intake appointment already exists for this resident
+  const existingAppt = await CareAppointment.findOne({
+    residentId: residentId,
+    appointmentType: 'Khám lâm sàng đầu vào',
+    status: { $ne: 'cancelled' },
+  });
+
+  if (!existingAppt) {
+    const start = admission.preferredAdmissionDate ? new Date(admission.preferredAdmissionDate) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+    start.setHours(8, 0, 0, 0);
+    const end = new Date(start.getTime() + 60 * 60 * 1000); // 1 hour duration
+
+    await CareAppointment.create({
+      residentId: residentId,
+      scheduledStartAt: start,
+      scheduledEndAt: end,
+      appointmentType: 'Khám lâm sàng đầu vào',
+      status: 'scheduled',
+      notes: `Lịch hẹn khám lâm sàng đầu vào được tạo tự động từ việc phê duyệt đơn nhập viện mã ${admission.requestCode || admission._id}.`,
+    });
+  }
 
   await createAuditLog({
     actorUserId: admin._id,
@@ -491,7 +635,7 @@ const approveAdmission = async (admin, admissionId, body, req) => {
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
     beforeData: { requestCode: admission.requestCode, status: admission.status, eligibilityStatus: admission.eligibilityStatus },
-    afterData: { requestCode: updated.requestCode, status: updated.status, eligibilityStatus: updated.eligibilityStatus },
+    afterData: { requestCode: updated.requestCode, status: updated.status, eligibilityStatus: updated.eligibilityStatus, residentId: residentId },
     req,
   });
 
@@ -553,9 +697,10 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
     throw new ServiceError('Admission request not found', 404);
   }
 
-  if (!['new_request', 'consulting'].includes(admission.status)) {
+  // Allow consultation when admission is in any pre-contracting medical phase or contracting
+  if (!['new_request', 'consulting', 'assessing', 'contracting'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot perform consultation on admission with status: ${admission.status}. Only new_request, consulting are allowed.`,
+      `Cannot perform consultation on admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting are allowed.`,
       400
     );
   }
@@ -580,7 +725,7 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
     consultationNotes,
     consultedBy: user._id,
     consultedAt: new Date(),
-    status: 'consulting',
+    status: ['contracting', 'checked_in'].includes(admission.status) ? admission.status : 'consulting',
   };
   if (body?.notes) updateData.notes = String(body.notes).trim();
 
@@ -715,16 +860,16 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     throw new ServiceError('Admission request not found', 404);
   }
 
-  if (!['consulting', 'assessing'].includes(admission.status)) {
+  if (!['consulting', 'assessing', 'contracting'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only consulting, assessing are allowed.`,
+      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only consulting, assessing, contracting are allowed.`,
       400
     );
   }
 
   const eligibilityStatus = body?.eligibilityStatus;
-  if (!eligibilityStatus || !ADMISSION_ELIGIBILITY_STATUSES.includes(eligibilityStatus)) {
-    throw new ServiceError(`eligibilityStatus is required and must be one of: ${ADMISSION_ELIGIBILITY_STATUSES.join(', ')}`, 400);
+  if (!eligibilityStatus || !['eligible', 'not_eligible'].includes(eligibilityStatus)) {
+    throw new ServiceError(`eligibilityStatus phải là 'eligible' hoặc 'not_eligible'. Bác sĩ cần đưa ra kết luận rõ ràng khi đánh giá điều kiện nhập viện.`, 400);
   }
 
   const assessmentResult = body?.assessmentResult?.trim();
@@ -745,6 +890,48 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     updateData.rejectedAt = new Date();
     updateData.cancelledAt = new Date();
     updateData.cancellationReason = `[Doctor evaluation] ${updateData.rejectionReason}`;
+  } else if (eligibilityStatus === 'eligible') {
+    updateData.status = 'contracting';
+
+    // Auto-assign resident to the doctor/nurse's assignedResidentIds so they can monitor in "Theo dõi sức khỏe"
+    try {
+      const residentId = admission.residentId?._id || admission.residentId;
+      if (residentId) {
+        const ridStr = residentId.toString();
+        const staffProfileRepo = require('../repositories/staffProfileRepository');
+        
+        const addResidentToStaff = async (profile) => {
+          if (!profile) return;
+          const currentIds = (profile.assignedResidentIds || []).map(id => id.toString());
+          if (!currentIds.includes(ridStr)) {
+            const newIds = [...(profile.assignedResidentIds || []), residentId];
+            await staffProfileRepo.updateById(profile._id, { assignedResidentIds: newIds });
+          }
+        };
+
+        // 1. Logged in doctor/nurse who evaluated the request
+        const evaluatorProfile = await staffProfileRepo.findByUserId(doctor._id);
+        await addResidentToStaff(evaluatorProfile);
+
+        // 2. Doctor/Nurse assigned to the intake Care Appointment
+        const appt = await CareAppointment.findOne({
+          residentId: residentId,
+          appointmentType: 'Khám lâm sàng đầu vào'
+        });
+        if (appt) {
+          if (appt.doctorStaffId) {
+            const docProfile = await staffProfileRepo.findById(appt.doctorStaffId);
+            await addResidentToStaff(docProfile);
+          }
+          if (appt.nurseStaffId) {
+            const nurProfile = await staffProfileRepo.findById(appt.nurseStaffId);
+            await addResidentToStaff(nurProfile);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to automatically assign resident to staff assigned list:', err);
+    }
   }
 
   if (body?.notes) updateData.notes = String(body.notes).trim();
@@ -1025,3 +1212,4 @@ module.exports = {
   createAdmissionContract,
   checkInResident,
 };
+

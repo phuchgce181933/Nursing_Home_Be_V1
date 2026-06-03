@@ -4,6 +4,11 @@ const staffProfileRepo = require('../repositories/staffProfileRepository');
 const residentRepo = require('../repositories/residentRepository');
 const notificationRepo = require('../repositories/notificationRepository');
 const { createAuditLog } = require('../utils/auditLog');
+const CareAppointment = require('../models/careAppointment');
+const shiftRepo = require('../repositories/shiftRepository');
+const { getShiftStartDateTime, getShiftEndDateTime } = require('../utils/shiftTime');
+const userRepo = require('../repositories/userRepository');
+
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 const todayVN = () => new Date().toLocaleDateString('en-CA', { timeZone: VN_TZ });
@@ -34,7 +39,7 @@ const assertAppointmentAccess = (appointment, user, staffProfile) => {
 };
 
 const STATUS_TRANSITIONS = {
-  scheduled:   ['in_progress', 'cancelled'],
+  scheduled:   ['in_progress', 'completed', 'cancelled'],
   in_progress: ['completed', 'cancelled'],
   completed:   [],
   cancelled:   [],
@@ -50,6 +55,54 @@ const parsePagination = (query) => {
 const validateAppointmentWindow = (start, end) => {
   if (isNaN(start) || isNaN(end)) throw new ServiceError('Invalid date format', 400);
   if (start >= end) throw new ServiceError('scheduledEndAt must be after scheduledStartAt', 400);
+};
+
+const validateStaffAvailability = async (staffProfileId, roleCategory, startAt, endAt, appointmentId = null) => {
+  if (!staffProfileId) return;
+
+  const dateStr = startAt.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const workDate = new Date(dateStr + 'T00:00:00.000Z');
+
+  // 1. Kiểm tra ca làm việc hoạt động (Active Shift)
+  const shifts = await shiftRepo.findActiveShiftsForStaffOnDate(staffProfileId, workDate);
+  let hasActiveShift = false;
+  for (const shift of shifts) {
+    const shiftStart = getShiftStartDateTime(dateStr, shift.startTime);
+    const shiftEnd = getShiftEndDateTime(dateStr, shift.startTime, shift.endTime);
+    if (startAt >= shiftStart && endAt <= shiftEnd) {
+      hasActiveShift = true;
+      break;
+    }
+  }
+
+  if (!hasActiveShift) {
+    const roleLabel = roleCategory === 'doctor' ? 'Bác sĩ' : 'Y tá';
+    throw new ServiceError(
+      `${roleLabel} không có ca làm việc hoạt động trùng khớp với khung giờ cuộc hẹn (${startAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${endAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}) vào ngày ${dateStr}`,
+      400
+    );
+  }
+
+  // 2. Kiểm tra trùng lịch cuộc hẹn khác
+  const roleField = roleCategory === 'doctor' ? 'doctorStaffId' : 'nurseStaffId';
+  const query = {
+    [roleField]: staffProfileId,
+    status: { $ne: 'cancelled' },
+    scheduledStartAt: { $lt: endAt },
+    scheduledEndAt: { $gt: startAt },
+  };
+  if (appointmentId) {
+    query._id = { $ne: appointmentId };
+  }
+  const conflict = await CareAppointment.findOne(query).populate('residentId', 'fullName');
+  if (conflict) {
+    const residentName = conflict.residentId?.fullName || 'Bệnh nhân khác';
+    const roleLabel = roleCategory === 'doctor' ? 'Bác sĩ' : 'Y tá';
+    throw new ServiceError(
+      `${roleLabel} đã bị trùng lịch với cuộc hẹn khám của ${residentName} trong khung giờ này`,
+      409
+    );
+  }
 };
 
 const createAppointment = async (user, body, req) => {
@@ -72,12 +125,14 @@ const createAppointment = async (user, body, req) => {
     const doc = await staffProfileRepo.findById(doctorStaffId);
     if (!doc) throw new ServiceError('Doctor staff profile not found', 404);
     if (doc.roleCategory !== 'doctor') throw new ServiceError('Assigned staff is not a doctor', 400);
+    await validateStaffAvailability(doctorStaffId, 'doctor', start, end);
   }
 
   if (nurseStaffId) {
     const nur = await staffProfileRepo.findById(nurseStaffId);
     if (!nur) throw new ServiceError('Nurse staff profile not found', 404);
     if (nur.roleCategory !== 'nurse') throw new ServiceError('Assigned staff is not a nurse', 400);
+    await validateStaffAvailability(nurseStaffId, 'nurse', start, end);
   }
 
   const conflict = await careAppointmentRepo.findOneConflict(residentId, start, end);
@@ -215,21 +270,33 @@ const updateAppointment = async (user, id, body, req) => {
   const conflict = await careAppointmentRepo.findOneConflict(appointment.residentId, start, end, appointment._id);
   if (conflict) throw new ServiceError('Schedule conflict detected', 409);
 
+  let docId = appointment.doctorStaffId;
   if (body.doctorStaffId !== undefined) {
     if (body.doctorStaffId) {
       const doctor = await staffProfileRepo.findById(body.doctorStaffId);
       if (!doctor) throw new ServiceError('Doctor staff profile not found', 404);
+      if (doctor.roleCategory !== 'doctor') throw new ServiceError('Assigned staff is not a doctor', 400);
     }
-    appointment.doctorStaffId = body.doctorStaffId || undefined;
+    docId = body.doctorStaffId || null;
   }
+  if (docId) {
+    await validateStaffAvailability(docId, 'doctor', start, end, appointment._id);
+  }
+  appointment.doctorStaffId = docId || undefined;
 
+  let nurId = appointment.nurseStaffId;
   if (body.nurseStaffId !== undefined) {
     if (body.nurseStaffId) {
       const nurse = await staffProfileRepo.findById(body.nurseStaffId);
       if (!nurse) throw new ServiceError('Nurse staff profile not found', 404);
+      if (nurse.roleCategory !== 'nurse') throw new ServiceError('Assigned staff is not a nurse', 400);
     }
-    appointment.nurseStaffId = body.nurseStaffId || undefined;
+    nurId = body.nurseStaffId || null;
   }
+  if (nurId) {
+    await validateStaffAvailability(nurId, 'nurse', start, end, appointment._id);
+  }
+  appointment.nurseStaffId = nurId || undefined;
 
   const before = appointment.toObject();
   appointment.scheduledStartAt = start;
@@ -330,6 +397,10 @@ const assignDoctor = async (user, id, body, req) => {
     throw new ServiceError(`Cannot reassign staff on a '${appointment.status}' appointment`, 400);
   }
 
+  if (doctorStaffId) {
+    await validateStaffAvailability(doctorStaffId, 'doctor', appointment.scheduledStartAt, appointment.scheduledEndAt, appointment._id);
+  }
+
   const before = { doctorStaffId: appointment.doctorStaffId };
   appointment.doctorStaffId = doctorStaffId || undefined;
   await careAppointmentRepo.saveAppointment(appointment);
@@ -362,6 +433,10 @@ const assignNurse = async (user, id, body, req) => {
 
   if (['completed', 'cancelled'].includes(appointment.status)) {
     throw new ServiceError(`Cannot reassign staff on a '${appointment.status}' appointment`, 400);
+  }
+
+  if (nurseStaffId) {
+    await validateStaffAvailability(nurseStaffId, 'nurse', appointment.scheduledStartAt, appointment.scheduledEndAt, appointment._id);
   }
 
   const before = { nurseStaffId: appointment.nurseStaffId };
@@ -464,6 +539,57 @@ const sendReminder = async (user, id, req) => {
   };
 };
 
+const getAvailableStaffForAppointment = async (user, query) => {
+  const { start, end, appointmentId } = query;
+  if (!start || !end) {
+    throw new ServiceError('start and end query parameters are required', 400);
+  }
+
+  const startAt = new Date(start);
+  const endAt = new Date(end);
+  validateAppointmentWindow(startAt, endAt);
+
+  // Lấy tất cả staff doctor và nurse đang hoạt động
+  const staffUsers = await userRepo.findStaffUsers(
+    { role: { $in: ['doctor', 'nurse'] }, isActive: true, isBanned: false },
+    { skip: 0, limit: 1000 }
+  );
+
+  const staffUserMap = Object.fromEntries(staffUsers.map(u => [u._id.toString(), u]));
+  const userIds = staffUsers.map(u => u._id);
+  const profiles = await staffProfileRepo.findByUserIdList(userIds);
+
+  const doctors = [];
+  const nurses = [];
+
+  for (const profile of profiles) {
+    const u = staffUserMap[profile.userId.toString()];
+    if (!u) continue;
+
+    try {
+      // validateStaffAvailability throws if staff is not active on shift or has an appointment overlap
+      await validateStaffAvailability(profile._id, u.role, startAt, endAt, appointmentId || null);
+      
+      const staffInfo = {
+        _id: profile._id,
+        fullName: u.fullName,
+        role: u.role,
+        specialty: profile.specialty || '',
+      };
+
+      if (u.role === 'doctor') {
+        doctors.push(staffInfo);
+      } else if (u.role === 'nurse') {
+        nurses.push(staffInfo);
+      }
+    } catch (err) {
+      // Skip staff who are unavailable (no shift or overlap conflict)
+    }
+  }
+
+  return { doctors, nurses };
+};
+
 module.exports = {
   createAppointment,
   listAppointments,
@@ -477,4 +603,5 @@ module.exports = {
   assignDoctor,
   assignNurse,
   sendReminder,
+  getAvailableStaffForAppointment,
 };

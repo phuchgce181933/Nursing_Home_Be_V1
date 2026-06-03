@@ -12,7 +12,7 @@ const getFamilyResidentIds = async (userId) => {
 };
 
 const getResidentsForFamily = async (userId) =>
-  Resident.find({ familyPortalAccountIds: userId })
+  Resident.find({ familyPortalAccountIds: userId, residencyStatus: 'admitted' })
     .select('residentCode fullName dateOfBirth gender bloodType allergies chronicConditions residencyStatus admittedAt roomId bedId')
     .populate('roomId', 'roomCode name')
     .populate('bedId', 'bedCode');

@@ -82,4 +82,6 @@ router.get('/floors/:floorId/rooms', protect, ctrl.listRoomsByFloor);
  */
 router.get('/floors/:floorId', protect, ctrl.getFloor);
 
+router.get('/rooms/:roomId/beds', protect, ctrl.listAvailableBedsByRoom);
+
 module.exports = router;

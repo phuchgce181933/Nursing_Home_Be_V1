@@ -311,23 +311,67 @@ const mapResidentFamilySummary = (resident) => ({
   emergencyContactCount: resident.emergencyContacts?.length ?? 0,
 });
 
-const listResidentsForAssignment = async ({ floorId, roomId, search, status }) => {
-  if (status && !RESIDENCY_STATUSES.includes(status)) {
+const parseAssignmentStatusFilter = (status) => {
+  let queryStatus = status || 'admitted';
+  if (status && String(status).includes(',')) {
+    const statuses = String(status)
+      .split(',')
+      .map((s) => s.trim());
+    statuses.forEach((s) => {
+      if (!RESIDENCY_STATUSES.includes(s)) {
+        throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+      }
+    });
+    queryStatus = statuses;
+  } else if (status && !RESIDENCY_STATUSES.includes(status)) {
     throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
   }
-  const data = await residentRepo.findForAssignment({ floorId, roomId, search, status: status || 'admitted' });
+  return queryStatus;
+};
+
+const listResidentsForAssignment = async ({ floorId, roomId, search, status }, user) => {
+  const queryStatus = parseAssignmentStatusFilter(status);
+
+  let residentIds = null;
+  if (user && ['doctor', 'nurse'].includes(user.role)) {
+    const staffProfileRepo = require('../repositories/staffProfileRepository');
+    const profile = await staffProfileRepo.findByUserId(user._id);
+    if (!profile) throw new ServiceError('Staff profile not found for this account', 404);
+
+    const idsSet = new Set((profile.assignedResidentIds || []).map((id) => id.toString()));
+
+    try {
+      const CareAppointment = require('../models/careAppointment');
+      const roleField = user.role === 'doctor' ? 'doctorStaffId' : 'nurseStaffId';
+      const activeAppts = await CareAppointment.find({
+        [roleField]: profile._id,
+        appointmentType: 'Khám lâm sàng đầu vào',
+      }).select('residentId');
+
+      activeAppts.forEach((appt) => {
+        if (appt.residentId) {
+          idsSet.add(appt.residentId.toString());
+        }
+      });
+    } catch (err) {
+      console.error('Failed to dynamically aggregate intake appointment resident IDs:', err);
+    }
+
+    residentIds = Array.from(idsSet);
+  }
+
+  const data = await residentRepo.findForAssignment({ floorId, roomId, search, status: queryStatus, residentIds });
   return { data, total: data.length };
 };
 
 const listResidentsForFamilyManagement = async ({ search, status, page = 1, limit = 20 }) => {
-  if (status && !RESIDENCY_STATUSES.includes(status)) {
-    throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
-  }
+  const queryStatus = parseAssignmentStatusFilter(status);
+
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const { data, total, page: currentPage, limit: currentLimit } = await residentRepo.findForFamilyManagement({
     search,
-    status: status || 'admitted',
+    status: queryStatus,
     page: pageNum,
     limit: limitNum,
   });

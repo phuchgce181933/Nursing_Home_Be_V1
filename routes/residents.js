@@ -25,6 +25,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 
 const adminManager = authorize('admin', 'manager');
+const allStaff = authorize('admin', 'manager', 'doctor', 'nurse');
 
 /**
  * @swagger
@@ -70,7 +71,7 @@ const adminManager = authorize('admin', 'manager');
  *       200:
  *         description: Residents list (with emergencyContactCount when paginated)
  */
-router.get('/', protect, adminManager, listResidents);
+router.get('/', protect, allStaff, listResidents);
 
 /**
  * @swagger
@@ -188,7 +189,7 @@ router.get('/by-area', protect, adminManager, listResidentsByArea);
  *       200:
  *         description: Paginated list with hasInitialHealthRecord flag
  */
-router.get('/initial-health', protect, adminManager, listResidentsForInitialHealth);
+router.get('/initial-health', protect, allStaff, listResidentsForInitialHealth);
 
 /**
  * @swagger
@@ -230,7 +231,7 @@ router.get('/initial-health', protect, adminManager, listResidentsForInitialHeal
  *       200:
  *         description: Paginated list with area and record flags
  */
-router.get('/pre-existing-conditions', protect, adminManager, listResidentsForPreExisting);
+router.get('/pre-existing-conditions', protect, allStaff, listResidentsForPreExisting);
 
 /**
  * @swagger
@@ -272,7 +273,7 @@ router.get('/pre-existing-conditions', protect, adminManager, listResidentsForPr
  *       200:
  *         description: Paginated list with area and record flags
  */
-router.get('/drug-allergies', protect, adminManager, listResidentsForDrugAllergies);
+router.get('/drug-allergies', protect, allStaff, listResidentsForDrugAllergies);
 
 /**
  * @swagger
@@ -351,8 +352,8 @@ router.get('/:residentId/family', protect, adminManager, getResidentFamilyInfo);
  *       400:
  *         description: Validation error
  */
-router.get('/:residentId/initial-health', protect, adminManager, getInitialHealth);
-router.put('/:residentId/initial-health', protect, adminManager, recordInitialHealth);
+router.get('/:residentId/initial-health', protect, allStaff, getInitialHealth);
+router.put('/:residentId/initial-health', protect, allStaff, recordInitialHealth);
 
 /**
  * @swagger
@@ -424,8 +425,8 @@ router.put('/:residentId/initial-health', protect, adminManager, recordInitialHe
  *       400:
  *         description: Validation error
  */
-router.get('/:residentId/pre-existing-conditions', protect, adminManager, getPreExistingConditions);
-router.put('/:residentId/pre-existing-conditions', protect, adminManager, updatePreExistingConditions);
+router.get('/:residentId/pre-existing-conditions', protect, allStaff, getPreExistingConditions);
+router.put('/:residentId/pre-existing-conditions', protect, allStaff, updatePreExistingConditions);
 
 /**
  * @swagger
@@ -484,8 +485,8 @@ router.put('/:residentId/pre-existing-conditions', protect, adminManager, update
  *       400:
  *         description: Validation error or missing drugAllergies field
  */
-router.get('/:residentId/drug-allergies', protect, adminManager, getDrugAllergies);
-router.put('/:residentId/drug-allergies', protect, adminManager, updateDrugAllergies);
+router.get('/:residentId/drug-allergies', protect, allStaff, getDrugAllergies);
+router.put('/:residentId/drug-allergies', protect, allStaff, updateDrugAllergies);
 
 /**
  * @swagger
@@ -735,6 +736,9 @@ router.post('/:residentId/transfer-room', protect, adminManager, transferResiden
  *       404:
  *         description: Resident not found
  */
-router.get('/:residentId', protect, adminManager, getResidentDetail);
+router.get('/:residentId', protect, allStaff, getResidentDetail);
+
+// Merge param router for vital logs & medical records
+router.use('/:residentId/medical-records', require('./medicalRecords'));
 
 module.exports = router;

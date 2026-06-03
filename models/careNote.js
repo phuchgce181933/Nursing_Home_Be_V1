@@ -10,6 +10,11 @@ const careNoteSchema = new Schema(
     noteType: { type: String, enum: CARE_NOTE_TYPES, default: 'general', index: true },
     content: { type: String, required: true, trim: true },
     noteAt: { type: Date, default: Date.now, index: true },
+    // Structured data specific to noteType:
+    // meal:     { mealType, intakeAmount, appetite }
+    // activity: { activityType, duration, participationLevel, mood }
+    // health:   { symptoms, consciousness, fallRisk, skinCondition, observations }
+    metadata: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }
 );

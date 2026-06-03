@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
+  getAvailableMedications,
   getCurrentMedications,
   setMedicationSchedule,
   getDailySchedule,
@@ -10,6 +11,36 @@ const {
   getHistory,
 } = require('../controllers/scheduleController');
 const { protect, authorize } = require('../middleware/auth');
+
+/**
+ * @swagger
+ * /api/medications/available:
+ *   get:
+ *     summary: List active medications from pharmacy database (for doctor to select when prescribing)
+ *     tags: [MedicationSchedules]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: "Search by name, medicationCode, or manufacturer"
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *     responses:
+ *       200:
+ *         description: "List of active medications with _id, medicationCode, name, form, strength, unit"
+ */
+router.get('/available', protect, authorize('doctor', 'nurse', 'admin', 'manager'), getAvailableMedications);
 
 /**
  * @swagger
@@ -57,9 +88,9 @@ router.get('/current', protect, authorize('doctor', 'nurse'), getCurrentMedicati
  *                 type: array
  *                 items:
  *                   type: object
- *                   required: [itemId]
+ *                   required: [prescriptionItemId]
  *                   properties:
- *                     itemId:
+ *                     prescriptionItemId:
  *                       type: string
  *                     startDate:
  *                       type: string

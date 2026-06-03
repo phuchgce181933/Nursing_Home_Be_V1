@@ -14,6 +14,7 @@ const medicalRecordSchema = new Schema(
     oxygenSaturation: { type: Number, min: 0, max: 100 },
     bloodSugar: { type: Number, min: 0 },
     weightKg: { type: Number, min: 0 },
+    heightCm: { type: Number, min: 0 },
     abnormalFlag: { type: Boolean, default: false, index: true },
     summary: { type: String, trim: true },
   },

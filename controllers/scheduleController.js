@@ -1,18 +1,32 @@
 const { isValidObjectId } = require('mongoose');
 const MedicationSchedule = require('../models/MedicationSchedule');
 const Prescription = require('../models/prescription');
+const Medication = require('../models/medication');
 const Resident = require('../models/resident');
 const Room = require('../models/room');
+const StaffProfile = require('../models/staffProfile');
 const { generateSchedulesForItem } = require('../services/scheduleGeneratorService');
 
 const MISSED_REASONS = ['refused', 'asleep', 'vomiting', 'hospitalized', 'other'];
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
-// Validate YYYY-MM-DD format and parsability
+// ── Scope helpers ─────────────────────────────────────────────────────────────
+
+const getResidentScope = async (userId, role) => {
+  if (['admin', 'manager'].includes(role)) return null;
+  const profile = await StaffProfile.findOne({ userId }).select('assignedResidentIds');
+  if (!profile) return [];
+  return profile.assignedResidentIds.map(String);
+};
+
+const isInScope = (residentId, scope) =>
+  scope === null || scope.includes(String(residentId));
+
+// ── Validators ────────────────────────────────────────────────────────────────
+
 const isValidDateStr = (str) =>
   typeof str === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(new Date(str).getTime());
 
-// Vietnam-local day boundaries as UTC Dates
 const getDayBounds = (dateStr) => ({
   start: new Date(`${dateStr}T00:00:00+07:00`),
   end: new Date(`${dateStr}T23:59:59.999+07:00`),
@@ -23,7 +37,7 @@ const getTodayVN = () => {
   return new Date(vnMs).toISOString().slice(0, 10);
 };
 
-// ISO week key in Vietnam local date: "YYYY-Www"
+// ISO week key in Vietnam local time: "YYYY-Www"
 const isoWeekKey = (utcDate) => {
   const vn = new Date(utcDate.getTime() + 7 * 60 * 60 * 1000);
   const d = new Date(Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate()));
@@ -35,8 +49,50 @@ const isoWeekKey = (utcDate) => {
   return `${year}-W${String(week).padStart(2, '0')}`;
 };
 
-// ── GET /api/medications/current — View Medication List ───────────────────────
-// Returns flat list of all active medication items from ACTIVE prescriptions.
+// ── GET /api/medications/available ───────────────────────────────────────────
+// Lists active pharmacy medications for doctors to select when prescribing.
+const getAvailableMedications = async (req, res) => {
+  try {
+    const { search, page = 1, limit = 50 } = req.query;
+
+    const filter = { isActive: true };
+    if (search) {
+      const term = String(search).trim();
+      filter.$or = [
+        { name: { $regex: term, $options: 'i' } },
+        { medicationCode: { $regex: term, $options: 'i' } },
+        { manufacturer: { $regex: term, $options: 'i' } },
+      ];
+    }
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [data, total] = await Promise.all([
+      Medication.find(filter)
+        .select('_id medicationCode name genericName form strength unit manufacturer description')
+        .sort({ name: 1 })
+        .skip(skip)
+        .limit(limitNum),
+      Medication.countDocuments(filter),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum) || 1,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ── GET /api/medications/current ─────────────────────────────────────────────
+// Active medication items from ACTIVE prescriptions for one resident.
 const getCurrentMedications = async (req, res) => {
   try {
     const { residentId } = req.query;
@@ -48,6 +104,12 @@ const getCurrentMedications = async (req, res) => {
       return res.status(400).json({ success: false, message: 'residentId must be a valid ObjectId' });
     }
 
+    // Scope check
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+    }
+
     const resident = await Resident.findById(residentId).select('fullName');
     if (!resident) {
       return res.status(404).json({ success: false, message: 'Resident not found' });
@@ -55,6 +117,7 @@ const getCurrentMedications = async (req, res) => {
 
     const prescriptions = await Prescription.find({ residentId, status: 'ACTIVE' })
       .populate('doctorId', 'fullName')
+      .populate('items.medicationId', 'name medicationCode form strength unit')
       .sort({ prescriptionDate: -1 });
 
     const medications = [];
@@ -68,6 +131,7 @@ const getCurrentMedications = async (req, res) => {
           validUntil: rx.validUntil,
           diagnosisNote: rx.diagnosisNote,
           prescribedBy: rx.doctorId?.fullName || null,
+          medicationId: item.medicationId,
           medicationName: item.medicationName,
           genericName: item.genericName || null,
           dosage: item.dosage,
@@ -98,9 +162,8 @@ const getCurrentMedications = async (req, res) => {
   }
 };
 
-// ── PUT /api/medications/schedule/set — Set Medication Schedule (Doctor) ─────
-// Doctor sets startDate, endDate, times for one or more prescription items.
-// Regenerates future PENDING schedules for each updated item.
+// ── PUT /api/medications/schedule/set ────────────────────────────────────────
+// Doctor sets startDate, endDate, times for prescription items → regenerates schedules.
 const setMedicationSchedule = async (req, res) => {
   try {
     const { prescriptionId, items } = req.body;
@@ -118,6 +181,12 @@ const setMedicationSchedule = async (req, res) => {
     }
     if (prescription.status !== 'ACTIVE') {
       return res.status(400).json({ success: false, message: 'Only ACTIVE prescriptions can be scheduled' });
+    }
+
+    // Scope check
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(prescription.residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
     }
 
     // Validate all patches before modifying anything
@@ -138,23 +207,20 @@ const setMedicationSchedule = async (req, res) => {
         if (!Array.isArray(patch.times) || patch.times.length !== existing.frequency) {
           return res.status(400).json({
             success: false,
-            message: `times for ${existing.medicationName} must have exactly ${existing.frequency} entries (matching frequency)`,
+            message: `times for ${existing.medicationName} must have exactly ${existing.frequency} entries`,
           });
         }
         const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
         if (!patch.times.every((t) => timeRegex.test(t))) {
-          return res.status(400).json({
-            success: false,
-            message: `times entries must be in HH:MM format (e.g. "08:00")`,
-          });
+          return res.status(400).json({ success: false, message: 'times entries must be in HH:MM format (e.g. "08:00")' });
         }
       }
 
       if (patch.startDate && !isValidDateStr(patch.startDate)) {
-        return res.status(400).json({ success: false, message: `startDate must be YYYY-MM-DD` });
+        return res.status(400).json({ success: false, message: 'startDate must be YYYY-MM-DD' });
       }
       if (patch.endDate && !isValidDateStr(patch.endDate)) {
-        return res.status(400).json({ success: false, message: `endDate must be YYYY-MM-DD` });
+        return res.status(400).json({ success: false, message: 'endDate must be YYYY-MM-DD' });
       }
 
       const effectiveStart = patch.startDate ? new Date(patch.startDate) : existing.startDate;
@@ -174,7 +240,6 @@ const setMedicationSchedule = async (req, res) => {
       }
     }
 
-    // Apply changes and collect items to reschedule
     const changeLog = [];
     const rescheduledItems = [];
 
@@ -182,18 +247,9 @@ const setMedicationSchedule = async (req, res) => {
       const item = prescription.items.id(patch.prescriptionItemId);
       const changes = [];
 
-      if (patch.startDate !== undefined) {
-        item.startDate = new Date(patch.startDate);
-        changes.push(`startDate=${patch.startDate}`);
-      }
-      if (patch.endDate !== undefined) {
-        item.endDate = new Date(patch.endDate);
-        changes.push(`endDate=${patch.endDate}`);
-      }
-      if (patch.times !== undefined) {
-        item.times = patch.times;
-        changes.push(`times=[${patch.times.join(',')}]`);
-      }
+      if (patch.startDate !== undefined) { item.startDate = new Date(patch.startDate); changes.push(`startDate=${patch.startDate}`); }
+      if (patch.endDate !== undefined)   { item.endDate   = new Date(patch.endDate);   changes.push(`endDate=${patch.endDate}`); }
+      if (patch.times !== undefined)     { item.times     = patch.times;               changes.push(`times=[${patch.times.join(',')}]`); }
 
       if (changes.length) {
         changeLog.push(`Set schedule for ${item.medicationName}: ${changes.join(', ')}`);
@@ -205,15 +261,9 @@ const setMedicationSchedule = async (req, res) => {
       return res.status(200).json({ success: true, message: 'No schedule changes detected', data: prescription });
     }
 
-    prescription.editHistory.push({
-      editedBy: req.user._id,
-      editedAt: new Date(),
-      changes: changeLog.join('; '),
-    });
-
+    prescription.editHistory.push({ editedBy: req.user._id, editedAt: new Date(), changes: changeLog.join('; ') });
     await prescription.save();
 
-    // Regenerate AFTER save so item._ids are stable
     let schedulesCreated = 0;
     for (const item of rescheduledItems) {
       const before = await MedicationSchedule.countDocuments({
@@ -229,17 +279,18 @@ const setMedicationSchedule = async (req, res) => {
         status: 'PENDING',
         scheduledTime: { $gt: new Date() },
       });
-      schedulesCreated += after - before + before; // count newly created
+      schedulesCreated += after - before;
     }
 
     const populated = await Prescription.findById(prescription._id)
       .populate('residentId', 'fullName dateOfBirth')
       .populate('doctorId', 'fullName')
+      .populate('items.medicationId', 'name medicationCode form strength unit')
       .populate('editHistory.editedBy', 'fullName role');
 
     return res.status(200).json({
       success: true,
-      message: `Schedule updated for ${rescheduledItems.length} medication(s)`,
+      message: `Schedule updated for ${rescheduledItems.length} medication(s), ${schedulesCreated} new slots created`,
       data: populated,
     });
   } catch (err) {
@@ -257,6 +308,7 @@ const getDailySchedule = async (req, res) => {
       return res.status(400).json({ success: false, message: 'date must be YYYY-MM-DD' });
     }
 
+    const scope = await getResidentScope(req.user._id, req.user.role);
     const { start, end } = getDayBounds(date);
     const scheduleFilter = { scheduledTime: { $gte: start, $lte: end } };
     if (status) scheduleFilter.status = status;
@@ -265,6 +317,9 @@ const getDailySchedule = async (req, res) => {
       if (!isValidObjectId(residentId)) {
         return res.status(400).json({ success: false, message: 'residentId must be a valid ObjectId' });
       }
+      if (!isInScope(residentId, scope)) {
+        return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      }
       scheduleFilter.residentId = residentId;
     } else if (wardId) {
       if (!isValidObjectId(wardId)) {
@@ -272,11 +327,19 @@ const getDailySchedule = async (req, res) => {
       }
       const rooms = await Room.find({ floorId: wardId }).select('_id');
       const roomIds = rooms.map((r) => r._id);
-      const residents = await Resident.find({ roomId: { $in: roomIds } }).select('_id');
+      let residents = await Resident.find({ roomId: { $in: roomIds } }).select('_id');
+      // Narrow to assigned residents if scoped
+      if (scope !== null) {
+        residents = residents.filter((r) => scope.includes(r._id.toString()));
+      }
       if (!residents.length) {
         return res.status(200).json({ success: true, date, data: [] });
       }
       scheduleFilter.residentId = { $in: residents.map((r) => r._id) };
+    } else if (scope !== null) {
+      // No filter given — show only assigned residents
+      if (!scope.length) return res.status(200).json({ success: true, date, data: [] });
+      scheduleFilter.residentId = { $in: scope };
     }
 
     const schedules = await MedicationSchedule.find(scheduleFilter)
@@ -338,6 +401,12 @@ const getSchedules = async (req, res) => {
       return res.status(400).json({ success: false, message: 'date must be YYYY-MM-DD' });
     }
 
+    // Scope check
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+    }
+
     const filter = { residentId };
     if (status) filter.status = status;
     if (date) {
@@ -369,6 +438,13 @@ const markTaken = async (req, res) => {
     if (!schedule) {
       return res.status(404).json({ success: false, message: 'Schedule not found' });
     }
+
+    // Scope check — nurse can only mark for assigned residents
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(schedule.residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+    }
+
     if (!['PENDING', 'OVERDUE'].includes(schedule.status)) {
       return res.status(400).json({
         success: false,
@@ -418,6 +494,13 @@ const markMissed = async (req, res) => {
     if (!schedule) {
       return res.status(404).json({ success: false, message: 'Schedule not found' });
     }
+
+    // Scope check
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(schedule.residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+    }
+
     if (!['PENDING', 'OVERDUE'].includes(schedule.status)) {
       return res.status(400).json({
         success: false,
@@ -459,6 +542,12 @@ const getHistory = async (req, res) => {
       return res.status(400).json({ success: false, message: 'to must be YYYY-MM-DD' });
     }
 
+    // Scope check
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+    }
+
     const resident = await Resident.findById(residentId).select('fullName');
     if (!resident) {
       return res.status(404).json({ success: false, message: 'Resident not found' });
@@ -483,10 +572,8 @@ const getHistory = async (req, res) => {
       else if (r.status === 'MISSED') missed++;
       else if (r.status === 'SKIPPED') skipped++;
     }
-    const total = records.length;
     const denominator = taken + lateTaken + missed;
-    const complianceRate =
-      denominator > 0 ? Math.round(((taken + lateTaken) / denominator) * 1000) / 10 : null;
+    const complianceRate = denominator > 0 ? Math.round(((taken + lateTaken) / denominator) * 1000) / 10 : null;
 
     const weeklyMap = new Map();
     for (const r of records) {
@@ -506,7 +593,7 @@ const getHistory = async (req, res) => {
       data: {
         residentId,
         residentName: resident.fullName,
-        summary: { total, taken, lateTaken, missed, skipped, complianceRate },
+        summary: { total: records.length, taken, lateTaken, missed, skipped, complianceRate },
         lowCompliance: complianceRate !== null && complianceRate < 80,
         records: records.map((r) => ({
           _id: r._id,
@@ -531,6 +618,7 @@ const getHistory = async (req, res) => {
 };
 
 module.exports = {
+  getAvailableMedications,
   getCurrentMedications,
   setMedicationSchedule,
   getDailySchedule,

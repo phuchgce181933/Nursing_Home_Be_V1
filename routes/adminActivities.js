@@ -15,13 +15,11 @@ const {
 } = require('../controllers/activityController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('admin'));
-
 /**
  * @swagger
  * /api/admin/activities:
  *   post:
- *     summary: Create a new activity (Admin)
+ *     summary: Create a new activity (Admin only)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -65,13 +63,13 @@ router.use(protect, authorize('admin'));
  *       403:
  *         description: Access forbidden
  */
-router.post('/', createActivity);
+router.post('/', protect, authorize('admin'), createActivity);
 
 /**
  * @swagger
  * /api/admin/activities:
  *   get:
- *     summary: List or search activities (Admin)
+ *     summary: List or search activities (Admin, Manager, Nurse, Doctor, Family)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -122,13 +120,13 @@ router.post('/', createActivity);
  *       403:
  *         description: Access forbidden
  */
-router.get('/', listActivities);
+router.get('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'family'), listActivities);
 
 /**
  * @swagger
  * /api/admin/activities/statistics:
  *   get:
- *     summary: Get activity statistics (Admin)
+ *     summary: Get activity statistics (Admin, Manager)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -159,13 +157,13 @@ router.get('/', listActivities);
  *       403:
  *         description: Access forbidden
  */
-router.get('/statistics', getActivityStatistics);
+router.get('/statistics', protect, authorize('admin', 'manager'), getActivityStatistics);
 
 /**
  * @swagger
  * /api/admin/activities/{activityId}:
  *   get:
- *     summary: Get activity details (Admin)
+ *     summary: Get activity details (Admin, Manager, Nurse, Doctor, Family)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -181,13 +179,13 @@ router.get('/statistics', getActivityStatistics);
  *       404:
  *         description: Activity not found
  */
-router.get('/:activityId', getActivity);
+router.get('/:activityId', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'family'), getActivity);
 
 /**
  * @swagger
  * /api/admin/activities/{activityId}/statistics:
  *   get:
- *     summary: Get statistics for a specific activity (Admin)
+ *     summary: Get statistics for a specific activity (Admin, Manager)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -203,13 +201,13 @@ router.get('/:activityId', getActivity);
  *       404:
  *         description: Activity not found
  */
-router.get('/:activityId/statistics', getActivityStatisticsById);
+router.get('/:activityId/statistics', protect, authorize('admin', 'manager'), getActivityStatisticsById);
 
 /**
  * @swagger
  * /api/admin/activities/{activityId}:
  *   put:
- *     summary: Update activity details (Admin)
+ *     summary: Update activity details (Admin only)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -255,13 +253,13 @@ router.get('/:activityId/statistics', getActivityStatisticsById);
  *       404:
  *         description: Activity not found
  */
-router.put('/:activityId', updateActivity);
+router.put('/:activityId', protect, authorize('admin'), updateActivity);
 
 /**
  * @swagger
  * /api/admin/activities/{activityId}:
  *   delete:
- *     summary: Delete an activity (Admin)
+ *     summary: Delete an activity (Admin only)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -277,13 +275,13 @@ router.put('/:activityId', updateActivity);
  *       404:
  *         description: Activity not found
  */
-router.delete('/:activityId', deleteActivity);
+router.delete('/:activityId', protect, authorize('admin'), deleteActivity);
 
 /**
  * @swagger
  * /api/admin/activities/{activityId}/status:
  *   patch:
- *     summary: Update activity status (Admin)
+ *     summary: Update activity status (Admin only)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -312,13 +310,13 @@ router.delete('/:activityId', deleteActivity);
  *       404:
  *         description: Activity not found
  */
-router.patch('/:activityId/status', updateActivityStatus);
+router.patch('/:activityId/status', protect, authorize('admin'), updateActivityStatus);
 
 /**
  * @swagger
  * /api/admin/activities/{activityId}/participants:
  *   put:
- *     summary: Update participant list for an activity (Admin)
+ *     summary: Update participant list for an activity (Admin only)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -348,13 +346,13 @@ router.patch('/:activityId/status', updateActivityStatus);
  *       404:
  *         description: Activity not found
  */
-router.put('/:activityId/participants', setParticipantList);
+router.put('/:activityId/participants', protect, authorize('admin'), setParticipantList);
 
 /**
  * @swagger
  * /api/admin/activities/{activityId}/register:
  *   post:
- *     summary: Register a resident for an activity (Admin)
+ *     summary: Register a resident for an activity (Admin, Family)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -382,13 +380,13 @@ router.put('/:activityId/participants', setParticipantList);
  *       404:
  *         description: Activity not found
  */
-router.post('/:activityId/register', registerResident);
+router.post('/:activityId/register', protect, authorize('admin', 'family'), registerResident);
 
 /**
  * @swagger
  * /api/admin/activities/{activityId}/record-result:
  *   post:
- *     summary: Record participation result for an activity (Admin)
+ *     summary: Record participation result for an activity (Admin only)
  *     tags: [Admin - Activity Management]
  *     security:
  *       - BearerAuth: []
@@ -418,6 +416,6 @@ router.post('/:activityId/register', registerResident);
  *       404:
  *         description: Activity not found
  */
-router.post('/:activityId/record-result', recordParticipationResult);
+router.post('/:activityId/record-result', protect, authorize('admin'), recordParticipationResult);
 
 module.exports = router;

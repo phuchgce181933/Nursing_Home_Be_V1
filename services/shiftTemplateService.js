@@ -21,8 +21,8 @@ const listTemplates = async (filter = {}) => {
 
 const getTemplate = async (id) => {
   const t = await shiftTemplateRepo.findById(id);
-  if (!t || !t.isSystem) throw Object.assign(new Error('Shift template not found'), { status: 404 });
-  if (t.status !== 'active') throw Object.assign(new Error('Shift template is not active'), { status: 404 });
+  if (!t || !t.isSystem) throw Object.assign(new Error('Không tìm thấy mẫu ca làm việc'), { status: 404 });
+  if (t.status !== 'active') throw Object.assign(new Error('Mẫu ca làm việc chưa ở trạng thái hoạt động'), { status: 404 });
   return formatTemplate(t);
 };
 

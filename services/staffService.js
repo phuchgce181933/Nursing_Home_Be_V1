@@ -36,7 +36,16 @@ const {
 } = require('../utils/rolePolicy');
 const { isShiftActiveNow, parseWorkDate, getLocalDateString } = require('../utils/shiftTime');
 
-const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff', 'admin'];
+const STAFF_ROLES = ['doctor', 'nurse', 'caregiver', 'chef', 'manager', 'staff', 'admin'];
+const DEFAULT_SPECIALTY_BY_ROLE = {
+  admin: 'Administration',
+  manager: 'Operations Management',
+  doctor: 'General Medicine',
+  nurse: 'Care Nursing',
+  caregiver: 'Daily Living Assistance',
+  chef: 'Kitchen Management',
+  staff: 'General Support',
+};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -46,6 +55,11 @@ const safeDeleteCloudinaryImage = (publicId) => {
     console.warn(`Could not delete Cloudinary image ${publicId}:`, err.message)
   );
 };
+
+const buildFallbackStaffProfile = (user) => ({
+  roleCategory: user.role,
+  specialty: DEFAULT_SPECIALTY_BY_ROLE[user.role] || undefined,
+});
 
 // ── shift summary for assignment UI ───────────────────────────────────────
 
@@ -83,7 +97,7 @@ const resolveAssignmentDate = (assignmentDate, date) => {
   try {
     parseWorkDate(assignmentDateStr);
   } catch {
-    throw new ServiceError('assignmentDate must be YYYY-MM-DD', 400);
+    throw new ServiceError('assignmentDate phải đúng định dạng YYYY-MM-DD', 400);
   }
 
   return { assignmentDateStr, checkDate: parseWorkDate(assignmentDateStr) };
@@ -103,7 +117,7 @@ const listStaffProfiles = async ({
 }) => {
   const filter = { role: { $in: STAFF_ROLES } };
   if (role) {
-    if (!STAFF_ROLES.includes(role)) throw new ServiceError(`role must be one of: ${STAFF_ROLES.join(', ')}`, 400);
+    if (!STAFF_ROLES.includes(role)) throw new ServiceError(`role phải thuộc một trong: ${STAFF_ROLES.join(', ')}`, 400);
     filter.role = role;
   }
   if (isActive !== undefined) filter.isActive = isActive === 'true' || isActive === true;
@@ -160,7 +174,7 @@ const listStaffProfiles = async ({
 
   const data = users.map((u) => {
     const uid = u._id.toString();
-    const profile = profileMap[uid] || null;
+    const profile = profileMap[uid] || buildFallbackStaffProfile(u);
     const item = {
       ...u.toObject(),
       staffProfile: profile,
@@ -199,7 +213,7 @@ const listStaffProfiles = async ({
 
 const getStaffProfile = async (id) => {
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Staff not found', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
 
   const userObj = user.toObject({ versionKey: false });
   // Remove all security-sensitive fields before returning
@@ -208,14 +222,14 @@ const getStaffProfile = async (id) => {
   delete userObj.resetPasswordExpiresAt;
 
   const profile = await staffProfileRepo.findByUserId(id);
-  return { ...userObj, staffProfile: profile || null };
+  return { ...userObj, staffProfile: profile || buildFallbackStaffProfile(user) };
 };
 
 // ── STT 1 – update staff basic profile (admin/manager editable fields only) ─
 
 const updateStaffProfile = async (id, body, currentUser) => {
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Staff not found', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
   assertActorMayManageUser(currentUser, user);
 
   const { fullName, phone, gender, dateOfBirth, address, avatarUrl, avatarPublicId, specialty, certifications, password } = body;
@@ -230,7 +244,7 @@ const updateStaffProfile = async (id, body, currentUser) => {
   if (validationError) throw new ServiceError(validationError, 400);
 
   if (gender !== undefined && !GENDERS.includes(gender)) {
-    throw new ServiceError(`gender must be one of: ${GENDERS.join(', ')}`, 400);
+    throw new ServiceError(`gender phải thuộc một trong: ${GENDERS.join(', ')}`, 400);
   }
 
   // If a new avatar is uploaded and there was an old one on Cloudinary, delete the old one
@@ -270,25 +284,25 @@ const updateStaffProfile = async (id, body, currentUser) => {
   delete userObj.resetPasswordTokenHash;
   delete userObj.resetPasswordExpiresAt;
 
-  return { message: 'Staff profile updated', user: userObj, staffProfile: profile };
+  return { message: 'Cập nhật hồ sơ nhân viên thành công', user: userObj, staffProfile: profile };
 };
 
 // ── STT 2 – classify staff role ─────────────────────────────────────────────
 
 const updateStaffRole = async (id, { role }, currentUser) => {
-  if (!role) throw new ServiceError('role is required', 400);
+  if (!role) throw new ServiceError('role là bắt buộc', 400);
 
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Staff not found', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
   if (user._id.toString() === currentUser._id.toString()) {
-    throw new ServiceError('Cannot change your own role', 400);
+    throw new ServiceError('Không thể tự thay đổi vai trò của chính bạn', 400);
   }
   assertActorMayManageUser(currentUser, user);
 
   assertActorMayAssignRole(currentUser, role);
   const allowedRoles = getCreatableRolesForActor(currentUser) || STAFF_ROLES;
   if (!allowedRoles.includes(role)) {
-    throw new ServiceError(`role must be one of: ${allowedRoles.join(', ')}`, 400);
+    throw new ServiceError(`role phải thuộc một trong: ${allowedRoles.join(', ')}`, 400);
   }
 
   user.role = role;
@@ -299,45 +313,45 @@ const updateStaffRole = async (id, { role }, currentUser) => {
     profile = await staffProfileRepo.updateById(profile._id, { roleCategory: role });
   }
 
-  return { message: 'Staff role updated', user: { _id: user._id, role: user.role }, staffProfile: profile };
+  return { message: 'Cập nhật vai trò nhân viên thành công', user: { _id: user._id, role: user.role }, staffProfile: profile };
 };
 
 // ── Ban / Unban (replaces delete) ───────────────────────────────────────────
 
 const banStaff = async (id, { banReason } = {}, currentUser) => {
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Staff not found', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
   if (user._id.toString() === currentUser._id.toString()) {
-    throw new ServiceError('Cannot ban your own account', 400);
+    throw new ServiceError('Không thể tự khóa tài khoản của chính bạn', 400);
   }
   assertActorMayManageUser(currentUser, user);
-  if (user.isBanned) throw new ServiceError('Staff is already banned', 400);
+  if (user.isBanned) throw new ServiceError('Tài khoản nhân viên đã bị khóa trước đó', 400);
 
   user.isBanned = true;
   user.banReason = banReason?.trim() || 'Banned by administrator';
   await userRepo.saveUser(user);
 
   return {
-    message: 'Staff account banned',
+    message: 'Khóa tài khoản nhân viên thành công',
     user: { _id: user._id, fullName: user.fullName, isBanned: user.isBanned, banReason: user.banReason },
   };
 };
 
 const unbanStaff = async (id, currentUser) => {
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Staff not found', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
   if (user._id.toString() === currentUser._id.toString()) {
-    throw new ServiceError('Cannot unban your own account', 400);
+    throw new ServiceError('Không thể tự mở khóa tài khoản của chính bạn', 400);
   }
   assertActorMayManageUser(currentUser, user);
-  if (!user.isBanned) throw new ServiceError('Staff is not banned', 400);
+  if (!user.isBanned) throw new ServiceError('Tài khoản nhân viên hiện không bị khóa', 400);
 
   user.isBanned = false;
   user.banReason = undefined;
   await userRepo.saveUser(user);
 
   return {
-    message: 'Staff account unbanned',
+    message: 'Mở khóa tài khoản nhân viên thành công',
     user: { _id: user._id, fullName: user.fullName, isBanned: user.isBanned },
   };
 };
@@ -350,7 +364,7 @@ const validateStaffAreaAssignment = async (floorIds, roomIds) => {
   if (floorIds?.length) {
     const floors = await Floor.find({ _id: { $in: floorIds }, isActive: { $ne: false } });
     if (floors.length !== floorIds.length) {
-      throw new ServiceError('One or more floorIds are invalid or inactive', 400);
+      throw new ServiceError('Một hoặc nhiều floorIds không hợp lệ hoặc không còn hoạt động', 400);
     }
     floors.forEach((f) => allowedFloors.add(String(f._id)));
   }
@@ -358,7 +372,7 @@ const validateStaffAreaAssignment = async (floorIds, roomIds) => {
   if (roomIds?.length) {
     const rooms = await Room.find({ _id: { $in: roomIds }, status: { $nin: ['closed'] } });
     if (rooms.length !== roomIds.length) {
-      throw new ServiceError('One or more roomIds are invalid or closed', 400);
+      throw new ServiceError('Một hoặc nhiều roomIds không hợp lệ hoặc đã đóng', 400);
     }
     for (const room of rooms) {
       const roomFloor = String(room.floorId);
@@ -380,7 +394,7 @@ const pruneAssignedResidentsToAreas = async (profile) => {
     .populate('responsibleAreaIds', 'floorNumber name')
     .populate('responsibleRoomIds', 'roomNumber roomType');
 
-  if (!populated) throw new ServiceError('Staff profile not found', 404);
+  if (!populated) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
 
   const current = populated.assignedResidentIds || [];
   const kept = current.filter((r) => residentCoversStaffArea(r, populated));
@@ -421,13 +435,13 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
   await assertAssignableStaffByUserId(id);
 
   const profile = await staffProfileRepo.findByUserId(id);
-  if (!profile) throw new ServiceError('Staff profile not found', 404);
+  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
 
   const updateData = {};
   if (floorIds !== undefined) updateData.responsibleAreaIds = floorIds;
   if (roomIds !== undefined) updateData.responsibleRoomIds = roomIds;
 
-  if (!Object.keys(updateData).length) throw new ServiceError('floorIds or roomIds required', 400);
+  if (!Object.keys(updateData).length) throw new ServiceError('floorIds hoặc roomIds là bắt buộc', 400);
 
   await validateStaffAreaAssignment(floorIds, roomIds);
 
@@ -446,7 +460,7 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
   if (user) {
     const onLeave = await leaveRequestRepo.findApprovedOverlapping(user._id, today, todayEnd);
     if (onLeave.length) {
-      throw new ServiceError('Cannot assign areas: staff has an approved leave for today', 400);
+      throw new ServiceError('Không thể phân khu vực: nhân viên có đơn nghỉ đã duyệt trong hôm nay', 400);
     }
   }
 
@@ -460,7 +474,7 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
   const { staffProfile, removedResidents, removedCount } = await pruneAssignedResidentsToAreas(updated);
 
   return {
-    message: 'Responsible areas updated',
+    message: 'Cập nhật khu vực phụ trách thành công',
     staffProfile,
     residentsPruned: { count: removedCount, removed: removedResidents },
   };
@@ -470,7 +484,7 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
 
 const listResidentsAvailableForStaff = async (userId, { search, status } = {}) => {
   const profile = await staffProfileRepo.findByUserId(userId);
-  if (!profile) throw new ServiceError('Staff profile not found', 404);
+  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
 
   const assignedRoomIds = (profile.responsibleRoomIds || []).map((r) => r._id || r);
   const assignedFloorIds = (profile.responsibleAreaIds || []).map((f) => f._id || f);
@@ -480,7 +494,7 @@ const listResidentsAvailableForStaff = async (userId, { search, status } = {}) =
       data: [],
       total: 0,
       filterMode: 'none',
-      message: 'Staff has no assigned floors or rooms. Assign areas first.',
+      message: 'Nhân viên chưa được gán tầng hoặc phòng. Hãy phân khu vực trước.',
     };
   }
 
@@ -505,7 +519,7 @@ const listAssignedResidents = async (userId) => {
       populate: { path: 'roomId', select: 'roomNumber floorId' },
     });
 
-  if (!profile) throw new ServiceError('Staff profile not found', 404);
+  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
 
   const data = profile.assignedResidentIds || [];
   const result = {
@@ -525,7 +539,7 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
   await assertAssignableStaffByUserId(id);
 
   const profile = await staffProfileRepo.findByUserId(id);
-  if (!profile) throw new ServiceError('Staff profile not found', 404);
+  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
 
   const parsedIds = parseResidentIds(residentIdsInput);
   const objectIds = validateObjectIds(parsedIds, 'residentId');
@@ -537,14 +551,14 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
     if (residents.length !== objectIds.length) {
       const found = new Set(residents.map((r) => r._id.toString()));
       const missing = parsedIds.filter((rid) => !found.has(rid));
-      throw new ServiceError(`Resident(s) not found: ${missing.join(', ')}`, 400);
+      throw new ServiceError(`Không tìm thấy cư dân: ${missing.join(', ')}`, 400);
     }
 
     const outOfArea = residents.filter((r) => !residentCoversStaffArea(r, profile));
     if (outOfArea.length) {
       const names = outOfArea.map((r) => r.fullName || r.residentCode || r._id).join(', ');
       throw new ServiceError(
-        `Cannot assign resident(s) outside staff responsible area: ${names}. Assign floors/rooms first.`,
+        `Không thể gán cư dân ngoài khu vực phụ trách của nhân viên: ${names}. Hãy gán tầng/phòng trước.`,
         400
       );
     }
@@ -562,7 +576,7 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
     .populate('responsibleAreaIds', 'floorNumber name')
     .populate('responsibleRoomIds', 'roomNumber roomType');
 
-  return { message: 'Assigned residents updated', staffProfile };
+  return { message: 'Cập nhật cư dân phụ trách thành công', staffProfile };
 };
 
 // ── STT 10 – check doctor/nurse availability (emergency readiness) ───────────
@@ -652,7 +666,7 @@ const getAvailability = async ({ role, date, floorId }) => {
       checkDate = parseWorkDate(date);
       checkDateLocal = date;
     } catch {
-      throw new ServiceError('date must be YYYY-MM-DD', 400);
+      throw new ServiceError('date phải đúng định dạng YYYY-MM-DD', 400);
     }
   } else {
     checkDateLocal = todayLocal;
@@ -664,7 +678,7 @@ const getAvailability = async ({ role, date, floorId }) => {
 
   const filter = { role: { $in: ['doctor', 'nurse'] }, isActive: true, isBanned: false };
   if (role) {
-    if (!['doctor', 'nurse'].includes(role)) throw new ServiceError('role must be doctor or nurse', 400);
+    if (!['doctor', 'nurse'].includes(role)) throw new ServiceError('role phải là doctor hoặc nurse', 400);
     filter.role = role;
   }
 
@@ -779,7 +793,7 @@ const getAvailability = async ({ role, date, floorId }) => {
 // ── Area coverage status ─────────────────────────────────────────────────────
 
 const getAreaCoverageStatus = async (floorId) => {
-  if (!floorId) throw new ServiceError('floorId is required', 400);
+  if (!floorId) throw new ServiceError('floorId là bắt buộc', 400);
 
   const now = new Date();
   const todayLocal = getLocalDateString(now);

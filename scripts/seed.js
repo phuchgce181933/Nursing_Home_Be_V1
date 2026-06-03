@@ -1,4 +1,4 @@
-// Seed script — run once to populate sample data. NOT for production.
+// Seed script - run once to populate sample data. NOT for production.
 require('dotenv').config();
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
@@ -8,9 +8,13 @@ const StaffProfile = require('../models/staffProfile');
 const Resident = require('../models/resident');
 const Prescription = require('../models/prescription');
 const MedicationAdministration = require('../models/medicationAdministration');
+const Building = require('../models/building');
+const Floor = require('../models/floor');
+const Room = require('../models/room');
+const Bed = require('../models/bed');
 const connectDB = require('../config/db');
 
-// ── helpers ────────────────────────────────────────────────────────────────
+// -- helpers -----------------------------------------------------------------
 
 const daysAgo = (n) => {
   const d = new Date();
@@ -25,12 +29,11 @@ const atTime = (baseDate, hhmm) => {
   return d;
 };
 
-// Build administration records for a prescription over a date range
 const buildAdmins = (prescription, residentId, staffId, daysBack, daysForward = 3) => {
   const records = [];
   const now = new Date();
 
-  for (let offset = -daysBack; offset <= daysForward; offset++) {
+  for (let offset = -daysBack; offset <= daysForward; offset += 1) {
     const base = new Date(now);
     base.setDate(now.getDate() + offset);
     base.setHours(0, 0, 0, 0);
@@ -46,20 +49,18 @@ const buildAdmins = (prescription, residentId, staffId, daysBack, daysForward = 
       let notes = '';
 
       if (isPast && !isToday) {
-        // Historical: mostly taken, some missed
         const roll = Math.random();
         if (roll < 0.75) {
           status = 'taken';
           takenAt = new Date(scheduledAt.getTime() + Math.floor(Math.random() * 10 + 1) * 60000);
           administeredByStaffId = staffId;
-        } else if (roll < 0.90) {
+        } else if (roll < 0.9) {
           status = 'missed';
           notes = ['Resident refused', 'Resident sleeping', 'Medication unavailable'][Math.floor(Math.random() * 3)];
         } else {
           status = 'overdue';
         }
       } else if (isToday && isPast) {
-        // Today but already past the scheduled time
         const roll = Math.random();
         if (roll < 0.5) {
           status = 'taken';
@@ -67,11 +68,8 @@ const buildAdmins = (prescription, residentId, staffId, daysBack, daysForward = 
           administeredByStaffId = staffId;
         } else if (roll < 0.7) {
           status = 'overdue';
-        } else {
-          status = 'pending';
         }
       }
-      // future = pending (default)
 
       records.push({
         prescriptionId: prescription._id,
@@ -84,73 +82,217 @@ const buildAdmins = (prescription, residentId, staffId, daysBack, daysForward = 
       });
     }
   }
+
   return records;
 };
 
-// ── seed emails / codes to clean up ────────────────────────────────────────
+// -- constants ---------------------------------------------------------------
+
+const SEED_BUILDING_CODE = 'BLD001';
 
 const SEED_EMAILS = [
-  'admin@test.com', 'manager@test.com',
-  'doctor@test.com', 'doctor2@test.com',
-  'nurse@test.com', 'nurse2@test.com',
+  'admin@test.com',
+  'manager@test.com',
+  'doctor@test.com',
+  'doctor2@test.com',
+  'nurse@test.com',
+  'nurse2@test.com',
+  'caregiver@test.com',
+  'chef@test.com',
   'family@test.com',
-  'family1b@test.com',
   'family2@test.com',
   'family3@test.com',
   'family4@test.com',
   'family5@test.com',
   'admin@gmail.com',
-  'manager@gmail.com',
   'doctor@gmail.com',
+  'nurse@gmail.com',
+  'caregiver@gmail.com',
 ];
-const SEED_STAFF_CODES = ['ADM001', 'MGR001', 'DOC001', 'DOC002', 'NUR001', 'NUR002'];
-const SEED_RESIDENT_CODES = ['RES001', 'RES002', 'RES003', 'RES004', 'RES005', 'RES006'];
 
-// ── main ────────────────────────────────────────────────────────────────────
+const SEED_STAFF_CODES = ['ADM001', 'MGR001', 'DOC001', 'DOC002', 'NUR001', 'NUR002', 'CAR001', 'CHE001', 'ADM002', 'DOC003', 'NUR003', 'CAR002'];
+const SEED_RESIDENT_CODES = ['RES001', 'RES002', 'RES003', 'RES004', 'RES005', 'RES006'];
+const SEED_REHAB_TITLE = 'Lịch PHCN (seed)';
+
+const addDaysToDateStr = (dateStr, days) => {
+  const base = new Date(`${dateStr}T12:00:00+07:00`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+};
+
+const seedRehabilitationSchedules = async (nurseUser, residents) => {
+  const RehabilitationScheduleDay = require('../models/rehabilitationScheduleDay');
+  const RehabilitationScheduleEntry = require('../models/rehabilitationScheduleEntry');
+  const { todayVN } = require('../utils/shiftTime');
+
+  await RehabilitationScheduleEntry.deleteMany({});
+  await RehabilitationScheduleDay.deleteMany({ title: SEED_REHAB_TITLE });
+
+  const workDates = [todayVN(), addDaysToDateStr(todayVN(), 1)];
+  const sessionTemplates = [
+    {
+      sessionType: 'physical_therapy',
+      scheduledTime: '09:00',
+      durationMinutes: 45,
+      location: 'Phòng PHCN tầng 1',
+      sessionTitle: 'Vận động trị liệu',
+      therapyGoals: 'Duy trì khả năng vận động tay chân',
+      caregiverAssistNote: 'Đón cư dân lúc 8:45, đưa về phòng sau buổi',
+      leadStaffName: 'KTV Nguyễn Văn A',
+    },
+    {
+      sessionType: 'mobility_training',
+      scheduledTime: '14:30',
+      durationMinutes: 30,
+      location: 'Sân vận động',
+      sessionTitle: 'Tập đi lại',
+      therapyGoals: 'Cải thiện thăng bằng và sức bền',
+      caregiverAssistNote: 'Chuẩn bị xe lăn, hỗ trợ mặc giày an toàn',
+      leadStaffName: 'KTV Trần Thị B',
+    },
+  ];
+
+  for (const wd of workDates) {
+    const day = await RehabilitationScheduleDay.create({
+      workDate: new Date(`${wd}T00:00:00.000Z`),
+      title: SEED_REHAB_TITLE,
+      status: 'published',
+      createdBy: nurseUser._id,
+      publishedBy: nurseUser._id,
+      publishedAt: new Date(),
+    });
+
+    const entryDocs = [];
+    for (const res of residents) {
+      for (const tpl of sessionTemplates) {
+        entryDocs.push({
+          ...tpl,
+          rehabilitationScheduleDayId: day._id,
+          residentId: res._id,
+        });
+      }
+    }
+    await RehabilitationScheduleEntry.insertMany(entryDocs);
+  }
+
+  console.log(`Rehabilitation schedules seeded for ${workDates.join(', ')} (${residents.length} residents)`);
+};
+
+// -- main --------------------------------------------------------------------
 
 const seed = async () => {
   await connectDB();
 
   console.log('Clearing old seed data...');
+
+  const existingResidents = await Resident.find({ residentCode: { $in: SEED_RESIDENT_CODES } }).select('_id');
+  const residentIds = existingResidents.map((r) => r._id);
+
+  if (residentIds.length > 0) {
+    await MedicationAdministration.deleteMany({ residentId: { $in: residentIds } });
+    await Prescription.deleteMany({ residentId: { $in: residentIds } });
+  }
+
   const existingBuilding = await Building.findOne({ code: SEED_BUILDING_CODE });
   if (existingBuilding) {
-    const existingFloors = await Floor.find({ buildingId: existingBuilding._id });
+    const existingFloors = await Floor.find({ buildingId: existingBuilding._id }).select('_id');
     const floorIds = existingFloors.map((f) => f._id);
-    const existingRooms = await Room.find({ floorId: { $in: floorIds } });
+    const existingRooms = await Room.find({ floorId: { $in: floorIds } }).select('_id');
     const roomIds = existingRooms.map((r) => r._id);
+
     await Bed.deleteMany({ roomId: { $in: roomIds } });
     await Room.deleteMany({ floorId: { $in: floorIds } });
     await Floor.deleteMany({ buildingId: existingBuilding._id });
     await Building.deleteOne({ _id: existingBuilding._id });
   }
-  await User.deleteMany({ email: { $in: SEED_EMAILS } });
+
   await StaffProfile.deleteMany({ staffCode: { $in: SEED_STAFF_CODES } });
+  await User.deleteMany({ email: { $in: SEED_EMAILS } });
   await Resident.deleteMany({ residentCode: { $in: SEED_RESIDENT_CODES } });
 
-  // clean prescriptions/admins referencing our seed residents (cascade-like)
-  // We'll drop them all and re-create below
   const pw = await bcrypt.hash('password123', 10);
-
-  // ── Users ────────────────────────────────────────────────────────────────
+  const pwSimple = await bcrypt.hash('12345678', 10);
 
   console.log('Creating users...');
-  const [admin, manager, doctor1, doctor2, nurse1, nurse2, family] = await User.insertMany([
-    { fullName: 'Admin System',         email: 'admin@test.com',   username: 'admin_test',   passwordHash: pw, role: 'admin',   isActive: true },
+  const [
+    admin,
+    manager,
+    doctor1,
+    doctor2,
+    nurse1,
+    nurse2,
+    caregiver1,
+    chef1,
+    family1,
+    family2,
+    family3,
+    family4,
+    family5,
+    adminGmail,
+    doctorGmail,
+    nurseGmail,
+    caregiverGmail,
+  ] = await User.insertMany([
+    { fullName: 'Admin System', email: 'admin@test.com', username: 'admin_test', passwordHash: pw, role: 'admin', isActive: true },
     { fullName: 'Manager Nguyen Van B', email: 'manager@test.com', username: 'manager_test', passwordHash: pw, role: 'manager', isActive: true },
-    { fullName: 'Dr. Nguyen Van A',     email: 'doctor@test.com',  username: 'doctor_test',  passwordHash: pw, role: 'doctor',  phone: '0901000001', isActive: true },
-    { fullName: 'Dr. Le Van Hung',      email: 'doctor2@test.com', username: 'doctor2_test', passwordHash: pw, role: 'doctor',  phone: '0901000002', isActive: true },
-    { fullName: 'Nurse Tran Thi B',     email: 'nurse@test.com',   username: 'nurse_test',   passwordHash: pw, role: 'nurse',   phone: '0902000001', isActive: true },
-    { fullName: 'Nurse Pham Van C',     email: 'nurse2@test.com',  username: 'nurse2_test',  passwordHash: pw, role: 'nurse',   phone: '0902000002', isActive: true },
-    { fullName: 'Family Le Van C',      email: 'family@test.com',  username: 'family_test',  passwordHash: pw, role: 'family',  isActive: true },
+    { fullName: 'Dr. Nguyen Van A', email: 'doctor@test.com', username: 'doctor_test', passwordHash: pw, role: 'doctor', phone: '0901000001', isActive: true },
+    { fullName: 'Dr. Le Van Hung', email: 'doctor2@test.com', username: 'doctor2_test', passwordHash: pw, role: 'doctor', phone: '0901000002', isActive: true },
+    { fullName: 'Nurse Tran Thi B', email: 'nurse@test.com', username: 'nurse_test', passwordHash: pw, role: 'nurse', phone: '0902000001', isActive: true },
+    { fullName: 'Nurse Pham Van C', email: 'nurse2@test.com', username: 'nurse2_test', passwordHash: pw, role: 'nurse', phone: '0902000002', isActive: true },
+    { fullName: 'Caregiver Hoang Van D', email: 'caregiver@test.com', username: 'caregiver_test', passwordHash: pw, role: 'caregiver', phone: '0903000001', isActive: true },
+    { fullName: 'Dau Bep Nguyen Van H', email: 'chef@test.com', username: 'chef_test', passwordHash: pw, role: 'chef', phone: '0904000001', isActive: true },
+    { fullName: 'Family Le Van C', email: 'family@test.com', username: 'family_test', passwordHash: pw, role: 'family', isActive: true },
+    { fullName: 'Family Tran Thi D', email: 'family2@test.com', username: 'family2_test', passwordHash: pw, role: 'family', isActive: true },
+    { fullName: 'Family Nguyen Van E', email: 'family3@test.com', username: 'family3_test', passwordHash: pw, role: 'family', isActive: true },
+    { fullName: 'Family Hoang Thi F', email: 'family4@test.com', username: 'family4_test', passwordHash: pw, role: 'family', isActive: true },
+    { fullName: 'Family Pham Van G', email: 'family5@test.com', username: 'family5_test', passwordHash: pw, role: 'family', isActive: true },
+    { fullName: 'Admin Gmail', email: 'admin@gmail.com', username: 'admin_gmail', passwordHash: pwSimple, role: 'admin', isActive: true },
+    { fullName: 'Doctor Gmail', email: 'doctor@gmail.com', username: 'doctor_gmail', passwordHash: pwSimple, role: 'doctor', isActive: true },
+    { fullName: 'Nurse Gmail', email: 'nurse@gmail.com', username: 'nurse_gmail', passwordHash: pwSimple, role: 'nurse', isActive: true },
+    { fullName: 'Caregiver Gmail', email: 'caregiver@gmail.com', username: 'caregiver_gmail', passwordHash: pwSimple, role: 'caregiver', isActive: true },
   ]);
 
-  // ── Residents ─────────────────────────────────────────────────────────────
+  console.log('Creating building, floors, rooms and beds...');
+  const building = await Building.create({
+    code: SEED_BUILDING_CODE,
+    name: 'Toa dieu duong chinh',
+    address: '123 Duong Y Te, Quan 1',
+    description: 'Toa nha mau dung cho seed',
+    isActive: true,
+  });
+
+  const [floor1, floor2] = await Floor.insertMany([
+    { buildingId: building._id, floorNumber: 1, name: 'Tang 1', description: 'Khu noi tru', isActive: true },
+    { buildingId: building._id, floorNumber: 2, name: 'Tang 2', description: 'Khu cham soc dac biet', isActive: true },
+  ]);
+
+  const [room101, room102, room103, room104, room201, room202, room203, room204] = await Room.insertMany([
+    { buildingId: building._id, floorId: floor1._id, roomNumber: '101', roomType: 'standard', capacity: 1, occupiedCount: 1, status: 'full' },
+    { buildingId: building._id, floorId: floor1._id, roomNumber: '102', roomType: 'standard', capacity: 1, occupiedCount: 1, status: 'full' },
+    { buildingId: building._id, floorId: floor1._id, roomNumber: '103', roomType: 'standard', capacity: 1, occupiedCount: 1, status: 'full' },
+    { buildingId: building._id, floorId: floor1._id, roomNumber: '104', roomType: 'standard', capacity: 1, occupiedCount: 0, status: 'available' },
+    { buildingId: building._id, floorId: floor2._id, roomNumber: '201', roomType: 'premium', capacity: 1, occupiedCount: 1, status: 'full' },
+    { buildingId: building._id, floorId: floor2._id, roomNumber: '202', roomType: 'premium', capacity: 1, occupiedCount: 1, status: 'full' },
+    { buildingId: building._id, floorId: floor2._id, roomNumber: '203', roomType: 'premium', capacity: 1, occupiedCount: 1, status: 'full' },
+    { buildingId: building._id, floorId: floor2._id, roomNumber: '204', roomType: 'premium', capacity: 1, occupiedCount: 0, status: 'available' },
+  ]);
+
+  const [bed101A, bed102A, bed103A, bed104A, bed201A, bed202A, bed203A, bed204A] = await Bed.insertMany([
+    { roomId: room101._id, bedCode: '101-A', bedType: 'normal', status: 'occupied', condition: 'good' },
+    { roomId: room102._id, bedCode: '102-A', bedType: 'normal', status: 'occupied', condition: 'good' },
+    { roomId: room103._id, bedCode: '103-A', bedType: 'normal', status: 'occupied', condition: 'good' },
+    { roomId: room104._id, bedCode: '104-A', bedType: 'normal', status: 'available', condition: 'good' },
+    { roomId: room201._id, bedCode: '201-A', bedType: 'electric', status: 'occupied', condition: 'good' },
+    { roomId: room202._id, bedCode: '202-A', bedType: 'electric', status: 'occupied', condition: 'good' },
+    { roomId: room203._id, bedCode: '203-A', bedType: 'electric', status: 'occupied', condition: 'good' },
+    { roomId: room204._id, bedCode: '204-A', bedType: 'electric', status: 'available', condition: 'good' },
+  ]);
 
   console.log('Creating residents...');
   const [res1, res2, res3, res4, res5, res6] = await Resident.insertMany([
     {
       residentCode: 'RES001',
-      fullName: 'Cụ Nguyễn Thị D',
+      fullName: 'Cu Nguyen Thi D',
       dateOfBirth: new Date('1940-03-15'),
       gender: 'female',
       bloodType: 'A+',
@@ -159,11 +301,13 @@ const seed = async () => {
       initialHealthCondition: 'Stable, requires daily medication monitoring',
       residencyStatus: 'admitted',
       admittedAt: new Date('2024-06-01'),
-      familyPortalAccountIds: [family._id],
+      roomId: room101._id,
+      bedId: bed101A._id,
+      familyPortalAccountIds: [family1._id],
     },
     {
       residentCode: 'RES002',
-      fullName: 'Ông Trần Văn E',
+      fullName: 'Ong Tran Van E',
       dateOfBirth: new Date('1938-07-22'),
       gender: 'male',
       bloodType: 'B+',
@@ -172,11 +316,13 @@ const seed = async () => {
       initialHealthCondition: 'Requires close cardiac monitoring',
       residencyStatus: 'admitted',
       admittedAt: new Date('2024-08-10'),
-      familyPortalAccountIds: [],
+      roomId: room102._id,
+      bedId: bed102A._id,
+      familyPortalAccountIds: [family2._id],
     },
     {
       residentCode: 'RES003',
-      fullName: 'Bà Lê Thị F',
+      fullName: 'Ba Le Thi F',
       dateOfBirth: new Date('1942-11-05'),
       gender: 'female',
       bloodType: 'O+',
@@ -185,55 +331,28 @@ const seed = async () => {
       initialHealthCondition: 'Good general condition, on cholesterol medication',
       residencyStatus: 'admitted',
       admittedAt: new Date('2024-09-15'),
-      familyPortalAccountIds: [],
+      roomId: room103._id,
+      bedId: bed103A._id,
+      familyPortalAccountIds: [family3._id],
     },
     {
       residentCode: 'RES004',
-      fullName: 'Cụ Phạm Văn G',
+      fullName: 'Cu Pham Van G',
       dateOfBirth: new Date('1935-04-18'),
       gender: 'male',
       bloodType: 'AB+',
       allergies: ['Codeine', 'Latex'],
-      chronicConditions: ['Parkinson\'s Disease', 'Dementia', 'Hypertension'],
+      chronicConditions: ['Parkinsons Disease', 'Dementia', 'Hypertension'],
       initialHealthCondition: 'Requires full-time nursing care',
       residencyStatus: 'admitted',
       admittedAt: new Date('2024-05-20'),
-      familyPortalAccountIds: [],
+      roomId: room201._id,
+      bedId: bed201A._id,
+      familyPortalAccountIds: [family4._id],
     },
-  ]);
-
-  const familyPortalIds = {
-    RES001: [family1._id, family1b._id],
-    RES002: [family2._id],
-    RES003: [family3._id],
-    RES004: [family4._id],
-    RES005: [family5._id],
-  };
-
-  console.log('Creating staff profiles...');
-  const [, , doctorProfile, nurseProfile] = await StaffProfile.insertMany([
-    { userId: admin._id, staffCode: 'ADM001', roleCategory: 'admin', specialty: 'Administration' },
-    { userId: manager._id, staffCode: 'MGR001', roleCategory: 'manager', specialty: 'Operations Management' },
-    { userId: doctor._id, staffCode: 'DOC001', roleCategory: 'doctor', specialty: 'General Medicine' },
-    { userId: nurse._id, staffCode: 'NUR001', roleCategory: 'nurse', specialty: 'Care Nursing' },
-    { userId: adminGmail._id, staffCode: 'ADM002', roleCategory: 'admin', specialty: 'Administration' },
-    { userId: managerGmail._id, staffCode: 'MGR002', roleCategory: 'manager', specialty: 'Operations Management' },
-    { userId: doctorGmail._id, staffCode: 'DOC002', roleCategory: 'doctor', specialty: 'General Medicine' },
-  ]);
-
-  console.log('Creating building, floors and rooms...');
-  const building = await Building.create({
-    code: SEED_BUILDING_CODE,
-    name: 'Tòa điều dưỡng chính',
-    address: '123 Đường Y Tế, Quận 1',
-    description: 'Tòa nhà mẫu dùng cho seed',
-    isActive: true,
-  });
-
-  const [floor1, floor2] = await Floor.insertMany([
     {
       residentCode: 'RES005',
-      fullName: 'Bà Hoàng Thị H',
+      fullName: 'Ba Hoang Thi H',
       dateOfBirth: new Date('1945-09-30'),
       gender: 'female',
       bloodType: 'A-',
@@ -242,11 +361,13 @@ const seed = async () => {
       initialHealthCondition: 'Mobile with assistance, on immunosuppressants',
       residencyStatus: 'admitted',
       admittedAt: new Date('2024-11-01'),
-      familyPortalAccountIds: [],
+      roomId: room202._id,
+      bedId: bed202A._id,
+      familyPortalAccountIds: [family5._id],
     },
     {
       residentCode: 'RES006',
-      fullName: 'Cụ Võ Văn K',
+      fullName: 'Cu Vo Van K',
       dateOfBirth: new Date('1932-12-10'),
       gender: 'male',
       bloodType: 'O-',
@@ -255,104 +376,121 @@ const seed = async () => {
       initialHealthCondition: 'Requires oxygen support and regular spirometry',
       residencyStatus: 'admitted',
       admittedAt: new Date('2025-01-15'),
+      roomId: room203._id,
+      bedId: bed203A._id,
       familyPortalAccountIds: [],
     },
   ]);
 
-  // ── Staff Profiles (with assignedResidentIds) ─────────────────────────────
+  await Bed.updateOne({ _id: bed101A._id }, { assignedResidentId: res1._id, assignedAt: new Date() });
+  await Bed.updateOne({ _id: bed102A._id }, { assignedResidentId: res2._id, assignedAt: new Date() });
+  await Bed.updateOne({ _id: bed103A._id }, { assignedResidentId: res3._id, assignedAt: new Date() });
+  await Bed.updateOne({ _id: bed201A._id }, { assignedResidentId: res4._id, assignedAt: new Date() });
+  await Bed.updateOne({ _id: bed202A._id }, { assignedResidentId: res5._id, assignedAt: new Date() });
+  await Bed.updateOne({ _id: bed203A._id }, { assignedResidentId: res6._id, assignedAt: new Date() });
 
   console.log('Creating staff profiles...');
-  // Doctor 1 manages res1, res2, res3 — Nurse 1 also covers these
-  // Doctor 2 manages res4, res5, res6 — Nurse 2 also covers these
-  const [, , doctorProfile1, doctorProfile2, nurseProfile1, nurseProfile2] = await StaffProfile.insertMany([
-    { userId: admin._id,   staffCode: 'ADM001', roleCategory: 'admin',   specialty: 'Administration',      assignedResidentIds: [] },
+  const [, , , , nurseProfile1, nurseProfile2] = await StaffProfile.insertMany([
+    { userId: admin._id, staffCode: 'ADM001', roleCategory: 'admin', specialty: 'Administration', assignedResidentIds: [] },
     { userId: manager._id, staffCode: 'MGR001', roleCategory: 'manager', specialty: 'Operations Management', assignedResidentIds: [] },
-    { userId: doctor1._id, staffCode: 'DOC001', roleCategory: 'doctor',  specialty: 'Internal Medicine',    certifications: ['BLS', 'ACLS'], assignedResidentIds: [res1._id, res2._id, res3._id] },
-    { userId: doctor2._id, staffCode: 'DOC002', roleCategory: 'doctor',  specialty: 'General Medicine',     certifications: ['BLS'], assignedResidentIds: [res4._id, res5._id, res6._id] },
-    { userId: nurse1._id,  staffCode: 'NUR001', roleCategory: 'nurse',   specialty: 'Care Nursing',         certifications: ['BLS', 'First Aid'], assignedResidentIds: [res1._id, res2._id, res3._id] },
-    { userId: nurse2._id,  staffCode: 'NUR002', roleCategory: 'nurse',   specialty: 'Care Nursing',         certifications: ['BLS'], assignedResidentIds: [res4._id, res5._id, res6._id] },
+    { userId: doctor1._id, staffCode: 'DOC001', roleCategory: 'doctor', specialty: 'Internal Medicine', certifications: ['BLS', 'ACLS'], assignedResidentIds: [res1._id, res2._id, res3._id] },
+    { userId: doctor2._id, staffCode: 'DOC002', roleCategory: 'doctor', specialty: 'General Medicine', certifications: ['BLS'], assignedResidentIds: [res4._id, res5._id, res6._id] },
+    { userId: nurse1._id, staffCode: 'NUR001', roleCategory: 'nurse', specialty: 'Care Nursing', certifications: ['BLS', 'First Aid'], assignedResidentIds: [res1._id, res2._id, res3._id] },
+    { userId: nurse2._id, staffCode: 'NUR002', roleCategory: 'nurse', specialty: 'Care Nursing', certifications: ['BLS'], assignedResidentIds: [res4._id, res5._id, res6._id] },
+    { userId: caregiver1._id, staffCode: 'CAR001', roleCategory: 'caregiver', specialty: 'Daily Living Assistance', certifications: ['BLS', 'Elderly Care'], assignedResidentIds: [res1._id, res2._id, res3._id] },
+    { userId: chef1._id, staffCode: 'CHE001', roleCategory: 'chef', specialty: 'Kitchen Management', certifications: ['Food Safety'], assignedResidentIds: [] },
+    { userId: adminGmail._id, staffCode: 'ADM002', roleCategory: 'admin', specialty: 'Administration', assignedResidentIds: [] },
+    { userId: doctorGmail._id, staffCode: 'DOC003', roleCategory: 'doctor', specialty: 'General Medicine', certifications: ['BLS'], assignedResidentIds: [] },
+    { userId: nurseGmail._id, staffCode: 'NUR003', roleCategory: 'nurse', specialty: 'Care Nursing', certifications: ['BLS'], assignedResidentIds: [] },
+    { userId: caregiverGmail._id, staffCode: 'CAR002', roleCategory: 'caregiver', specialty: 'Daily Living Assistance', certifications: ['BLS'], assignedResidentIds: [] },
   ]);
 
-  // ── Prescriptions ─────────────────────────────────────────────────────────
+  let allAdminDocs = [];
+  try {
+    console.log('Creating prescriptions...');
+    const prescriptionData = [
+      { residentId: res1._id, doctorId: doctor1._id, medicationName: 'Metformin', dosage: '500mg', route: 'oral', scheduleTimes: ['07:00', '19:00'], notes: 'Take after meals. Monitor blood glucose.' },
+      { residentId: res1._id, doctorId: doctor1._id, medicationName: 'Amlodipine', dosage: '5mg', route: 'oral', scheduleTimes: ['08:00'], notes: 'Monitor blood pressure weekly.' },
+      { residentId: res2._id, doctorId: doctor1._id, medicationName: 'Bisoprolol', dosage: '5mg', route: 'oral', scheduleTimes: ['08:00'], notes: 'Do not stop abruptly. Monitor HR.' },
+      { residentId: res2._id, doctorId: doctor1._id, medicationName: 'Warfarin', dosage: '2mg', route: 'oral', scheduleTimes: ['18:00'], notes: 'Check INR monthly. Risk of bleeding.' },
+      { residentId: res3._id, doctorId: doctor1._id, medicationName: 'Atorvastatin', dosage: '20mg', route: 'oral', scheduleTimes: ['20:00'], notes: 'Take in the evening.' },
+      { residentId: res4._id, doctorId: doctor2._id, medicationName: 'Levodopa Carbidopa', dosage: '100/25mg', route: 'oral', scheduleTimes: ['07:00', '13:00', '19:00'], notes: 'Do not take with high-protein meals.' },
+      { residentId: res5._id, doctorId: doctor2._id, medicationName: 'Methotrexate', dosage: '10mg', route: 'oral', scheduleTimes: ['09:00'], notes: 'Weekly dose. Monitor LFTs monthly.' },
+      { residentId: res6._id, doctorId: doctor2._id, medicationName: 'Tiotropium', dosage: '18mcg', route: 'inhaled', scheduleTimes: ['08:00'], notes: 'COPD maintenance.' },
+    ];
 
-  console.log('Creating prescriptions...');
+    const prescriptions = [];
+    for (const data of prescriptionData) {
+      const { medicationName, dosage, route, scheduleTimes, notes, ...rest } = data;
+      const prescriptionDate = daysAgo(5);
+      const validUntil = daysAgo(-20);
+      const p = await Prescription.create({
+        ...rest,
+        prescriptionDate,
+        validUntil,
+        status: 'ACTIVE',
+        items: [
+          {
+            medicationName,
+            dosage,
+            frequency: scheduleTimes.length,
+            times: scheduleTimes,
+            route,
+            startDate: prescriptionDate,
+            endDate: validUntil,
+            instructions: notes,
+            isActive: true,
+          },
+        ],
+      });
+      p._scheduleTimes = scheduleTimes;
+      prescriptions.push(p);
+    }
 
-  // Attach schedule times so buildAdmins can read them
-  const prescriptionData = [
-    // RES001 — Dr1
-    { residentId: res1._id, prescribedByStaffId: doctorProfile1._id, medicationName: 'Metformin', dosage: '500mg', route: 'Oral', frequency: 'Twice daily', startDate: daysAgo(60), endDate: null, scheduleTimes: ['07:00', '19:00'], status: 'active', notes: 'Take after meals. Monitor blood glucose.' },
-    { residentId: res1._id, prescribedByStaffId: doctorProfile1._id, medicationName: 'Amlodipine', dosage: '5mg', route: 'Oral', frequency: 'Once daily', startDate: daysAgo(45), endDate: null, scheduleTimes: ['08:00'], status: 'active', notes: 'Monitor blood pressure weekly.' },
-    // RES002 — Dr1
-    { residentId: res2._id, prescribedByStaffId: doctorProfile1._id, medicationName: 'Bisoprolol', dosage: '5mg', route: 'Oral', frequency: 'Once daily', startDate: daysAgo(30), endDate: null, scheduleTimes: ['08:00'], status: 'active', notes: 'Do not stop abruptly. Monitor HR.' },
-    { residentId: res2._id, prescribedByStaffId: doctorProfile1._id, medicationName: 'Furosemide', dosage: '40mg', route: 'Oral', frequency: 'Once daily (morning)', startDate: daysAgo(20), endDate: null, scheduleTimes: ['07:30'], status: 'active', notes: 'Monitor fluid balance and potassium.' },
-    { residentId: res2._id, prescribedByStaffId: doctorProfile1._id, medicationName: 'Warfarin', dosage: '2mg', route: 'Oral', frequency: 'Once daily', startDate: daysAgo(25), endDate: null, scheduleTimes: ['18:00'], status: 'active', notes: 'Check INR monthly. Risk of bleeding.' },
-    // RES003 — Dr1
-    { residentId: res3._id, prescribedByStaffId: doctorProfile1._id, medicationName: 'Atorvastatin', dosage: '20mg', route: 'Oral', frequency: 'Once daily (evening)', startDate: daysAgo(50), endDate: null, scheduleTimes: ['20:00'], status: 'active', notes: 'Take in the evening.' },
-    { residentId: res3._id, prescribedByStaffId: doctorProfile1._id, medicationName: 'Calcium + Vit D3', dosage: '600mg/400IU', route: 'Oral', frequency: 'Twice daily', startDate: daysAgo(30), endDate: null, scheduleTimes: ['09:00', '21:00'], status: 'active', notes: 'Take with food.' },
-    // RES004 — Dr2
-    { residentId: res4._id, prescribedByStaffId: doctorProfile2._id, medicationName: 'Levodopa/Carbidopa', dosage: '100/25mg', route: 'Oral', frequency: 'Three times daily', startDate: daysAgo(90), endDate: null, scheduleTimes: ['07:00', '13:00', '19:00'], status: 'active', notes: 'Parkinson\'s. Do NOT take with high-protein meals.' },
-    { residentId: res4._id, prescribedByStaffId: doctorProfile2._id, medicationName: 'Rivastigmine', dosage: '3mg', route: 'Oral', frequency: 'Twice daily', startDate: daysAgo(60), endDate: null, scheduleTimes: ['08:00', '20:00'], status: 'active', notes: 'Take with meals. Watch for nausea.' },
-    { residentId: res4._id, prescribedByStaffId: doctorProfile2._id, medicationName: 'Lisinopril', dosage: '5mg', route: 'Oral', frequency: 'Once daily', startDate: daysAgo(45), endDate: null, scheduleTimes: ['09:00'], status: 'paused', notes: 'Paused: BP too low this week.' },
-    // RES005 — Dr2
-    { residentId: res5._id, prescribedByStaffId: doctorProfile2._id, medicationName: 'Methotrexate', dosage: '10mg', route: 'Oral', frequency: 'Once weekly (Monday)', startDate: daysAgo(30), endDate: null, scheduleTimes: ['09:00'], status: 'active', notes: 'Weekly dose. Monitor LFTs monthly. Folic acid must be co-prescribed.' },
-    { residentId: res5._id, prescribedByStaffId: doctorProfile2._id, medicationName: 'Folic Acid', dosage: '5mg', route: 'Oral', frequency: 'Once daily (not on Methotrexate day)', startDate: daysAgo(30), endDate: null, scheduleTimes: ['08:00'], status: 'active', notes: 'Co-prescribed with Methotrexate.' },
-    { residentId: res5._id, prescribedByStaffId: doctorProfile2._id, medicationName: 'Glipizide', dosage: '5mg', route: 'Oral', frequency: 'Twice daily', startDate: daysAgo(40), endDate: null, scheduleTimes: ['07:00', '18:00'], status: 'active', notes: 'Take 30 min before meals. Watch for hypoglycemia.' },
-    // RES006 — Dr2
-    { residentId: res6._id, prescribedByStaffId: doctorProfile2._id, medicationName: 'Tiotropium', dosage: '18mcg', route: 'Inhalation', frequency: 'Once daily', startDate: daysAgo(20), endDate: null, scheduleTimes: ['08:00'], status: 'active', notes: 'COPD maintenance. Teach proper inhaler technique.' },
-    { residentId: res6._id, prescribedByStaffId: doctorProfile2._id, medicationName: 'Salbutamol', dosage: '100mcg/puff', route: 'Inhalation', frequency: 'PRN (as needed)', startDate: daysAgo(20), endDate: null, scheduleTimes: ['08:00', '20:00'], status: 'active', notes: 'Rescue inhaler. Max 4 puffs/4h.' },
-  ];
+    console.log('Creating medication administration records...');
+    const nurseForResident = (resId) => {
+      const key = String(resId);
+      if ([res1, res2, res3].map((r) => String(r._id)).includes(key)) return nurseProfile1._id;
+      return nurseProfile2._id;
+    };
 
-  // Save _scheduleTimes on each for buildAdmins, then strip before save
-  const prescriptions = [];
-  for (const data of prescriptionData) {
-    const { scheduleTimes, ...rest } = data;
-    const p = await Prescription.create({ ...rest, scheduleTimes });
-    p._scheduleTimes = scheduleTimes; // temp property for seed helper
-    prescriptions.push(p);
+    for (const p of prescriptions) {
+      const records = buildAdmins(p, p.residentId, nurseForResident(p.residentId), 14, 3);
+      allAdminDocs.push(...records);
+    }
+
+    await MedicationAdministration.insertMany(allAdminDocs);
+  } catch (err) {
+    console.warn('Skipping prescription/admin seed due to model-level error:', err.message);
+    allAdminDocs = [];
   }
-
-  // ── Medication Administrations (14 days back + 3 days forward) ────────────
-
-  console.log('Creating medication administration records...');
-  const allAdminDocs = [];
-
-  const nurseForResident = (resId) => {
-    const s = String(resId);
-    if ([res1, res2, res3].map((r) => String(r._id)).includes(s)) return nurseProfile1._id;
-    return nurseProfile2._id;
-  };
-
-  for (const p of prescriptions) {
-    const records = buildAdmins(p, p.residentId, nurseForResident(p.residentId), 14, 3);
-    allAdminDocs.push(...records);
-  }
-
-  await MedicationAdministration.insertMany(allAdminDocs);
 
   const { ensureDefaultShiftTemplates } = require('../services/defaultShiftBootstrap');
   await ensureDefaultShiftTemplates();
 
-  // ── Summary ───────────────────────────────────────────────────────────────
+  console.log('Creating published rehabilitation schedules...');
+  await seedRehabilitationSchedules(nurse1, [res1, res2, res3]);
 
   console.log('\n========================================');
   console.log('SEED DATA CREATED SUCCESSFULLY');
   console.log('========================================');
   console.log('\n--- Test accounts (password: password123) ---');
-  console.log('Admin   : admin@test.com');
-  console.log('Manager : manager@test.com');
-  console.log('Doctor1 : doctor@test.com   (manages RES001, RES002, RES003)');
-  console.log('Doctor2 : doctor2@test.com  (manages RES004, RES005, RES006)');
-  console.log('Nurse1  : nurse@test.com    (manages RES001, RES002, RES003)');
-  console.log('Nurse2  : nurse2@test.com   (manages RES004, RES005, RES006)');
-  console.log('Family  : family@test.com');
-  console.log('\n--- Residents ---');
-  console.log(`RES001 Cụ Nguyễn Thị D  → ${res1._id}  [Allergy: Penicillin, Sulfonamides]`);
-  console.log(`RES002 Ông Trần Văn E   → ${res2._id}  [Allergy: Aspirin, NSAIDs]`);
-  console.log(`RES003 Bà Lê Thị F      → ${res3._id}`);
-  console.log(`RES004 Cụ Phạm Văn G    → ${res4._id}  [Allergy: Codeine, Latex]`);
-  console.log(`RES005 Bà Hoàng Thị H   → ${res5._id}  [Allergy: Ibuprofen]`);
-  console.log(`RES006 Cụ Võ Văn K      → ${res6._id}  [Allergy: Morphine]`);
-  console.log(`\nTotal administration records: ${allAdminDocs.length}`);
+  console.log('Admin     : admin@test.com');
+  console.log('Manager   : manager@test.com');
+  console.log('Doctor1   : doctor@test.com');
+  console.log('Doctor2   : doctor2@test.com');
+  console.log('Nurse1    : nurse@test.com');
+  console.log('Nurse2    : nurse2@test.com');
+  console.log('Caregiver : caregiver@test.com');
+  console.log('Chef      : chef@test.com');
+  console.log('Family    : family@test.com');
+  console.log('\n--- Additional login accounts (password: 12345678) ---');
+  console.log('Admin Gmail    : admin@gmail.com');
+  console.log('Doctor Gmail   : doctor@gmail.com');
+  console.log('Nurse Gmail    : nurse@gmail.com');
+  console.log('Caregiver Gmail: caregiver@gmail.com');
+  console.log(`\nTotal residents: 6`);
+  console.log(`Total administration records: ${allAdminDocs.length}`);
   console.log('========================================\n');
 
   await mongoose.disconnect();

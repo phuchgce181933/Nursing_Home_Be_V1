@@ -2,9 +2,9 @@ const NIGHT_START_MINUTES = 18 * 60; // 18:00 — typical night-shift start
 
 /** Roles allowed per shift template type (roleCategory or User.role). */
 const ALLOWED_ROLES_BY_SHIFT_TYPE = {
-  morning: ['doctor', 'nurse', 'staff'],
-  afternoon: ['doctor', 'nurse', 'staff'],
-  night: ['doctor', 'nurse', 'staff'],
+  morning: ['doctor', 'nurse', 'caregiver', 'staff'],
+  afternoon: ['doctor', 'nurse', 'caregiver', 'staff'],
+  night: ['doctor', 'nurse', 'caregiver', 'staff'],
   on_call: ['doctor', 'nurse'],
 };
 

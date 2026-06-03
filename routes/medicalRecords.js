@@ -4,6 +4,7 @@ const { recordVitals, getHistory } = require('../controllers/medicalRecordContro
 const { protect, authorize } = require('../middleware/auth');
 
 const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
+const VIEW_ROLES = ['admin', 'manager', 'doctor', 'nurse', 'family'];
 
 /**
  * @swagger
@@ -85,6 +86,6 @@ router.post('/', protect, authorize('doctor', 'nurse'), recordVitals);
  *       404:
  *         description: Resident not found
  */
-router.get('/', protect, authorize(...STAFF_ROLES), getHistory);
+router.get('/', protect, authorize(...VIEW_ROLES), getHistory);
 
 module.exports = router;

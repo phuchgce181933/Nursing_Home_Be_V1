@@ -211,7 +211,7 @@ const getSummaryReport = async (query) => {
 
 const getHealthStatusReport = async (query) => {
   const filter = {};
-  if (query.residentId) filter.residentId = mongoose.Types.ObjectId(query.residentId);
+  if (query.residentId) filter.residentId = new mongoose.Types.ObjectId(query.residentId);
   const range = buildDateRangeFilter(query, 'measuredAt');
   if (range) filter.measuredAt = range;
 

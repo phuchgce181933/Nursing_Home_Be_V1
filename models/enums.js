@@ -1,6 +1,6 @@
-const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'pharmacist', 'family', 'staff'];
+const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'caregiver', 'chef', 'pharmacist', 'family', 'staff'];
 const NON_ASSIGNABLE_ROLES = ['admin', 'manager'];
-const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'staff'];
+const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
 const GENDERS = ['male', 'female', 'other', 'unknown'];
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'unknown'];
 

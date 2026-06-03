@@ -44,7 +44,7 @@ const resolveStaffProfileId = async (staffProfileId, userId) => {
     const byUser = await staffProfileRepo.findByUserId(userId);
     if (byUser) return byUser;
   }
-  throw new ServiceError('Staff profile not found', 404);
+  throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
 };
 
 const buildShiftTimeLabel = (shifts) =>
@@ -64,13 +64,13 @@ const isScheduledTimeWithinShift = (scheduledTime, shift) => {
 };
 
 const parseWorkDateStr = (workDateInput) => {
-  if (!workDateInput) throw new ServiceError('workDate is required (YYYY-MM-DD)', 400);
+  if (!workDateInput) throw new ServiceError('workDate là bắt buộc (YYYY-MM-DD)', 400);
   try {
     const workDateStr = String(workDateInput).trim();
     parseWorkDate(workDateStr);
     return workDateStr;
   } catch {
-    throw new ServiceError('workDate must be YYYY-MM-DD', 400);
+    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
   }
 };
 
@@ -238,14 +238,14 @@ const assignCareTask = async (body, actorUserId) => {
     !scheduledTime
   ) {
     throw new ServiceError(
-      'staffProfileId (or userId), residentId, shiftId, taskType, careLevel, workDate, and scheduledTime are required',
+      'staffProfileId (hoặc userId), residentId, shiftId, taskType, careLevel, workDate và scheduledTime là bắt buộc',
       400
     );
   }
   if (!CARE_TASK_TYPES.includes(taskType))
-    throw new ServiceError(`taskType must be one of: ${CARE_TASK_TYPES.join(', ')}`, 400);
+    throw new ServiceError(`taskType phải thuộc một trong: ${CARE_TASK_TYPES.join(', ')}`, 400);
   if (!CARE_LEVELS.includes(careLevel))
-    throw new ServiceError(`careLevel must be one of: ${CARE_LEVELS.join(', ')}`, 400);
+    throw new ServiceError(`careLevel phải thuộc một trong: ${CARE_LEVELS.join(', ')}`, 400);
 
   const profile = await resolveStaffProfileId(staffProfileIdInput, userId);
   const staffProfileId = profile._id;
@@ -256,7 +256,7 @@ const assignCareTask = async (body, actorUserId) => {
   try {
     parseWorkDate(workDateStr);
   } catch {
-    throw new ServiceError('workDate must be YYYY-MM-DD', 400);
+    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
   }
   assertWorkDateNotPast(workDateStr);
 
@@ -264,38 +264,38 @@ const assignCareTask = async (body, actorUserId) => {
   const staffUserId = profile.userId?._id || profile.userId;
   const onLeave = await leaveRequestRepo.findApprovedOverlapping(staffUserId, workDateObj, workDateObj);
   if (onLeave.length) {
-    throw new ServiceError('Staff is on approved leave on this date and cannot be assigned tasks', 400);
+    throw new ServiceError('Nhân viên đang có đơn nghỉ đã duyệt trong ngày này nên không thể được giao nhiệm vụ', 400);
   }
 
   const shiftsOnDate = await shiftRepo.findActiveShiftsForStaffOnDate(staffProfileId, workDateObj);
   if (!shiftsOnDate.length) {
     throw new ServiceError(
-      'Staff has no published or confirmed shift on this date. Assign a shift first before creating care tasks.',
+      'Nhân viên không có ca đã đăng hoặc đã xác nhận trong ngày này. Hãy phân ca trước khi tạo nhiệm vụ chăm sóc.',
       400
     );
   }
 
   const scheduledTimeTrimmed = scheduledTime?.trim();
   if (!scheduledTimeTrimmed || toMinutes(scheduledTimeTrimmed) === null) {
-    throw new ServiceError('scheduledTime must be in HH:mm format', 400);
+    throw new ServiceError('scheduledTime phải đúng định dạng HH:mm', 400);
   }
 
   const assertShiftEligibleForCareTask = (shift) => {
     if (!['published', 'confirmed'].includes(shift.status)) {
-      throw new ServiceError('Shift must be published or confirmed to assign care tasks', 400);
+      throw new ServiceError('Ca phải ở trạng thái đã đăng hoặc đã xác nhận để giao nhiệm vụ chăm sóc', 400);
     }
     const shiftDateStr = workDateToVNString(shift.workDate);
     if (shiftDateStr !== workDateStr) {
-      throw new ServiceError('shift workDate must match care task workDate', 400);
+      throw new ServiceError('workDate của ca phải trùng với workDate của nhiệm vụ chăm sóc', 400);
     }
   };
 
   const shiftMatch = shiftsOnDate.find((s) => s._id.toString() === String(shiftId));
   if (!shiftMatch) {
-    throw new ServiceError('shiftId does not belong to this staff member on the given workDate', 400);
+    throw new ServiceError('shiftId không thuộc nhân viên này trong workDate đã chọn', 400);
   }
   if (!isScheduledTimeWithinShift(scheduledTimeTrimmed, shiftMatch)) {
-    throw new ServiceError('scheduledTime must be within the selected shift time range', 400);
+    throw new ServiceError('scheduledTime phải nằm trong khung thời gian của ca đã chọn', 400);
   }
 
   assertShiftEligibleForCareTask(shiftMatch);
@@ -308,7 +308,7 @@ const assignCareTask = async (body, actorUserId) => {
   try {
     effectiveAt = buildTaskDateTime(workDateStr, scheduledTimeTrimmed);
   } catch {
-    throw new ServiceError('scheduledTime must be in HH:mm format', 400);
+    throw new ServiceError('scheduledTime phải đúng định dạng HH:mm', 400);
   }
   if (effectiveAt < nowVN()) {
     throw new ServiceError('Thời gian nhiệm vụ phải từ thời điểm hiện tại trở đi', 400);
@@ -320,7 +320,7 @@ const assignCareTask = async (body, actorUserId) => {
     path: 'roomId',
     select: 'roomNumber floorId',
   });
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const profileWithAreas = await StaffProfile.findById(staffProfileId)
     .populate('responsibleAreaIds')
@@ -329,14 +329,14 @@ const assignCareTask = async (body, actorUserId) => {
   const assignedIds = (profileWithAreas?.assignedResidentIds || []).map((r) => String(r._id || r));
   if (!assignedIds.includes(String(residentId))) {
     throw new ServiceError(
-      'Resident must be assigned to this staff in the Residents tab before creating care tasks',
+      'Cư dân phải được gán cho nhân viên này ở tab Cư dân trước khi tạo nhiệm vụ chăm sóc',
       400
     );
   }
 
   if (!residentCoversStaffArea(resident, profileWithAreas)) {
     throw new ServiceError(
-      'Resident is not within staff responsible floors/rooms. Update area or resident assignment first.',
+      'Cư dân không thuộc tầng/phòng phụ trách của nhân viên. Hãy cập nhật khu vực hoặc phân công cư dân trước.',
       400
     );
   }
@@ -357,19 +357,19 @@ const assignCareTask = async (body, actorUserId) => {
   triggerReadinessSyncForWorkDate(workDateStr);
 
   const task = await careTaskRepo.findById(created._id);
-  return { message: 'Care task assigned', task };
+  return { message: 'Giao nhiệm vụ chăm sóc thành công', task };
 };
 
 const assertValidObjectId = (value, label) => {
   const mongoose = require('mongoose');
   if (!mongoose.Types.ObjectId.isValid(String(value))) {
-    throw new ServiceError(`Invalid ${label}`, 400);
+    throw new ServiceError(`${label} không hợp lệ`, 400);
   }
 };
 
 const listCareTasks = async (filter = {}, options = {}) => {
   if (!filter.workDate || String(filter.workDate).trim() === '') {
-    throw new ServiceError('workDate is required (YYYY-MM-DD)', 400);
+    throw new ServiceError('workDate là bắt buộc (YYYY-MM-DD)', 400);
   }
 
   await autoSkipTasksPastShiftEnd();
@@ -389,12 +389,12 @@ const listCareTasks = async (filter = {}, options = {}) => {
   }
   if (filter.status) {
     if (!CARE_TASK_STATUSES.includes(filter.status))
-      throw new ServiceError(`status must be one of: ${CARE_TASK_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${CARE_TASK_STATUSES.join(', ')}`, 400);
     query.status = filter.status;
   }
   if (filter.taskType) {
     if (!CARE_TASK_TYPES.includes(filter.taskType))
-      throw new ServiceError(`taskType must be one of: ${CARE_TASK_TYPES.join(', ')}`, 400);
+      throw new ServiceError(`taskType phải thuộc một trong: ${CARE_TASK_TYPES.join(', ')}`, 400);
     query.taskType = filter.taskType;
   }
 
@@ -402,7 +402,7 @@ const listCareTasks = async (filter = {}, options = {}) => {
   try {
     checkDate = parseWorkDate(String(filter.workDate).trim());
   } catch {
-    throw new ServiceError('workDate must be YYYY-MM-DD', 400);
+    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
   }
   const start = new Date(checkDate);
   const end = new Date(checkDate.getTime() + 24 * 60 * 60 * 1000 - 1);
@@ -423,24 +423,24 @@ const listCareTasks = async (filter = {}, options = {}) => {
 const getCareTask = async (id) => {
   await autoSkipTasksPastShiftEnd();
   const task = await careTaskRepo.findById(id);
-  if (!task) throw new ServiceError('Care task not found', 404);
+  if (!task) throw new ServiceError('Không tìm thấy nhiệm vụ chăm sóc', 404);
   return task;
 };
 
 const updateCareTaskStatus = async (id, status, notes) => {
   const task = await careTaskRepo.findById(id);
-  if (!task) throw new ServiceError('Care task not found', 404);
+  if (!task) throw new ServiceError('Không tìm thấy nhiệm vụ chăm sóc', 404);
 
   if (!MANUAL_STATUS_UPDATES.includes(status)) {
     throw new ServiceError(
-      'Chỉ có thể cập nhật thủ công sang in_progress, completed hoặc skipped (bỏ qua). Trạng thái bỏ lỡ do hệ thống gán khi hết ca.',
+      'Chỉ có thể cập nhật thủ công sang in_progress, completed hoặc skipped (bỏ qua). Trạng thái missed (bỏ lỡ) do hệ thống tự gán khi hết ca.',
       400
     );
   }
 
   const allowed = VALID_TRANSITIONS[task.status];
   if (!allowed.includes(status))
-    throw new ServiceError(`Cannot transition from '${task.status}' to '${status}'`, 400);
+    throw new ServiceError(`Không thể chuyển trạng thái từ '${task.status}' sang '${status}'`, 400);
 
   const update = { status };
   if (notes) update.notes = notes.trim();
@@ -458,9 +458,9 @@ const getCareTasksByShift = async (shiftId) => {
 
 const deleteCareTask = async (id) => {
   const task = await careTaskRepo.findById(id);
-  if (!task) throw new ServiceError('Care task not found', 404);
+  if (!task) throw new ServiceError('Không tìm thấy nhiệm vụ chăm sóc', 404);
   if (task.status !== 'pending')
-    throw new ServiceError('Only pending tasks can be deleted', 400);
+    throw new ServiceError('Chỉ có thể xóa nhiệm vụ ở trạng thái chờ', 400);
   await careTaskRepo.deleteById(id);
   return { deleted: true };
 };

@@ -15,6 +15,13 @@ const {
   isPastWorkDate,
   toMinutes,
 } = require('../utils/shiftValidation');
+const {
+  todayVN,
+  nowVN,
+  workDateToVNString,
+  getShiftStartDateTime,
+  getShiftEndDateTime,
+} = require('../utils/shiftTime');
 const { isAssignableRole } = require('../utils/staffAssignment');
 const { assertNoActiveCareTasksForShift } = require('../utils/careTaskGuards');
 
@@ -56,7 +63,7 @@ const resolveStaffProfileId = async (id) => {
   // Fall back to lookup by userId (frontend passes User._id)
   const byUserId = await staffProfileRepo.findByUserId(id);
   if (byUserId) return byUserId._id;
-  throw Object.assign(new Error('Staff profile not found for the provided assignedStaffId'), { status: 404 });
+  throw Object.assign(new Error('Không tìm thấy hồ sơ nhân viên cho assignedStaffId đã cung cấp'), { status: 404 });
 };
 
 const assertNoApprovedLeaveOnDate = async (staffProfileId, workDate) => {
@@ -69,7 +76,7 @@ const assertNoApprovedLeaveOnDate = async (staffProfileId, workDate) => {
 
   const overlapping = await leaveRequestRepo.findApprovedOverlapping(profile.userId, dayStart, dayEnd);
   if (overlapping.length) {
-    throw Object.assign(new Error('Staff has an approved leave request on this date and cannot be assigned a shift.'), {
+    throw Object.assign(new Error('Nhân viên có đơn nghỉ đã duyệt trong ngày này và không thể được phân ca.'), {
       status: 400,
     });
   }
@@ -85,13 +92,17 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
   const conflicts = [];
   const template = shiftTemplateId ? await shiftTemplateRepo.findById(shiftTemplateId) : null;
   const crossesMidnight = template?.crossesMidnight ?? false;
+  const workDateStr =
+    typeof workDate === 'string' && workDate.length >= 10
+      ? workDate.slice(0, 10)
+      : workDateToVNString(workDate);
 
   // 8. PAST_DATE (ERROR)
   if (isPastWorkDate(workDate)) {
     conflicts.push({
       type: 'PAST_DATE',
       severity: 'ERROR',
-      message: 'Cannot create or assign a shift on a past date.',
+      message: 'Không thể tạo hoặc phân công ca cho ngày trong quá khứ.',
       details: { workDate },
     });
   }
@@ -101,8 +112,34 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     conflicts.push({
       type: 'INVALID_TIME',
       severity: 'ERROR',
-      message: 'Invalid shift time: end time must be after start time (unless this is an overnight shift).',
+      message: 'Thời gian ca không hợp lệ: giờ kết thúc phải sau giờ bắt đầu (trừ ca qua đêm).',
       details: { startTime, endTime },
+    });
+    return conflicts;
+  }
+
+  // 9. CURRENT_OR_FUTURE_TIME (ERROR) — for today's date, shift start must be now/future.
+  try {
+    const now = nowVN();
+    const startAt = getShiftStartDateTime(workDateStr, startTime);
+    const endAt = getShiftEndDateTime(workDateStr, startTime, endTime);
+    if (workDateStr === todayVN() && startAt < now) {
+      const isEnded = endAt <= now;
+      conflicts.push({
+        type: 'PAST_DATE',
+        severity: 'ERROR',
+        message: isEnded
+          ? 'Không thể phân công ca đã kết thúc so với thời điểm hiện tại.'
+          : 'Không thể phân công ca đã bắt đầu trong quá khứ. Vui lòng chọn ca có giờ bắt đầu từ hiện tại trở đi.',
+        details: { workDate: workDateStr, startTime, endTime },
+      });
+    }
+  } catch {
+    conflicts.push({
+      type: 'INVALID_TIME',
+      severity: 'ERROR',
+      message: 'Không thể xác định mốc thời gian ca. Vui lòng kiểm tra lại workDate/startTime/endTime.',
+      details: { workDate: workDateStr, startTime, endTime },
     });
     return conflicts;
   }
@@ -112,7 +149,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     conflicts.push({
       type: 'ROLE_MISMATCH',
       severity: 'ERROR',
-      message: 'Staff profile not found.',
+      message: 'Không tìm thấy hồ sơ nhân viên.',
       details: { assignedStaffId },
     });
     return conflicts;
@@ -123,7 +160,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     conflicts.push({
       type: 'STAFF_NOT_ASSIGNABLE',
       severity: 'ERROR',
-      message: 'Cannot assign shifts to admin or manager accounts.',
+      message: 'Không thể phân ca cho tài khoản admin hoặc manager.',
       details: { staffRole },
     });
     return conflicts;
@@ -153,7 +190,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     conflicts.push({
       type: 'LEAVE_CONFLICT',
       severity: 'ERROR',
-      message: 'Staff has an approved leave request on this date and cannot be assigned a shift.',
+      message: 'Nhân viên có đơn nghỉ đã duyệt trong ngày này và không thể được phân ca.',
       details: { leaveId: leave._id, type: leave.type, from: leave.startDate, to: leave.endDate },
     });
   }
@@ -161,10 +198,12 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
   // 4. ROLE_MISMATCH (ERROR) — role must match shift template type
   const shiftType = template?.shiftType;
   if (shiftType && !isRoleAllowedForShiftType(staffRole, shiftType)) {
+    const shiftTypeVi = { morning: 'sáng', afternoon: 'chiều', night: 'đêm', on_call: 'trực' }[shiftType] || shiftType;
+    const roleVi = { doctor: 'bác sĩ', nurse: 'điều dưỡng', caregiver: 'chăm sóc viên', staff: 'nhân viên', chef: 'đầu bếp' }[staffRole] || staffRole;
     conflicts.push({
       type: 'ROLE_MISMATCH',
       severity: 'ERROR',
-      message: `Role '${staffRole}' is not allowed for a '${shiftType}' shift.`,
+      message: `Vai trò ${roleVi} không được phân ca loại ${shiftTypeVi}.`,
       details: { staffRole, shiftType, allowedRoles: ALLOWED_ROLES_BY_SHIFT_TYPE[shiftType] },
     });
   }
@@ -219,7 +258,7 @@ const hasErrors = (conflicts) => conflicts.some((c) => c.severity === 'ERROR');
 
 const assertNoBlockingConflicts = (conflicts) => {
   if (!hasErrors(conflicts)) return;
-  throw Object.assign(new Error('Shift validation failed. Resolve ERROR-level conflicts first.'), {
+  throw Object.assign(new Error('Kiểm tra xung đột ca thất bại. Vui lòng xử lý các lỗi mức ERROR trước.'), {
     status: 400,
     conflicts,
   });
@@ -240,17 +279,17 @@ const assertNoDirectTimeFields = (body) => {
 
 const resolveSystemShiftTemplate = async (shiftTemplateId) => {
   if (!shiftTemplateId) {
-    throw Object.assign(new Error('shiftTemplateId is required'), { status: 400 });
+    throw Object.assign(new Error('shiftTemplateId là bắt buộc'), { status: 400 });
   }
 
   const template = await shiftTemplateRepo.findById(shiftTemplateId);
   if (!template || !template.isSystem) {
-    throw Object.assign(new Error('Invalid shift template. Must be one of the 3 default system shifts.'), {
+    throw Object.assign(new Error('Mẫu ca không hợp lệ. Phải là 1 trong 3 ca mặc định của hệ thống.'), {
       status: 400,
     });
   }
   if (template.status !== 'active') {
-    throw Object.assign(new Error('Shift template is not active'), { status: 400 });
+    throw Object.assign(new Error('Mẫu ca chưa ở trạng thái hoạt động'), { status: 400 });
   }
 
   const totalHours =
@@ -274,7 +313,7 @@ const createShift = async (body, actorUserId) => {
   assertNoDirectTimeFields(body);
 
   if (!workDate || !assignedStaffId || !shiftTemplateId) {
-    throw Object.assign(new Error('shiftTemplateId, workDate, and assignedStaffId are required'), { status: 400 });
+    throw Object.assign(new Error('shiftTemplateId, workDate và assignedStaffId là bắt buộc'), { status: 400 });
   }
 
   const { name, startTime, endTime, totalHours, shiftTemplateId: resolvedTemplateId } =
@@ -324,9 +363,9 @@ const createShift = async (body, actorUserId) => {
 
 const publishShift = async (id, actorUserId) => {
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Shift not found'), { status: 404 });
+  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
   if (shift.status !== 'draft')
-    throw Object.assign(new Error(`Only draft shifts can be published (current status: ${shift.status})`), { status: 400 });
+    throw Object.assign(new Error(`Chỉ có thể publish ca ở trạng thái nháp (trạng thái hiện tại: ${shift.status})`), { status: 400 });
 
   const conflicts = await checkConflicts({
     assignedStaffId: shift.assignedStaffId._id || shift.assignedStaffId,
@@ -338,7 +377,7 @@ const publishShift = async (id, actorUserId) => {
   });
 
   if (hasErrors(conflicts))
-    throw Object.assign(new Error('Cannot publish: there are blocking conflicts. Resolve ERROR-level conflicts first.'), {
+    throw Object.assign(new Error('Không thể publish: còn xung đột chặn. Vui lòng xử lý các lỗi mức ERROR trước.'), {
       status: 409,
       conflicts,
     });
@@ -355,9 +394,9 @@ const publishShift = async (id, actorUserId) => {
 
 const confirmShift = async (id, actorUserId) => {
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Shift not found'), { status: 404 });
+  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
   if (shift.status !== 'published')
-    throw Object.assign(new Error(`Only published shifts can be confirmed (current status: ${shift.status})`), { status: 400 });
+    throw Object.assign(new Error(`Chỉ có thể xác nhận ca ở trạng thái đã đăng (trạng thái hiện tại: ${shift.status})`), { status: 400 });
 
   const logEntry = { changedBy: actorUserId, fieldsChanged: ['status'], oldValues: { status: 'published' }, newValues: { status: 'confirmed' }, reason: 'Confirmed' };
   const updated = await shiftRepo.updateById(id, {
@@ -370,10 +409,10 @@ const confirmShift = async (id, actorUserId) => {
 
 const updateShift = async (id, body, actorUserId, isAdmin = false) => {
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Shift not found'), { status: 404 });
+  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
 
   if (['completed', 'confirmed'].includes(shift.status))
-    throw Object.assign(new Error(`Cannot edit a shift with status '${shift.status}'`), { status: 400 });
+    throw Object.assign(new Error(`Không thể chỉnh sửa ca ở trạng thái '${shift.status}'`), { status: 400 });
 
   if (!isAdmin) {
     const now = new Date();
@@ -382,11 +421,11 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
     shiftStart.setHours(h, m, 0, 0);
     const diffMs = shiftStart - now;
     if (diffMs < 2 * 60 * 60 * 1000)
-      throw Object.assign(new Error('Cannot edit a shift less than 2 hours before it starts'), { status: 400 });
+      throw Object.assign(new Error('Không thể chỉnh sửa ca khi còn dưới 2 giờ trước khi bắt đầu'), { status: 400 });
   }
 
   if (!body.changeReason || !body.changeReason.trim())
-    throw Object.assign(new Error('changeReason is required when updating a shift'), { status: 400 });
+    throw Object.assign(new Error('changeReason là bắt buộc khi cập nhật ca'), { status: 400 });
 
   assertNoDirectTimeFields(body);
 
@@ -403,7 +442,7 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
     }
   }
 
-  if (!fieldsChanged.length) throw Object.assign(new Error('No changes detected'), { status: 400 });
+  if (!fieldsChanged.length) throw Object.assign(new Error('Không phát hiện thay đổi nào'), { status: 400 });
 
   const updatedDate = body.workDate ? parseWorkDateUtc(body.workDate) : shift.workDate;
 
@@ -487,7 +526,7 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
 
 const cancelShift = async (id, actorUserId, reason = 'Cancelled') => {
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Shift not found'), { status: 404 });
+  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
   if (!['published', 'confirmed'].includes(shift.status)) {
     throw Object.assign(
       new Error('Chỉ được hủy ca ở trạng thái Đã đăng hoặc Đã xác nhận. Ca nháp hãy dùng Xóa.'),
@@ -505,9 +544,9 @@ const cancelShift = async (id, actorUserId, reason = 'Cancelled') => {
 
 const deleteShift = async (id) => {
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Shift not found'), { status: 404 });
+  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
   if (shift.status !== 'draft')
-    throw Object.assign(new Error('Only draft shifts can be deleted. Use cancel for other statuses.'), { status: 400 });
+    throw Object.assign(new Error('Chỉ có thể xóa ca ở trạng thái nháp. Hãy dùng hủy cho các trạng thái khác.'), { status: 400 });
 
   await assertNoActiveCareTasksForShift(id);
 
@@ -517,7 +556,7 @@ const deleteShift = async (id) => {
 
 const getShift = async (id) => {
   const s = await shiftRepo.findById(id);
-  if (!s) throw Object.assign(new Error('Shift not found'), { status: 404 });
+  if (!s) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
   return enrichShift(s);
 };
 
@@ -556,7 +595,7 @@ const previewConflicts = async (query) => {
   const { assignedStaffId, workDate, excludeId, shiftTemplateId } = query;
 
   if (!assignedStaffId || !workDate || !shiftTemplateId) {
-    throw Object.assign(new Error('assignedStaffId, workDate, and shiftTemplateId are required'), { status: 400 });
+    throw Object.assign(new Error('assignedStaffId, workDate và shiftTemplateId là bắt buộc'), { status: 400 });
   }
 
   const { startTime, endTime, shiftTemplateId: resolvedTemplateId } =

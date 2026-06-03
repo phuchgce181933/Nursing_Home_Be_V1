@@ -34,10 +34,10 @@ const calcDays = (start, end) => {
 
 const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reason }) => {
   if (!type || !startDate || !endDate || !reason) {
-    throw new ServiceError('type, startDate, endDate and reason are required', 400);
+    throw new ServiceError('type, startDate, endDate và reason là bắt buộc', 400);
   }
   if (!LEAVE_REQUEST_TYPES.includes(type)) {
-    throw new ServiceError(`type must be one of: ${LEAVE_REQUEST_TYPES.join(', ')}`, 400);
+    throw new ServiceError(`type phải thuộc một trong: ${LEAVE_REQUEST_TYPES.join(', ')}`, 400);
   }
 
   const toUTCDate = (d, end = false) => {
@@ -47,21 +47,21 @@ const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reaso
   const start = toUTCDate(startDate);
   const end = toUTCDate(endDate, true);
 
-  if (end < start) throw new ServiceError('endDate must be after or equal to startDate', 400);
+  if (end < start) throw new ServiceError('endDate phải sau hoặc bằng startDate', 400);
 
   // 24h advance notice (not required for emergency)
   if (type !== 'emergency') {
     const now = new Date();
     const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     if (start < cutoff) {
-      throw new ServiceError('Leave requests must be submitted at least 24 hours in advance (except emergency)', 400);
+      throw new ServiceError('Đơn nghỉ phải được gửi trước ít nhất 24 giờ (trừ trường hợp khẩn cấp)', 400);
     }
   }
 
   // Block if overlapping approved leave already exists
   const existing = await leaveRequestRepo.findApprovedOverlapping(currentUser._id, start, end);
   if (existing.length) {
-    throw new ServiceError('You already have an approved leave request overlapping these dates', 409);
+    throw new ServiceError('Bạn đã có đơn nghỉ được duyệt trùng khoảng thời gian này', 409);
   }
 
   const daysRequested = calcDays(start, end);
@@ -97,7 +97,7 @@ const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reaso
   });
 
   return {
-    message: 'Leave request submitted',
+    message: 'Gửi đơn nghỉ thành công',
     request,
     ...(balanceWarning && { balanceWarning }),
     ...(shiftWarning && { shiftWarning }),
@@ -131,7 +131,7 @@ const listLeaveRequests = async (currentUser, { staffId, status, fromDate, toDat
 
   if (status) {
     if (!LEAVE_REQUEST_STATUSES.includes(status)) {
-      throw new ServiceError(`status must be one of: ${LEAVE_REQUEST_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${LEAVE_REQUEST_STATUSES.join(', ')}`, 400);
     }
     filter.status = status;
   }
@@ -157,11 +157,11 @@ const getLeaveRequest = async (currentUser, id) => {
   await autoRejectExpiredPending();
 
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Leave request not found', 404);
+  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
 
   if (!['admin', 'manager'].includes(currentUser.role)) {
     if (request.staffId._id.toString() !== currentUser._id.toString()) {
-      throw new ServiceError('Access forbidden', 403);
+      throw new ServiceError('Bạn không có quyền truy cập', 403);
     }
   }
   return request;
@@ -217,7 +217,7 @@ const validateCareTasksForReassignment = async (
 
   if (blockingTasks.length) {
     const err = new ServiceError(
-      'Cannot approve leave: some care tasks cannot be reassigned to the replacement staff',
+      'Không thể duyệt nghỉ: một số nhiệm vụ chăm sóc không thể chuyển cho nhân sự thay thế',
       409
     );
     err.blockingTasks = blockingTasks;
@@ -229,19 +229,19 @@ const validateCareTasksForReassignment = async (
 
 const getReplacementCandidates = async (currentUser, id) => {
   if (!['admin', 'manager'].includes(currentUser.role)) {
-    throw new ServiceError('Access forbidden', 403);
+    throw new ServiceError('Bạn không có quyền truy cập', 403);
   }
 
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Leave request not found', 404);
+  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
   if (request.status !== 'pending') {
-    throw new ServiceError('Replacement candidates are only available for pending requests', 400);
+    throw new ServiceError('Chỉ lấy được danh sách nhân sự thay thế cho đơn ở trạng thái chờ', 400);
   }
 
   const staffUserId = request.staffId._id || request.staffId;
   const requesterRole = request.staffId.role;
   const profile = await staffProfileRepo.findByUserId(staffUserId);
-  if (!profile) throw new ServiceError('Staff profile not found for leave requester', 404);
+  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên của người gửi đơn nghỉ', 404);
 
   const shiftsToCover = profile
     ? await getShiftsToCoverOnLeave(profile._id, request.startDate, request.endDate)
@@ -275,8 +275,8 @@ const approveLeaveRequest = async (
   await autoRejectExpiredPending();
 
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Leave request not found', 404);
-  if (request.status !== 'pending') throw new ServiceError('Only pending requests can be approved', 400);
+  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
+  if (request.status !== 'pending') throw new ServiceError('Chỉ có thể duyệt đơn ở trạng thái chờ', 400);
 
   const staffUserId = request.staffId._id || request.staffId;
   const requesterRole = request.staffId.role;
@@ -368,7 +368,7 @@ const approveLeaveRequest = async (
   const finalRequest = await leaveRequestRepo.findById(id);
 
   return {
-    message: 'Leave request approved',
+    message: 'Duyệt đơn nghỉ thành công',
     request: finalRequest,
     ...(reassignedShifts.length && {
       reassignedShifts: { count: reassignedShifts.length, shifts: reassignedShifts },
@@ -383,11 +383,11 @@ const approveLeaveRequest = async (
 
 const rejectLeaveRequest = async (currentUser, id, { reviewNote } = {}) => {
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Leave request not found', 404);
-  if (request.status !== 'pending') throw new ServiceError('Only pending requests can be rejected', 400);
+  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
+  if (request.status !== 'pending') throw new ServiceError('Chỉ có thể từ chối đơn ở trạng thái chờ', 400);
 
   if (!reviewNote || !reviewNote.trim()) {
-    throw new ServiceError('reviewNote (rejection reason) is required', 400);
+    throw new ServiceError('reviewNote (lý do từ chối) là bắt buộc', 400);
   }
 
   const updated = await leaveRequestRepo.updateById(id, {
@@ -397,21 +397,21 @@ const rejectLeaveRequest = async (currentUser, id, { reviewNote } = {}) => {
     reviewNote: reviewNote.trim(),
   });
 
-  return { message: 'Leave request rejected', request: updated };
+  return { message: 'Từ chối đơn nghỉ thành công', request: updated };
 };
 
 // ── cancel own leave request ──────────────────────────────────────────────────
 
 const cancelLeaveRequest = async (currentUser, id) => {
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Leave request not found', 404);
+  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
   if (request.staffId._id.toString() !== currentUser._id.toString()) {
-    throw new ServiceError('You can only cancel your own requests', 403);
+    throw new ServiceError('Bạn chỉ có thể hủy đơn nghỉ của chính mình', 403);
   }
-  if (request.status !== 'pending') throw new ServiceError('Only pending requests can be cancelled', 400);
+  if (request.status !== 'pending') throw new ServiceError('Chỉ có thể hủy đơn ở trạng thái chờ', 400);
 
   await leaveRequestRepo.updateById(id, { status: 'cancelled' });
-  return { message: 'Leave request cancelled' };
+  return { message: 'Hủy đơn nghỉ thành công' };
 };
 
 module.exports = {

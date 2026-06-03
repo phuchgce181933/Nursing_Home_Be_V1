@@ -30,6 +30,19 @@ const Message = require('./message');
 const AuditLog = require('./auditLog');
 const ReportSnapshot = require('./reportSnapshot');
 const CareTask = require('./careTask');
+const CareScheduleDay = require('./careScheduleDay');
+const CareScheduleEntry = require('./careScheduleEntry');
+const MealPlanDay = require('./mealPlanDay');
+const MealPlanEntry = require('./mealPlanEntry');
+const SpecialDietDay = require('./specialDietDay');
+const SpecialDietEntry = require('./specialDietEntry');
+const MealTimeScheduleDay = require('./mealTimeScheduleDay');
+const MealTimeScheduleEntry = require('./mealTimeScheduleEntry');
+const MealIntakeNote = require('./mealIntakeNote');
+const HygieneActivityRecord = require('./hygieneActivityRecord');
+const DailyBehaviorRecord = require('./dailyBehaviorRecord');
+const RehabilitationScheduleDay = require('./rehabilitationScheduleDay');
+const RehabilitationScheduleEntry = require('./rehabilitationScheduleEntry');
 const LeaveRequest = require('./leaveRequest');
 const FacilityTour = require('./facilityTour');
 const ServicePackage = require('./servicePackage');
@@ -72,6 +85,19 @@ module.exports = {
   ReportSnapshot,
   LeaveRequest,
   CareTask,
+  CareScheduleDay,
+  CareScheduleEntry,
+  MealPlanDay,
+  MealPlanEntry,
+  SpecialDietDay,
+  SpecialDietEntry,
+  MealTimeScheduleDay,
+  MealTimeScheduleEntry,
+  MealIntakeNote,
+  HygieneActivityRecord,
+  DailyBehaviorRecord,
+  RehabilitationScheduleDay,
+  RehabilitationScheduleEntry,
   FacilityTour,
   ServicePackage,
   MedicationSchedule,

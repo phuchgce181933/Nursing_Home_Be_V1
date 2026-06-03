@@ -23,7 +23,7 @@ const parseOptionalDate = (value, fieldName) => {
   if (!value) return undefined;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    throw new ServiceError(`${fieldName} is invalid`, 400);
+    throw new ServiceError(`${fieldName} không hợp lệ`, 400);
   }
   return date;
 };
@@ -38,16 +38,16 @@ const normalizeStringArray = (value) => {
 const normalizeEmergencyContacts = (value) => {
   if (value === undefined) return undefined;
   if (value === null) return [];
-  if (!Array.isArray(value)) throw new ServiceError('emergencyContacts must be an array', 400);
+  if (!Array.isArray(value)) throw new ServiceError('emergencyContacts phải là mảng', 400);
   return value.map((contact, index) => {
     if (!contact || typeof contact !== 'object') {
-      throw new ServiceError(`emergencyContacts[${index}] must be an object`, 400);
+      throw new ServiceError(`emergencyContacts[${index}] phải là object`, 400);
     }
     const fullName = String(contact.fullName || '').trim();
     const relationship = String(contact.relationship || '').trim();
     const phone = String(contact.phone || '').trim();
     if (!fullName || !relationship || !phone) {
-      throw new ServiceError(`emergencyContacts[${index}] must include fullName, relationship, and phone`, 400);
+      throw new ServiceError(`emergencyContacts[${index}] phải có đầy đủ fullName, relationship và phone`, 400);
     }
     return {
       fullName,
@@ -68,10 +68,10 @@ const normalizeFamilyAccountIds = async (value) => {
   const uniqueIds = [...new Set(ids)];
   if (uniqueIds.length === 0) return [];
   const invalidIds = uniqueIds.filter((id) => !Types.ObjectId.isValid(id));
-  if (invalidIds.length) throw new ServiceError(`Invalid familyPortalAccountIds: ${invalidIds.join(', ')}`, 400);
+  if (invalidIds.length) throw new ServiceError(`familyPortalAccountIds không hợp lệ: ${invalidIds.join(', ')}`, 400);
   const users = await User.find({ _id: { $in: uniqueIds }, role: 'family' }).select('_id');
   if (users.length !== uniqueIds.length) {
-    throw new ServiceError('Some familyPortalAccountIds were not found or are not family accounts', 400);
+    throw new ServiceError('Một số familyPortalAccountIds không tồn tại hoặc không phải tài khoản family', 400);
   }
   return uniqueIds;
 };
@@ -82,7 +82,7 @@ const generateResidentCode = async () => {
     const exists = await residentRepo.findByResidentCode(code);
     if (!exists) return code;
   }
-  throw new ServiceError('Unable to generate residentCode', 500);
+  throw new ServiceError('Không thể tạo residentCode', 500);
 };
 
 const calcAge = (dateOfBirth) => {
@@ -182,13 +182,13 @@ const formatResident = (residentDoc) => {
 };
 
 const assertResidentId = (residentId) => {
-  if (!residentRepo.assertValidObjectId(residentId)) throw new ServiceError('Invalid resident id', 400);
+  if (!residentRepo.assertValidObjectId(residentId)) throw new ServiceError('residentId không hợp lệ', 400);
 };
 
 /** Resolve MongoDB resident _id from ObjectId string or residentCode (e.g. RES001). */
 const resolveResidentId = async (residentIdOrCode) => {
   const raw = String(residentIdOrCode || '').trim();
-  if (!raw) throw new ServiceError('residentId is required', 400);
+  if (!raw) throw new ServiceError('residentId là bắt buộc', 400);
 
   if (residentRepo.assertValidObjectId(raw)) {
     const byId = await residentRepo.findById(raw);
@@ -198,7 +198,7 @@ const resolveResidentId = async (residentIdOrCode) => {
   const byCode = await residentRepo.findByResidentCode(raw);
   if (byCode) return byCode._id;
 
-  throw new ServiceError('Resident not found', 404);
+  throw new ServiceError('Không tìm thấy cư dân', 404);
 };
 
 const RESIDENCY_STATUS_ALIASES = {
@@ -249,11 +249,11 @@ const parseBloodTypeFromBody = (body) => {
 };
 
 const assertContactId = (contactId) => {
-  if (!residentRepo.assertValidObjectId(contactId)) throw new ServiceError('Invalid contact id', 400);
+  if (!residentRepo.assertValidObjectId(contactId)) throw new ServiceError('contactId không hợp lệ', 400);
 };
 
 const assertObjectId = (value, label) => {
-  if (!residentRepo.assertValidObjectId(value)) throw new ServiceError(`Invalid ${label}`, 400);
+  if (!residentRepo.assertValidObjectId(value)) throw new ServiceError(`${label} không hợp lệ`, 400);
 };
 
 const validateOptionalEmail = (email) => {
@@ -280,10 +280,10 @@ const validateContactPayload = (contact, { requireAll = true, partial = false } 
     if (err) errors.push(err);
   }
   if (requireAll || contact.relationship !== undefined) {
-    if (!contact.relationship) errors.push('relationship is required');
+    if (!contact.relationship) errors.push('relationship là bắt buộc');
   }
   if (requireAll || contact.phone !== undefined) {
-    if (!contact.phone) errors.push('phone is required');
+    if (!contact.phone) errors.push('phone là bắt buộc');
     else {
       const phoneErr = validatePhone(contact.phone);
       if (phoneErr) errors.push(phoneErr);
@@ -299,7 +299,7 @@ const validateContactPayload = (contact, { requireAll = true, partial = false } 
 
 const ensureSinglePrimary = (contacts) => {
   const primaryCount = contacts.filter((c) => c.isPrimary).length;
-  if (primaryCount > 1) throw new ServiceError('Only one emergency contact can be marked as primary', 400);
+  if (primaryCount > 1) throw new ServiceError('Chỉ được đánh dấu tối đa một liên hệ khẩn cấp là chính', 400);
 };
 
 const mapResidentFamilySummary = (resident) => ({
@@ -311,38 +311,44 @@ const mapResidentFamilySummary = (resident) => ({
   emergencyContactCount: resident.emergencyContacts?.length ?? 0,
 });
 
-const listResidentsForAssignment = async ({ floorId, roomId, search, status }, user) => {
+const parseAssignmentStatusFilter = (status) => {
   let queryStatus = status || 'admitted';
-  if (status && status.includes(',')) {
-    const statuses = status.split(',').map(s => s.trim());
-    statuses.forEach(s => {
+  if (status && String(status).includes(',')) {
+    const statuses = String(status)
+      .split(',')
+      .map((s) => s.trim());
+    statuses.forEach((s) => {
       if (!RESIDENCY_STATUSES.includes(s)) {
-        throw new ServiceError(`status must be one of: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+        throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
       }
     });
     queryStatus = statuses;
   } else if (status && !RESIDENCY_STATUSES.includes(status)) {
-    throw new ServiceError(`status must be one of: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+    throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
   }
+  return queryStatus;
+};
+
+const listResidentsForAssignment = async ({ floorId, roomId, search, status }, user) => {
+  const queryStatus = parseAssignmentStatusFilter(status);
 
   let residentIds = null;
   if (user && ['doctor', 'nurse'].includes(user.role)) {
     const staffProfileRepo = require('../repositories/staffProfileRepository');
     const profile = await staffProfileRepo.findByUserId(user._id);
     if (!profile) throw new ServiceError('Staff profile not found for this account', 404);
-    
-    const idsSet = new Set((profile.assignedResidentIds || []).map(id => id.toString()));
-    
-    // Also include any residents where this staff member is assigned to their intake appointments
+
+    const idsSet = new Set((profile.assignedResidentIds || []).map((id) => id.toString()));
+
     try {
       const CareAppointment = require('../models/careAppointment');
       const roleField = user.role === 'doctor' ? 'doctorStaffId' : 'nurseStaffId';
       const activeAppts = await CareAppointment.find({
         [roleField]: profile._id,
-        appointmentType: 'Khám lâm sàng đầu vào'
+        appointmentType: 'Khám lâm sàng đầu vào',
       }).select('residentId');
-      
-      activeAppts.forEach(appt => {
+
+      activeAppts.forEach((appt) => {
         if (appt.residentId) {
           idsSet.add(appt.residentId.toString());
         }
@@ -350,7 +356,7 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
     } catch (err) {
       console.error('Failed to dynamically aggregate intake appointment resident IDs:', err);
     }
-    
+
     residentIds = Array.from(idsSet);
   }
 
@@ -359,18 +365,7 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
 };
 
 const listResidentsForFamilyManagement = async ({ search, status, page = 1, limit = 20 }) => {
-  let queryStatus = status || 'admitted';
-  if (status && status.includes(',')) {
-    const statuses = status.split(',').map(s => s.trim());
-    statuses.forEach(s => {
-      if (!RESIDENCY_STATUSES.includes(s)) {
-        throw new ServiceError(`status must be one of: ${RESIDENCY_STATUSES.join(', ')}`, 400);
-      }
-    });
-    queryStatus = statuses;
-  } else if (status && !RESIDENCY_STATUSES.includes(status)) {
-    throw new ServiceError(`status must be one of: ${RESIDENCY_STATUSES.join(', ')}`, 400);
-  }
+  const queryStatus = parseAssignmentStatusFilter(status);
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
@@ -392,7 +387,7 @@ const listResidentsForFamilyManagement = async ({ search, status, page = 1, limi
 const getResidentFamilyInfo = async (residentId) => {
   assertResidentId(residentId);
   const resident = await residentRepo.findByIdWithFamily(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return {
     resident: {
       _id: resident._id,
@@ -411,14 +406,14 @@ const addEmergencyContact = async (residentId, body) => {
   assertResidentId(residentId);
   const contact = validateContactPayload(body, { requireAll: true });
   const resident = await residentRepo.addEmergencyContact(residentId, contact);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   const added = resident.emergencyContacts[resident.emergencyContacts.length - 1];
-  return { message: 'Emergency contact added', emergencyContact: added, emergencyContacts: resident.emergencyContacts };
+  return { message: 'Thêm liên hệ khẩn cấp thành công', emergencyContact: added, emergencyContacts: resident.emergencyContacts };
 };
 
 const replaceEmergencyContacts = async (residentId, contactsInput) => {
   assertResidentId(residentId);
-  if (!Array.isArray(contactsInput)) throw new ServiceError('contacts must be an array', 400);
+  if (!Array.isArray(contactsInput)) throw new ServiceError('contacts phải là mảng', 400);
   const contacts = contactsInput.map((c) => validateContactPayload(c, { requireAll: true }));
   ensureSinglePrimary(contacts);
   let primarySet = false;
@@ -430,8 +425,8 @@ const replaceEmergencyContacts = async (residentId, contactsInput) => {
     return { ...c, isPrimary: false };
   });
   const resident = await residentRepo.replaceEmergencyContacts(residentId, normalized);
-  if (!resident) throw new ServiceError('Resident not found', 404);
-  return { message: 'Emergency contacts updated', emergencyContacts: resident.emergencyContacts };
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  return { message: 'Cập nhật liên hệ khẩn cấp thành công', emergencyContacts: resident.emergencyContacts };
 };
 
 const updateEmergencyContact = async (residentId, contactId, body) => {
@@ -441,11 +436,11 @@ const updateEmergencyContact = async (residentId, contactId, body) => {
   const resident = await residentRepo.updateEmergencyContact(residentId, contactId, patch);
   if (!resident) {
     const exists = await residentRepo.findById(residentId);
-    if (!exists) throw new ServiceError('Resident not found', 404);
-    throw new ServiceError('Emergency contact not found', 404);
+    if (!exists) throw new ServiceError('Không tìm thấy cư dân', 404);
+    throw new ServiceError('Không tìm thấy liên hệ khẩn cấp', 404);
   }
   const updated = resident.emergencyContacts.id(contactId);
-  return { message: 'Emergency contact updated', emergencyContact: updated, emergencyContacts: resident.emergencyContacts };
+  return { message: 'Cập nhật liên hệ khẩn cấp thành công', emergencyContact: updated, emergencyContacts: resident.emergencyContacts };
 };
 
 const removeEmergencyContact = async (residentId, contactId) => {
@@ -454,23 +449,23 @@ const removeEmergencyContact = async (residentId, contactId) => {
   const resident = await residentRepo.removeEmergencyContact(residentId, contactId);
   if (!resident) {
     const exists = await residentRepo.findById(residentId);
-    if (!exists) throw new ServiceError('Resident not found', 404);
-    throw new ServiceError('Emergency contact not found', 404);
+    if (!exists) throw new ServiceError('Không tìm thấy cư dân', 404);
+    throw new ServiceError('Không tìm thấy liên hệ khẩn cấp', 404);
   }
-  return { message: 'Emergency contact removed', emergencyContacts: resident.emergencyContacts };
+  return { message: 'Xóa liên hệ khẩn cấp thành công', emergencyContacts: resident.emergencyContacts };
 };
 
 const assertAreaFilter = ({ buildingId, floorId, roomId }) => {
-  if (!buildingId && !floorId && !roomId) throw new ServiceError('buildingId, floorId, or roomId is required', 400);
-  if (buildingId && !residentRepo.assertValidObjectId(buildingId)) throw new ServiceError('Invalid buildingId', 400);
-  if (floorId && !residentRepo.assertValidObjectId(floorId)) throw new ServiceError('Invalid floorId', 400);
-  if (roomId && !residentRepo.assertValidObjectId(roomId)) throw new ServiceError('Invalid roomId', 400);
+  if (!buildingId && !floorId && !roomId) throw new ServiceError('buildingId, floorId hoặc roomId là bắt buộc', 400);
+  if (buildingId && !residentRepo.assertValidObjectId(buildingId)) throw new ServiceError('buildingId không hợp lệ', 400);
+  if (floorId && !residentRepo.assertValidObjectId(floorId)) throw new ServiceError('floorId không hợp lệ', 400);
+  if (roomId && !residentRepo.assertValidObjectId(roomId)) throw new ServiceError('roomId không hợp lệ', 400);
 };
 
 const mapResolveError = (error) => {
   const messages = {
-    room_not_found: 'Room not found',
-    floor_not_found: 'Floor not found',
+    room_not_found: 'Không tìm thấy phòng',
+    floor_not_found: 'Không tìm thấy tầng',
     room_floor_mismatch: 'roomId does not belong to the specified floorId',
     room_building_mismatch: 'roomId does not belong to the specified buildingId',
     floor_building_mismatch: 'floorId does not belong to the specified buildingId',
@@ -479,9 +474,9 @@ const mapResolveError = (error) => {
 };
 
 const getResidentsAreaSummary = async ({ buildingId, status }) => {
-  if (buildingId && !residentRepo.assertValidObjectId(buildingId)) throw new ServiceError('Invalid buildingId', 400);
+  if (buildingId && !residentRepo.assertValidObjectId(buildingId)) throw new ServiceError('buildingId không hợp lệ', 400);
   if (status && !RESIDENCY_STATUSES.includes(status)) {
-    throw new ServiceError(`status must be one of: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+    throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
   }
   return residentRepo.getAreaSummary({ buildingId, status: status || 'admitted' });
 };
@@ -490,7 +485,7 @@ const listResidentsByArea = async ({ buildingId, floorId, roomId, search, status
   assertAreaFilter({ buildingId, floorId, roomId });
   const normalizedStatus = normalizeResidencyStatusFilter(status);
   if (normalizedStatus && !RESIDENCY_STATUSES.includes(normalizedStatus)) {
-    throw new ServiceError(`status must be one of: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+    throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
   }
   const result = await residentRepo.findByArea({
     buildingId,
@@ -514,7 +509,7 @@ const listResidentsByArea = async ({ buildingId, floorId, roomId, search, status
 const getResidentDetail = async (residentIdOrCode) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findByIdWithDetail(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return { resident: formatResident(resident) };
 };
 
@@ -540,12 +535,12 @@ const getTransferTargets = async (residentId, { floorId }) => {
   assertResidentId(residentId);
   assertObjectId(floorId, 'floorId');
   const resident = await residentRepo.findByIdForTransfer(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
-  if (resident.residencyStatus !== 'admitted') throw new ServiceError('Only admitted residents can be transferred', 400);
-  if (!resident.roomId || !resident.bedId) throw new ServiceError('Resident is not currently assigned to a room/bed', 400);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (resident.residencyStatus !== 'admitted') throw new ServiceError('Chỉ cư dân đang ở trạng thái admitted mới được chuyển phòng', 400);
+  if (!resident.roomId || !resident.bedId) throw new ServiceError('Cư dân hiện chưa được gán phòng/giường', 400);
 
   const floor = await floorRepo.findById(floorId);
-  if (!floor) throw new ServiceError('Floor not found', 404);
+  if (!floor) throw new ServiceError('Không tìm thấy tầng', 404);
   const rooms = await roomRepo.findByFloorId(floorId);
   const roomIds = rooms.map((room) => room._id);
   const availableBeds = await bedRepo.findAvailableByRoomIds(roomIds);
@@ -555,6 +550,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
     if (!bedsByRoomId.has(key)) bedsByRoomId.set(key, []);
     bedsByRoomId.get(key).push({ _id: bed._id, bedCode: bed.bedCode, bedType: bed.bedType, status: bed.status });
   }
+  const currentRoomId = String(resident.roomId?._id || resident.roomId);
   const targets = rooms
     .map((room) => ({
       _id: room._id,
@@ -565,7 +561,17 @@ const getTransferTargets = async (residentId, { floorId }) => {
       status: room.status,
       availableBeds: bedsByRoomId.get(String(room._id)) || [],
     }))
-    .filter((room) => room.availableBeds.length > 0);
+    .filter(
+      (room) =>
+        String(room._id) !== currentRoomId &&
+        room.availableBeds.length > 0
+    );
+
+  const message =
+    targets.length === 0
+      ? 'Không có phòng/giường trống trên tầng đã chọn. Chọn tầng khác hoặc giải phóng giường trước.'
+      : undefined;
+
   return {
     resident: {
       _id: resident._id,
@@ -575,6 +581,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
     },
     currentAssignment: mapTransferAssignment(resident),
     targets,
+    message,
   };
 };
 
@@ -583,20 +590,20 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   assertObjectId(targetRoomId, 'targetRoomId');
   assertObjectId(targetBedId, 'targetBedId');
   const resident = await residentRepo.findByIdForTransfer(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
-  if (resident.residencyStatus !== 'admitted') throw new ServiceError('Only admitted residents can be transferred', 400);
-  if (!resident.roomId || !resident.bedId) throw new ServiceError('Resident is not currently assigned to a room/bed', 400);
-  if (String(resident.bedId._id) === String(targetBedId)) throw new ServiceError('Resident is already assigned to this bed', 400);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (resident.residencyStatus !== 'admitted') throw new ServiceError('Chỉ cư dân đang ở trạng thái admitted mới được chuyển phòng', 400);
+  if (!resident.roomId || !resident.bedId) throw new ServiceError('Cư dân hiện chưa được gán phòng/giường', 400);
+  if (String(resident.bedId._id) === String(targetBedId)) throw new ServiceError('Cư dân đã nằm ở giường này', 400);
 
   const targetRoom = await roomRepo.findById(targetRoomId);
-  if (!targetRoom) throw new ServiceError('Target room not found', 404);
-  if (targetRoom.status === 'closed') throw new ServiceError('Target room is closed', 400);
-  if (targetRoom.occupiedCount >= targetRoom.capacity) throw new ServiceError('Target room is full', 400);
+  if (!targetRoom) throw new ServiceError('Không tìm thấy phòng đích', 404);
+  if (targetRoom.status === 'closed') throw new ServiceError('Phòng đích đang đóng', 400);
+  if (targetRoom.occupiedCount >= targetRoom.capacity) throw new ServiceError('Phòng đích đã đầy', 400);
 
   const targetBed = await bedRepo.findById(targetBedId);
-  if (!targetBed) throw new ServiceError('Target bed not found', 404);
-  if (String(targetBed.roomId) !== String(targetRoomId)) throw new ServiceError('targetBedId does not belong to targetRoomId', 400);
-  if (targetBed.status !== 'available' || targetBed.assignedResidentId) throw new ServiceError('Target bed is not available', 400);
+  if (!targetBed) throw new ServiceError('Không tìm thấy giường đích', 404);
+  if (String(targetBed.roomId) !== String(targetRoomId)) throw new ServiceError('targetBedId không thuộc targetRoomId', 400);
+  if (targetBed.status !== 'available' || targetBed.assignedResidentId) throw new ServiceError('Giường đích không khả dụng', 400);
 
   await bedRepo.releaseBed(resident.bedId._id, new Date());
   await roomRepo.adjustOccupiedCount(resident.roomId._id, -1);
@@ -604,7 +611,7 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   await roomRepo.adjustOccupiedCount(targetRoomId, 1);
 
   const updatedResident = await residentRepo.updateRoomAssignment(residentId, { roomId: targetRoomId, bedId: targetBedId });
-  if (!updatedResident) throw new ServiceError('Resident not found', 404);
+  if (!updatedResident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const targetFloorId = targetRoom.floorId?._id || targetRoom.floorId;
   const staffAreasSynced = await syncStaffAreasAfterResidentTransfer(residentId, {
@@ -613,7 +620,7 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   });
 
   return {
-    message: 'Resident transferred successfully',
+    message: 'Chuyển cư dân thành công',
     resident: {
       _id: updatedResident._id,
       residentCode: updatedResident.residentCode,
@@ -792,7 +799,7 @@ const listResidentsForDrugAllergies = async ({ search, status, recorded, page = 
 const getInitialHealth = async (residentIdOrCode) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findInitialHealthByResidentId(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return { resident: formatResident(resident), initialHealth: mapInitialHealth(resident) };
 };
 
@@ -800,10 +807,10 @@ const recordInitialHealth = async (residentIdOrCode, body) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const description = parseInitialHealthConditionFromBody(body);
   if (!description) {
-    throw new ServiceError('initialHealthCondition is required', 400);
+    throw new ServiceError('initialHealthCondition là bắt buộc', 400);
   }
   if (description.length < 10) {
-    throw new ServiceError('initialHealthCondition must be at least 10 characters', 400);
+    throw new ServiceError('initialHealthCondition phải có ít nhất 10 ký tự', 400);
   }
 
   const update = { initialHealthCondition: description };
@@ -814,21 +821,21 @@ const recordInitialHealth = async (residentIdOrCode, body) => {
       : undefined);
   if (bloodType !== undefined) {
     if (!BLOOD_TYPES.includes(bloodType)) {
-      throw new ServiceError(`bloodType must be one of: ${BLOOD_TYPES.join(', ')}`, 400);
+      throw new ServiceError(`bloodType phải thuộc một trong: ${BLOOD_TYPES.join(', ')}`, 400);
     }
     update.bloodType = bloodType;
   }
 
   const existing = await residentRepo.findById(residentId);
-  if (!existing) throw new ServiceError('Resident not found', 404);
+  if (!existing) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const updated = await residentRepo.updateInitialHealth(residentId, update);
-  if (!updated) throw new ServiceError('Failed to save initial health condition', 500);
+  if (!updated) throw new ServiceError('Lưu tình trạng sức khỏe ban đầu thất bại', 500);
 
   return {
     message: hasInitialHealthRecord(existing)
-      ? 'Initial health condition updated'
-      : 'Initial health condition recorded',
+      ? 'Cập nhật tình trạng sức khỏe ban đầu thành công'
+      : 'Ghi nhận tình trạng sức khỏe ban đầu thành công',
     resident: formatResident(updated),
     initialHealth: mapInitialHealth(updated),
   };
@@ -837,7 +844,7 @@ const recordInitialHealth = async (residentIdOrCode, body) => {
 const getPreExistingConditions = async (residentIdOrCode) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findPreExistingByResidentId(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return {
     resident: formatResident(resident),
     preExistingConditions: mapPreExistingConditions(resident),
@@ -851,12 +858,12 @@ const updatePreExistingConditions = async (residentIdOrCode, body) => {
   if (chronic !== undefined) update.chronicConditions = chronic;
   if (history !== undefined) update.medicalHistory = history;
   if (Object.keys(update).length === 0) {
-    throw new ServiceError('Provide at least one of chronicConditions or medicalHistory', 400);
+    throw new ServiceError('Cần cung cấp ít nhất một trong hai: chronicConditions hoặc medicalHistory', 400);
   }
   const updated = await residentRepo.updatePreExistingConditions(residentId, update);
-  if (!updated) throw new ServiceError('Failed to save pre-existing conditions', 500);
+  if (!updated) throw new ServiceError('Lưu bệnh nền/tiền sử bệnh thất bại', 500);
   return {
-    message: 'Pre-existing medical conditions updated',
+    message: 'Cập nhật bệnh nền/tiền sử bệnh thành công',
     resident: formatResident(updated),
     preExistingConditions: mapPreExistingConditions(updated),
   };
@@ -865,7 +872,7 @@ const updatePreExistingConditions = async (residentIdOrCode, body) => {
 const getDrugAllergies = async (residentIdOrCode) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findDrugAllergiesByResidentId(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return {
     resident: formatResident(resident),
     drugAllergies: mapDrugAllergies(resident),
@@ -876,12 +883,12 @@ const updateDrugAllergies = async (residentIdOrCode, body) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const parsed = parseDrugAllergiesBody(body);
   if (parsed === undefined) {
-    throw new ServiceError('drugAllergies is required (array, may be empty)', 400);
+    throw new ServiceError('drugAllergies là bắt buộc (kiểu mảng, có thể rỗng)', 400);
   }
   const updated = await residentRepo.updateDrugAllergies(residentId, { drugAllergies: parsed });
-  if (!updated) throw new ServiceError('Failed to save drug allergies', 500);
+  if (!updated) throw new ServiceError('Lưu dị ứng thuốc thất bại', 500);
   return {
-    message: 'Drug allergies updated',
+    message: 'Cập nhật dị ứng thuốc thành công',
     resident: formatResident(updated),
     drugAllergies: mapDrugAllergies(updated),
   };
@@ -889,14 +896,14 @@ const updateDrugAllergies = async (residentIdOrCode, body) => {
 
 const adminCreateResident = async (user, body, req) => {
   if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
-    throw new ServiceError('Request body is empty or not parsed. Use POST with Header Content-Type: application/json and Body type raw -> JSON.', 400);
+    throw new ServiceError('Nội dung request body rỗng hoặc parse thất bại. Hãy dùng POST với Header Content-Type: application/json và Body raw JSON.', 400);
   }
   const fullName = body.fullName ? String(body.fullName).trim() : '';
-  if (!fullName) throw new ServiceError('fullName is required', 400);
+  if (!fullName) throw new ServiceError('fullName là bắt buộc', 400);
   const residentCode = body.residentCode ? String(body.residentCode).trim() : null;
   if (residentCode) {
     const existing = await residentRepo.findByResidentCode(residentCode);
-    if (existing) throw new ServiceError('residentCode already exists', 409);
+    if (existing) throw new ServiceError('residentCode đã tồn tại', 409);
   }
   const payload = {
     residentCode: residentCode || (await generateResidentCode()),
@@ -931,7 +938,7 @@ const adminCreateResident = async (user, body, req) => {
     req,
   });
   const populated = await residentRepo.findByIdForAdmin(resident._id);
-  return { message: 'Resident profile created', resident: formatResident(populated) };
+  return { message: 'Tạo hồ sơ cư dân thành công', resident: formatResident(populated) };
 };
 
 const adminListResidents = async (query) => {
@@ -962,16 +969,16 @@ const adminListResidents = async (query) => {
 
 const adminGetResident = async (residentId) => {
   const resident = await residentRepo.findByIdForAdmin(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return { resident: formatResident(resident) };
 };
 
 const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
-  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw new ServiceError('Request body is empty', 400);
+  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw new ServiceError('Nội dung request body rỗng', 400);
   const update = {};
   if (body.fullName !== undefined) {
     const fullName = String(body.fullName).trim();
-    if (!fullName) throw new ServiceError('fullName cannot be empty', 400);
+    if (!fullName) throw new ServiceError('fullName không được để trống', 400);
     update.fullName = fullName;
   }
   if (body.dateOfBirth !== undefined) update.dateOfBirth = parseOptionalDate(body.dateOfBirth, 'dateOfBirth');
@@ -985,9 +992,9 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
   const chronicConditions = normalizeStringArray(body.chronicConditions);
   if (chronicConditions !== undefined) update.chronicConditions = chronicConditions;
   if (body.initialHealthCondition !== undefined) update.initialHealthCondition = String(body.initialHealthCondition || '').trim() || undefined;
-  if (Object.keys(update).length === 0) throw new ServiceError('No valid personal info fields provided', 400);
+  if (Object.keys(update).length === 0) throw new ServiceError('Không có trường thông tin cá nhân hợp lệ để cập nhật', 400);
   const before = await residentRepo.findByIdForAdmin(residentId);
-  if (!before) throw new ServiceError('Resident not found', 404);
+  if (!before) throw new ServiceError('Không tìm thấy cư dân', 404);
   const updated = await residentRepo.updateById(residentId, update);
   await createAuditLog({
     actorUserId: user._id,
@@ -1000,19 +1007,19 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
     afterData: { fullName: updated.fullName, citizenId: updated.citizenId },
     req,
   });
-  return { message: 'Resident personal info updated', resident: formatResident(updated) };
+  return { message: 'Cập nhật thông tin cá nhân cư dân thành công', resident: formatResident(updated) };
 };
 
 const adminUpdateFamilyInfo = async (user, residentId, body, req) => {
-  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw new ServiceError('Request body is empty', 400);
+  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw new ServiceError('Nội dung request body rỗng', 400);
   const update = {};
   const emergencyContacts = normalizeEmergencyContacts(body.emergencyContacts);
   if (emergencyContacts !== undefined) update.emergencyContacts = emergencyContacts;
   const familyPortalAccountIds = await normalizeFamilyAccountIds(body.familyPortalAccountIds);
   if (familyPortalAccountIds !== undefined) update.familyPortalAccountIds = familyPortalAccountIds;
-  if (Object.keys(update).length === 0) throw new ServiceError('No valid family info fields provided', 400);
+  if (Object.keys(update).length === 0) throw new ServiceError('Không có trường thông tin gia đình hợp lệ để cập nhật', 400);
   const before = await residentRepo.findByIdForAdmin(residentId);
-  if (!before) throw new ServiceError('Resident not found', 404);
+  if (!before) throw new ServiceError('Không tìm thấy cư dân', 404);
   const updated = await residentRepo.updateById(residentId, update);
   await createAuditLog({
     actorUserId: user._id,
@@ -1025,7 +1032,7 @@ const adminUpdateFamilyInfo = async (user, residentId, body, req) => {
     afterData: { familyPortalAccountIds: updated.familyPortalAccountIds },
     req,
   });
-  return { message: 'Resident family info updated', resident: formatResident(updated) };
+  return { message: 'Cập nhật thông tin gia đình cư dân thành công', resident: formatResident(updated) };
 };
 
 module.exports = {

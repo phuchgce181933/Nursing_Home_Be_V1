@@ -24,6 +24,37 @@ const getResident = async (user, residentId) => {
   return resident;
 };
 
+const getResidentBillingSummary = async (user, residentId) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+  const resident = await familyPortalRepo.getResidentById(residentId);
+  if (!resident) throw new ServiceError('Resident not found', 404);
+
+  const [latestInvoice, invoiceCount] = await Promise.all([
+    familyPortalRepo.findLatestInvoiceByResidentId(residentId),
+    familyPortalRepo.countInvoicesByResidentId(residentId),
+  ]);
+
+  return {
+    resident,
+    latestInvoice,
+    invoiceCount,
+  };
+};
+
+const getResidentInvoices = async (user, residentId, query) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const [data, total] = await Promise.all([
+    familyPortalRepo.findInvoicesByResidentId(residentId, { sort: { issuedAt: -1 }, skip, limit: limitNum }),
+    familyPortalRepo.countInvoicesByResidentId(residentId),
+  ]);
+  return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
+};
+
 const getVitals = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Access denied: not your relative', 403);
@@ -251,6 +282,8 @@ const getHealthReport = async (user, residentId, query) => {
 module.exports = {
   getResidents,
   getResident,
+  getResidentBillingSummary,
+  getResidentInvoices,
   getVitals,
   getHealthHistory,
   getHealthChart,

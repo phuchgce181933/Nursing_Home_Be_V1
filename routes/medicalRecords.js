@@ -43,6 +43,37 @@ const VIEW_ROLES = ['admin', 'manager', 'doctor', 'nurse', 'family'];
  *                 type: number
  *               heightCm:
  *                 type: number
+ *               physicalExamination:
+ *                 type: string
+ *               laboratoryTestResults:
+ *                 type: string
+ *               urinalysisResults:
+ *                 type: string
+ *               ecgResults:
+ *                 type: string
+ *               imagingResults:
+ *                 type: string
+ *               cognitiveFunction:
+ *                 type: string
+ *               functionalStatus:
+ *                 type: string
+ *               fallRisk:
+ *                 type: string
+ *               nutritionalStatus:
+ *                 type: string
+ *               roomCost:
+ *                 type: number
+ *               medicationCost:
+ *                 type: number
+ *               careServiceCost:
+ *                 type: number
+ *               otherCost:
+ *                 type: number
+ *               paymentMethod:
+ *                 type: string
+ *                 enum: [bank_transfer, card, wallet, cash]
+ *               consentToPayment:
+ *                 type: boolean
  *               summary:
  *                 type: string
  *               bloodType:

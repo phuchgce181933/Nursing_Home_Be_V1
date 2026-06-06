@@ -3,6 +3,8 @@ const router = express.Router();
 const {
   getResidents,
   getResident,
+  getResidentBillingSummary,
+  getResidentInvoices,
   getVitals,
   getHealthHistory,
   getHealthChart,
@@ -54,6 +56,64 @@ router.get('/residents', getResidents);
  *         description: Resident not found
  */
 router.get('/residents/:residentId', getResident);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/billing-summary:
+ *   get:
+ *     summary: Get billing summary for a resident, including latest invoice and registered service package
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Resident billing summary
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/residents/:residentId/billing-summary', getResidentBillingSummary);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/invoices:
+ *   get:
+ *     summary: Get invoices for a resident
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Paginated invoices
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/residents/:residentId/invoices', getResidentInvoices);
 
 /**
  * @swagger

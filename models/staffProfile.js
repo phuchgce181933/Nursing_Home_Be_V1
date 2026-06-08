@@ -9,6 +9,15 @@ const staffProfileSchema = new Schema(
     specialty: { type: String, trim: true },
     roleCategory: { type: String, trim: true, index: true },
     certifications: [{ type: String, trim: true }],
+    certificationDocuments: [
+      {
+        url: { type: String, trim: true },
+        publicId: { type: String, trim: true },
+        fileName: { type: String, trim: true },
+        mimeType: { type: String, trim: true },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
     responsibleAreaIds: [{ type: Types.ObjectId, ref: 'Floor' }],
     responsibleRoomIds: [{ type: Types.ObjectId, ref: 'Room' }],
     assignedResidentIds: [{ type: Types.ObjectId, ref: 'Resident' }],

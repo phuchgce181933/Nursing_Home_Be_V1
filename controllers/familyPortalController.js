@@ -18,6 +18,24 @@ const getResident = async (req, res) => {
   }
 };
 
+const getResidentBillingSummary = async (req, res) => {
+  try {
+    const result = await familyPortalService.getResidentBillingSummary(req.user, req.params.residentId);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const getResidentInvoices = async (req, res) => {
+  try {
+    const result = await familyPortalService.getResidentInvoices(req.user, req.params.residentId, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const getVitals = async (req, res) => {
   try {
     const result = await familyPortalService.getVitals(req.user, req.params.residentId);
@@ -131,6 +149,8 @@ const downloadReport = async (req, res) => {
 module.exports = {
   getResidents,
   getResident,
+  getResidentBillingSummary,
+  getResidentInvoices,
   getVitals,
   getHealthHistory,
   getHealthChart,

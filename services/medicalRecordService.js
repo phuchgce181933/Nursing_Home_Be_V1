@@ -2,6 +2,7 @@ const ServiceError = require('./serviceError');
 const medicalRecordRepo = require('../repositories/medicalRecordRepository');
 const residentRepo = require('../repositories/residentRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
+const paymentService = require('./paymentService');
 const { createAuditLog } = require('../utils/auditLog');
 
 const checkAbnormalVitals = (body) => {
@@ -45,6 +46,21 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     heightCm,
     summary,
     bloodType,
+    physicalExamination,
+    laboratoryTestResults,
+    urinalysisResults,
+    ecgResults,
+    imagingResults,
+    cognitiveFunction,
+    functionalStatus,
+    fallRisk,
+    nutritionalStatus,
+    roomCost,
+    medicationCost,
+    careServiceCost,
+    otherCost,
+    paymentMethod,
+    consentToPayment,
   } = body;
 
   if (!residentId) throw new ServiceError('Resident ID is required', 400);
@@ -59,7 +75,26 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
   // Evaluate abnormal signs
   const abnormalFlag = checkAbnormalVitals(body);
 
-  // Save the vital record
+  let invoiceId = null;
+  const costSummary = [roomCost, medicationCost, careServiceCost, otherCost].reduce((sum, value) => {
+    const amount = Number(value);
+    return sum + (Number.isNaN(amount) ? 0 : Math.max(0, amount));
+  }, 0);
+
+  if (consentToPayment === true || consentToPayment === 'true') {
+    const invoice = await paymentService.createInvoice(user, residentId, {
+      roomCost,
+      medicationCost,
+      careServiceCost,
+      otherCost,
+      paymentMethod,
+      billingPeriodStart: body.billingPeriodStart,
+      billingPeriodEnd: body.billingPeriodEnd,
+      dueDate: body.dueDate,
+    });
+    invoiceId = invoice._id;
+  }
+
   const record = await medicalRecordRepo.create({
     residentId,
     createdByStaffId: staffProfileId,
@@ -72,6 +107,22 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     bloodSugar,
     weightKg,
     heightCm,
+    physicalExamination,
+    laboratoryTestResults,
+    urinalysisResults,
+    ecgResults,
+    imagingResults,
+    cognitiveFunction,
+    functionalStatus,
+    fallRisk,
+    nutritionalStatus,
+    roomCost,
+    medicationCost,
+    careServiceCost,
+    otherCost,
+    paymentMethod,
+    consentToPayment,
+    invoiceId,
     abnormalFlag,
     summary,
   });

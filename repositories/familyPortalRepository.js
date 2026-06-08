@@ -11,6 +11,7 @@ const MealIntakeNote = require('../models/mealIntakeNote');
 const DailyBehaviorRecord = require('../models/dailyBehaviorRecord');
 const CareScheduleDay = require('../models/careScheduleDay');
 const CareScheduleEntry = require('../models/careScheduleEntry');
+const Invoice = require('../models/invoice');
 
 const getFamilyResidentIds = async (userId) => {
   const residents = await Resident.find({ familyPortalAccountIds: userId }, '_id');
@@ -19,7 +20,7 @@ const getFamilyResidentIds = async (userId) => {
 
 const getResidentsForFamily = async (userId) =>
   Resident.find({ familyPortalAccountIds: userId, residencyStatus: 'admitted' })
-    .select('residentCode fullName dateOfBirth gender bloodType allergies chronicConditions residencyStatus admittedAt roomId bedId')
+    .select('residentCode fullName dateOfBirth gender bloodType allergies chronicConditions residencyStatus admittedAt roomId bedId servicePackage')
     .populate('roomId', 'roomCode name')
     .populate('bedId', 'bedCode');
 
@@ -42,6 +43,15 @@ const findCareNotes = async (filter, { sort = { noteAt: -1 }, skip = 0, limit = 
     .limit(limit);
 
 const countCareNotes = async (filter) => CareNote.countDocuments(filter);
+
+const findInvoicesByResidentId = async (residentId, { sort = { issuedAt: -1 }, skip = 0, limit = 20 } = {}) =>
+  Invoice.find({ residentId }).sort(sort).skip(skip).limit(limit);
+
+const findLatestInvoiceByResidentId = async (residentId) =>
+  Invoice.findOne({ residentId }).sort({ issuedAt: -1 });
+
+const countInvoicesByResidentId = async (residentId) =>
+  Invoice.countDocuments({ residentId });
 
 // MedicationSchedule (replaces MedicationAdministration for the new medication management module)
 const findMedicationSchedules = async (filter, { sort = { scheduledTime: -1 }, skip = 0, limit = 20 } = {}) =>
@@ -134,4 +144,7 @@ module.exports = {
   findDailyBehaviorRecords,
   findPublishedCareScheduleDays,
   findCareScheduleEntries,
+  findInvoicesByResidentId,
+  findLatestInvoiceByResidentId,
+  countInvoicesByResidentId,
 };

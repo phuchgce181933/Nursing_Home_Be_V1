@@ -8,6 +8,7 @@ const invoiceSchema = new Schema(
     invoiceNumber: { type: String, required: true, unique: true, trim: true, index: true },
     residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
     familyAccountId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
+    prescriptionId: { type: Types.ObjectId, ref: 'Prescription', index: true },
     billingPeriodStart: { type: Date, required: true },
     billingPeriodEnd: { type: Date, required: true },
     roomCost: { type: Number, required: true, min: 0, default: 0 },

@@ -33,6 +33,9 @@ const router = express.Router({ mergeParams: true });
  *                 type: number
  *               otherCost:
  *                 type: number
+ *               prescriptionId:
+ *                 type: string
+ *                 description: Attach a doctor prescription to calculate medication billing
  *               paymentMethod:
  *                 type: string
  *                 enum: [bank_transfer, card, wallet, cash]

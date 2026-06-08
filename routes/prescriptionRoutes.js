@@ -5,6 +5,7 @@ const {
   editPrescription,
   listPrescriptions,
   getPrescription,
+  estimatePrescriptionCost,
 } = require('../controllers/prescriptionController');
 const { protect, authorize } = require('../middleware/auth');
 const {
@@ -150,7 +151,7 @@ router.post(
  *       403:
  *         description: Doctor or Nurse role required
  */
-router.get('/', protect, authorize('doctor', 'nurse'), listPrescriptions);
+router.get('/', protect, authorize('doctor', 'nurse', 'admin', 'manager'), listPrescriptions);
 
 /**
  * @swagger
@@ -174,7 +175,9 @@ router.get('/', protect, authorize('doctor', 'nurse'), listPrescriptions);
  *       404:
  *         description: Prescription not found
  */
-router.get('/:id', protect, authorize('doctor', 'nurse'), getPrescription);
+router.get('/:id', protect, authorize('doctor', 'nurse', 'admin', 'manager'), getPrescription);
+
+router.get('/:id/estimate-cost', protect, authorize('doctor', 'nurse', 'admin', 'manager'), estimatePrescriptionCost);
 
 /**
  * @swagger

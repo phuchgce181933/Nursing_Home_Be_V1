@@ -1,12 +1,16 @@
 const crypto = require('crypto');
 const https = require('https');
 const { URL } = require('url');
+const { Types } = require('mongoose');
 const ServiceError = require('./serviceError');
 const invoiceRepo = require('../repositories/invoiceRepository');
 const paymentRepo = require('../repositories/paymentRepository');
 const residentRepo = require('../repositories/residentRepository');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
+const medicationStockRepo = require('../repositories/medicationStockRepository');
+const Admission = require('../models/admission');
+const Prescription = require('../models/prescription');
 const { createAuditLog } = require('../utils/auditLog');
 
 const buildInvoiceNumber = () => `INV-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}-${Math.floor(Math.random() * 9000) + 1000}`;
@@ -178,6 +182,58 @@ const getResidentServicePackagePrice = async (resident) => {
   return pkg?.monthlyPrice || null;
 };
 
+const getLatestMedicationUnitCost = async (medicationId) => {
+  const stocks = await medicationStockRepo.findAll({ medicationId }, { sort: { receivedDate: -1 }, limit: 1 });
+  if (!stocks || stocks.length === 0) return null;
+  return stocks[0].costPerUnit || null;
+};
+
+const estimateMedicationCostFromPrescription = async (prescription) => {
+  if (!prescription?.items?.length) return 0;
+  const medicationIds = prescription.items
+    .map((item) => (item.medicationId?._id ? item.medicationId._id : item.medicationId))
+    .filter(Boolean);
+
+  const unitCostMap = {};
+  await Promise.all(
+    medicationIds.map(async (medicationId) => {
+      const cost = await getLatestMedicationUnitCost(medicationId);
+      if (cost != null) {
+        unitCostMap[String(medicationId)] = cost;
+      }
+    })
+  );
+
+  let estimatedCost = 0;
+  for (const item of prescription.items) {
+    const dosageValue = Number(item.dosage);
+    const frequency = Number(item.frequency) || 0;
+    const duration = Number(item.duration) || 1;
+    const quantity = Number.isFinite(dosageValue) ? dosageValue * frequency * duration : 0;
+    const medicationId = item.medicationId?._id ? item.medicationId._id : item.medicationId;
+    const unitCost = unitCostMap[String(medicationId)] || 0;
+    estimatedCost += quantity * unitCost;
+  }
+
+  return Math.round(Math.max(0, estimatedCost));
+};
+
+const estimateMedicationCostForPrescription = async (prescriptionId, residentId) => {
+  if (!prescriptionId || !Types.ObjectId.isValid(prescriptionId)) {
+    throw new ServiceError('Invalid prescriptionId provided', 400);
+  }
+
+  const prescription = await Prescription.findById(prescriptionId).populate('residentId');
+  if (!prescription) {
+    throw new ServiceError('Prescription not found', 404);
+  }
+  if (String(prescription.residentId._id || prescription.residentId) !== String(residentId)) {
+    throw new ServiceError('Prescription does not belong to the resident', 400);
+  }
+
+  return await estimateMedicationCostFromPrescription(prescription);
+};
+
 const createInvoice = async (user, residentId, body) => {
   const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
@@ -191,9 +247,30 @@ const createInvoice = async (user, residentId, body) => {
 
   const familyAccountId = await getInvoiceFamilyAccountId(user, resident, body.familyAccountId);
   const roomCost = normalizeCost(body.roomCost);
-  const medicationCost = normalizeCost(body.medicationCost);
+  const medicationCostRaw = body.medicationCost;
+  let medicationCost = normalizeCost(body.medicationCost);
   let careServiceCost = normalizeCost(body.careServiceCost);
   const otherCost = normalizeCost(body.otherCost);
+  let prescriptionId = null;
+
+  if (body.prescriptionId) {
+    prescriptionId = resolveObjectIdString(body.prescriptionId);
+    if (!prescriptionId || !Types.ObjectId.isValid(prescriptionId)) {
+      throw new ServiceError('Invalid prescriptionId provided', 400);
+    }
+
+    const prescription = await Prescription.findById(prescriptionId).populate('residentId');
+    if (!prescription) {
+      throw new ServiceError('Prescription not found', 404);
+    }
+    if (String(prescription.residentId._id || prescription.residentId) !== String(residentId)) {
+      throw new ServiceError('Prescription does not belong to the resident', 400);
+    }
+
+    if (medicationCostRaw === undefined || medicationCostRaw === '' || medicationCostRaw === null) {
+      medicationCost = await estimateMedicationCostFromPrescription(prescription);
+    }
+  }
 
   if ((body.careServiceCost === undefined || body.careServiceCost === '' || body.careServiceCost === null) && resident.servicePackage) {
     const packagePrice = await getResidentServicePackagePrice(resident);
@@ -209,6 +286,7 @@ const createInvoice = async (user, residentId, body) => {
     invoiceNumber: buildInvoiceNumber(),
     residentId,
     familyAccountId,
+    prescriptionId,
     billingPeriodStart: body.billingPeriodStart ? new Date(body.billingPeriodStart) : start,
     billingPeriodEnd: body.billingPeriodEnd ? new Date(body.billingPeriodEnd) : end,
     roomCost,
@@ -219,6 +297,25 @@ const createInvoice = async (user, residentId, body) => {
     status: totalAmount === 0 ? 'paid' : 'issued',
     dueDate: body.dueDate ? new Date(body.dueDate) : end,
   });
+
+  if (body.billingPeriodStart && body.billingPeriodEnd) {
+    const startDate = new Date(body.billingPeriodStart);
+    const endDate = new Date(body.billingPeriodEnd);
+    if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+      await Admission.findOneAndUpdate(
+        {
+          residentId,
+          status: { $in: ['checked_in', 'contracting'] },
+          contractNumber: { $exists: true, $ne: null },
+        },
+        {
+          contractStartDate: startDate,
+          contractEndDate: endDate,
+        },
+        { new: true, runValidators: true }
+      );
+    }
+  }
 
   await createAuditLog({
     actorUserId: user._id,
@@ -331,6 +428,7 @@ const recordPayment = async (user, invoiceId, body) => {
 
 module.exports = {
   createInvoice,
+  estimateMedicationCostForPrescription,
   buildPayosCheckoutUrl,
   createPayosPaymentRequest,
   findInvoiceById,

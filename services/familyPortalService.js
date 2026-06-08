@@ -172,7 +172,7 @@ const getCareNotes = async (user, residentId, query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
-const VALID_MED_STATUSES = ['PENDING', 'TAKEN', 'LATE_TAKEN', 'MISSED', 'SKIPPED'];
+const VALID_MED_STATUSES = ['PENDING', 'TAKEN', 'LATE_TAKEN', 'MISSED', 'SKIPPED', 'OVERDUE'];
 
 const getMedications = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
@@ -250,6 +250,219 @@ const getCareAppointments = async (user, residentId, query) => {
   return familyPortalRepo.findCareAppointments(filter, { sort: { scheduledStartAt: 1 } });
 };
 
+const buildWorkDateFilter = (query) => {
+  const filter = {};
+  if (query.date) {
+    const start = new Date(query.date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(query.date);
+    end.setHours(23, 59, 59, 999);
+    filter.$gte = start;
+    filter.$lte = end;
+  } else {
+    if (query.from) filter.$gte = new Date(query.from);
+    if (query.to) filter.$lte = new Date(query.to);
+  }
+  return filter;
+};
+
+const getDailyActivities = async (user, residentId, query) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+
+  // Default to today when no date params provided
+  let workDateFilter = buildWorkDateFilter(query);
+  if (Object.keys(workDateFilter).length === 0) {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    workDateFilter = { $gte: todayStart, $lte: todayEnd };
+  }
+
+  const sharedFilter = { residentId, workDate: workDateFilter };
+
+  const [careTasks, hygieneRecords, mealIntakeNotes, behaviorRecords] = await Promise.all([
+    familyPortalRepo.findCareTasks(sharedFilter),
+    familyPortalRepo.findHygieneActivityRecords(sharedFilter),
+    familyPortalRepo.findMealIntakeNotes(sharedFilter),
+    familyPortalRepo.findDailyBehaviorRecords(sharedFilter),
+  ]);
+
+  return {
+    date: query.date || null,
+    from: query.from || null,
+    to: query.to || null,
+    careTasks,
+    hygieneRecords,
+    mealIntakeNotes,
+    behaviorRecords,
+  };
+};
+
+const getCareSchedule = async (user, residentId, query) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+
+  // Default to today when no date params provided
+  let dateFilter = buildWorkDateFilter(query);
+  if (Object.keys(dateFilter).length === 0) {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    dateFilter = { $gte: todayStart, $lte: todayEnd };
+  }
+
+  const days = await familyPortalRepo.findPublishedCareScheduleDays(dateFilter);
+  if (!days.length) return [];
+
+  const dayIds = days.map((d) => d._id);
+  const entries = await familyPortalRepo.findCareScheduleEntries({
+    careScheduleDayId: { $in: dayIds },
+    residentId,
+  });
+
+  const dayMap = {};
+  days.forEach((d) => {
+    dayMap[d._id.toString()] = { ...d.toObject(), entries: [] };
+  });
+  entries.forEach((e) => {
+    const key = e.careScheduleDayId?._id
+      ? e.careScheduleDayId._id.toString()
+      : e.careScheduleDayId.toString();
+    if (dayMap[key]) dayMap[key].entries.push(e);
+  });
+
+  return Object.values(dayMap);
+};
+
+const escapeCSV = (val) => {
+  if (val === null || val === undefined) return '';
+  const str = String(val);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+const row = (...cols) => cols.map(escapeCSV).join(',');
+
+const downloadReport = async (user, residentId, query) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+
+  const resident = await familyPortalRepo.getResidentById(residentId);
+  if (!resident) throw new ServiceError('Resident not found', 404);
+
+  const dateRange = {};
+  if (query.from) dateRange.$gte = new Date(query.from);
+  if (query.to) dateRange.$lte = new Date(query.to);
+  const hasRange = Object.keys(dateRange).length > 0;
+
+  const vitalsFilter = { residentId, ...(hasRange && { measuredAt: dateRange }) };
+  const notesFilter = { residentId, ...(hasRange && { noteAt: dateRange }) };
+  const apptFilter = { residentId, ...(hasRange && { scheduledStartAt: dateRange }) };
+  const medFilter = { residentId, ...(hasRange && { scheduledTime: dateRange }) };
+
+  const [vitals, careNotes, careAppointments, medications] = await Promise.all([
+    familyPortalRepo.findMedicalRecords(vitalsFilter, { sort: { measuredAt: -1 }, limit: 500 }),
+    familyPortalRepo.findCareNotes(notesFilter, { sort: { noteAt: -1 }, limit: 500 }),
+    familyPortalRepo.findCareAppointments(apptFilter, { sort: { scheduledStartAt: -1 }, limit: 200 }),
+    familyPortalRepo.findMedicationSchedules(medFilter, { sort: { scheduledTime: -1 }, limit: 500 }),
+  ]);
+
+  const r = resident.toObject ? resident.toObject() : resident;
+  const lines = [];
+
+  lines.push(row('NURSING HOME HEALTH REPORT'));
+  lines.push(row('Generated At', new Date().toISOString()));
+  lines.push(row('Period From', query.from || 'All'));
+  lines.push(row('Period To', query.to || 'All'));
+  lines.push('');
+
+  lines.push(row('RESIDENT PROFILE'));
+  lines.push(row('Field', 'Value'));
+  lines.push(row('Full Name', r.fullName));
+  lines.push(row('Resident Code', r.residentCode));
+  lines.push(row('Date of Birth', r.dateOfBirth ? new Date(r.dateOfBirth).toISOString().slice(0, 10) : ''));
+  lines.push(row('Gender', r.gender));
+  lines.push(row('Blood Type', r.bloodType));
+  lines.push(row('Room', r.roomId?.name || ''));
+  lines.push(row('Bed', r.bedId?.bedCode || ''));
+  lines.push(row('Admitted At', r.admittedAt ? new Date(r.admittedAt).toISOString().slice(0, 10) : ''));
+  lines.push(row('Service Package', r.servicePackage || ''));
+  lines.push(row('Chronic Conditions', (r.chronicConditions || []).join('; ')));
+  lines.push(row('Drug Allergies', (r.drugAllergies || []).join('; ')));
+  lines.push('');
+
+  lines.push(row('SUMMARY'));
+  lines.push(row('Category', 'Count'));
+  lines.push(row('Vital Signs Records', vitals.length));
+  lines.push(row('Care Notes', careNotes.length));
+  lines.push(row('Care Appointments', careAppointments.length));
+  lines.push(row('Medication Records', medications.length));
+  lines.push('');
+
+  lines.push(row('VITAL SIGNS'));
+  lines.push(row('Date', 'Systolic BP', 'Diastolic BP', 'Pulse', 'Temperature (C)', 'O2 Saturation (%)', 'Blood Sugar (mg/dL)', 'Weight (kg)', 'Abnormal', 'Summary'));
+  vitals.forEach((v) => {
+    lines.push(row(
+      v.measuredAt ? new Date(v.measuredAt).toISOString() : '',
+      v.bloodPressureSystolic, v.bloodPressureDiastolic,
+      v.pulse, v.temperatureCelsius, v.oxygenSaturation,
+      v.bloodSugar, v.weightKg,
+      v.abnormalFlag ? 'Yes' : 'No',
+      v.summary,
+    ));
+  });
+  lines.push('');
+
+  lines.push(row('CARE NOTES'));
+  lines.push(row('Date', 'Type', 'Content', 'Author'));
+  careNotes.forEach((n) => {
+    lines.push(row(
+      n.noteAt ? new Date(n.noteAt).toISOString() : '',
+      n.noteType,
+      n.content,
+      n.authorStaffId?.userId?.fullName || '',
+    ));
+  });
+  lines.push('');
+
+  lines.push(row('MEDICATION HISTORY'));
+  lines.push(row('Scheduled Time', 'Medication', 'Dosage', 'Route', 'Status', 'Actual Time Taken', 'Missed Reason'));
+  medications.forEach((m) => {
+    lines.push(row(
+      m.scheduledTime ? new Date(m.scheduledTime).toISOString() : '',
+      m.medicationName, m.dosage, m.route,
+      m.status,
+      m.actualTimeTaken ? new Date(m.actualTimeTaken).toISOString() : '',
+      m.missedReason,
+    ));
+  });
+  lines.push('');
+
+  lines.push(row('CARE APPOINTMENTS'));
+  lines.push(row('Start Time', 'End Time', 'Type', 'Status', 'Doctor', 'Nurse', 'Notes'));
+  careAppointments.forEach((a) => {
+    lines.push(row(
+      a.scheduledStartAt ? new Date(a.scheduledStartAt).toISOString() : '',
+      a.scheduledEndAt ? new Date(a.scheduledEndAt).toISOString() : '',
+      a.appointmentType, a.status,
+      a.doctorStaffId?.userId?.fullName || '',
+      a.nurseStaffId?.userId?.fullName || '',
+      a.notes,
+    ));
+  });
+
+  const filename = `health-report-${r.residentCode}-${new Date().toISOString().slice(0, 10)}.csv`;
+  return { csv: lines.join('\r\n'), filename };
+};
+
 const getHealthReport = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Access denied: not your relative', 403);
@@ -306,4 +519,7 @@ module.exports = {
   getActivities,
   getCareAppointments,
   getHealthReport,
+  getDailyActivities,
+  getCareSchedule,
+  downloadReport,
 };

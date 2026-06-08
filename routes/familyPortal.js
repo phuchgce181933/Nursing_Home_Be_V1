@@ -14,6 +14,9 @@ const {
   getActivities,
   getCareAppointments,
   getHealthReport,
+  getDailyActivities,
+  getCareSchedule,
+  downloadReport,
 } = require('../controllers/familyPortalController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -467,5 +470,129 @@ router.get('/residents/:residentId/care-appointments', getCareAppointments);
  *         description: Resident not found
  */
 router.get('/residents/:residentId/report', getHealthReport);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/report/download:
+ *   get:
+ *     summary: Download comprehensive health report as CSV file
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Report period start (no filter if omitted)
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Report period end (no filter if omitted)
+ *     responses:
+ *       200:
+ *         description: CSV file download containing vitals, care notes, medications, appointments
+ *         content:
+ *           text/csv:
+ *             schema:
+ *               type: string
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/residents/:residentId/report/download', downloadReport);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/daily-activities:
+ *   get:
+ *     summary: Get daily activity schedule - care tasks, hygiene, meals, and behavior records
+ *     description: Returns care tasks, hygiene activity records, meal intake notes, and daily behavior observations for the specified date or date range. Defaults to today if no date parameters provided.
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *           example: "2024-06-04"
+ *         description: Single date (YYYY-MM-DD). Takes priority over from/to.
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Start of date range (used when date is not provided)
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: End of date range (used when date is not provided)
+ *     responses:
+ *       200:
+ *         description: Daily activities grouped into careTasks, hygieneRecords, mealIntakeNotes, behaviorRecords
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/daily-activities', getDailyActivities);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/care-schedule:
+ *   get:
+ *     summary: Get planned care schedule entries for the resident
+ *     description: Returns published care schedule days with their entries (planned care tasks) for the specified date or date range. Defaults to today if no date parameters provided.
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *           example: "2024-06-04"
+ *         description: Single date (YYYY-MM-DD). Takes priority over from/to.
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Start of date range (used when date is not provided)
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: End of date range (used when date is not provided)
+ *     responses:
+ *       200:
+ *         description: Array of care schedule days, each with an entries array containing the planned care tasks
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/care-schedule', getCareSchedule);
 
 module.exports = router;

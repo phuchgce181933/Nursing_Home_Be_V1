@@ -1,5 +1,6 @@
 const ServiceError = require('./serviceError');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
+const servicePackageRepo = require('../repositories/servicePackageRepository');
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -13,7 +14,17 @@ const assertResidentAccess = async (userId, residentId) => {
   return ids.includes(residentId.toString());
 };
 
-const getResidents = async (user) => familyPortalRepo.getResidentsForFamily(user._id);
+const attachServicePackagePrice = async (resident) => {
+  if (!resident || !resident.servicePackage) return resident;
+  const packageRecord = await servicePackageRepo.findByName(resident.servicePackage);
+  resident.servicePackagePrice = packageRecord ? packageRecord.monthlyPrice : null;
+  return resident;
+};
+
+const getResidents = async (user) => {
+  const residents = await familyPortalRepo.getResidentsForFamily(user._id);
+  return Promise.all(residents.map(attachServicePackagePrice));
+};
 
 const getResident = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
@@ -21,6 +32,7 @@ const getResident = async (user, residentId) => {
   }
   const resident = await familyPortalRepo.getResidentById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
+  await attachServicePackagePrice(resident);
   return resident;
 };
 
@@ -30,6 +42,7 @@ const getResidentBillingSummary = async (user, residentId) => {
   }
   const resident = await familyPortalRepo.getResidentById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
+  await attachServicePackagePrice(resident);
 
   const [latestInvoice, invoiceCount] = await Promise.all([
     familyPortalRepo.findLatestInvoiceByResidentId(residentId),

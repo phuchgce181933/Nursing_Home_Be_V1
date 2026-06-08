@@ -6,6 +6,7 @@ const invoiceRepo = require('../repositories/invoiceRepository');
 const paymentRepo = require('../repositories/paymentRepository');
 const residentRepo = require('../repositories/residentRepository');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
+const servicePackageRepo = require('../repositories/servicePackageRepository');
 const { createAuditLog } = require('../utils/auditLog');
 
 const buildInvoiceNumber = () => `INV-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}-${Math.floor(Math.random() * 9000) + 1000}`;
@@ -171,6 +172,12 @@ const getInvoiceFamilyAccountId = async (user, resident, overrideAccountId) => {
   return user._id;
 };
 
+const getResidentServicePackagePrice = async (resident) => {
+  if (!resident?.servicePackage) return null;
+  const pkg = await servicePackageRepo.findByName(resident.servicePackage);
+  return pkg?.monthlyPrice || null;
+};
+
 const createInvoice = async (user, residentId, body) => {
   const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
@@ -185,8 +192,16 @@ const createInvoice = async (user, residentId, body) => {
   const familyAccountId = await getInvoiceFamilyAccountId(user, resident, body.familyAccountId);
   const roomCost = normalizeCost(body.roomCost);
   const medicationCost = normalizeCost(body.medicationCost);
-  const careServiceCost = normalizeCost(body.careServiceCost);
+  let careServiceCost = normalizeCost(body.careServiceCost);
   const otherCost = normalizeCost(body.otherCost);
+
+  if ((body.careServiceCost === undefined || body.careServiceCost === '' || body.careServiceCost === null) && resident.servicePackage) {
+    const packagePrice = await getResidentServicePackagePrice(resident);
+    if (packagePrice) {
+      careServiceCost = packagePrice;
+    }
+  }
+
   const totalAmount = roomCost + medicationCost + careServiceCost + otherCost;
   const { start, end } = buildDefaultBillingPeriod();
 

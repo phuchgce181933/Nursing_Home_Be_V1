@@ -14,7 +14,7 @@ const {
   updateUserByAdmin
 } = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/auth');
-const { uploadAvatar } = require('../middleware/uploadMiddleware');
+const { uploadAvatarAndCertifications } = require('../middleware/uploadMiddleware');
 
 /**
  * @swagger
@@ -123,7 +123,7 @@ router.post('/firebase-token', protect, authorize('admin', 'manager'), createFir
  *                 example: "password123"
  *               role:
  *                 type: string
- *                 enum: [doctor, nurse, manager, staff, pharmacist, admin]
+ *                 enum: [doctor, nurse, manager, staff, pharmacist, caregiver, family, admin]
  *                 description: Manager callers may only use doctor, nurse, staff
  *               phone:
  *                 type: string
@@ -151,6 +151,12 @@ router.post('/firebase-token', protect, authorize('admin', 'manager'), createFir
  *                 items:
  *                   type: string
  *                 example: ["RN License", "CPR Certified"]
+ *               certificationFiles:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *                 description: DOC/DOCX/PDF certification files
  *               avatar:
  *                 type: string
  *                 format: binary
@@ -162,7 +168,7 @@ router.post('/firebase-token', protect, authorize('admin', 'manager'), createFir
  *       409:
  *         description: Email or staffCode already in use
  */
-router.post('/create-staff', protect, authorize('admin', 'manager'), uploadAvatar, createStaffAccount);
+router.post('/create-staff', protect, authorize('admin', 'manager'), uploadAvatarAndCertifications, createStaffAccount);
 
 /**
  * @swagger

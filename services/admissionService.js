@@ -1,5 +1,6 @@
 const ServiceError = require('./serviceError');
 const admissionRepo = require('../repositories/admissionRepository');
+const invoiceRepo = require('../repositories/invoiceRepository');
 const { GENDERS, BLOOD_TYPES, ADMISSION_STATUSES, ADMISSION_ELIGIBILITY_STATUSES } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
 const User = require('../models/user');
@@ -137,6 +138,12 @@ const getCareAppointmentForResident = async (residentId) => {
     console.error('Failed to fetch assigned care appointment for drawer:', err);
   }
   return null;
+};
+
+const getLatestInvoiceForResident = async (residentId) => {
+  if (!residentId) return null;
+  const invoices = await invoiceRepo.findByResidentId(residentId, { sort: { issuedAt: -1 }, limit: 1 });
+  return Array.isArray(invoices) && invoices.length ? invoices[0] : null;
 };
 
 const generateRequestCode = async () => {
@@ -384,6 +391,7 @@ const getAdmissionRequest = async (user, admissionId) => {
   ]);
   const formatted = formatAdmission(admission);
   formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
+  formatted.latestInvoice = await getLatestInvoiceForResident(admission.residentId?._id || admission.residentId);
   return { admission: formatted };
 };
 
@@ -544,6 +552,7 @@ const adminGetAdmission = async (admissionId, user) => {
   }
   const formatted = formatAdmission(admission, { includeFamily: true });
   formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
+  formatted.latestInvoice = await getLatestInvoiceForResident(admission.residentId?._id || admission.residentId);
   return { admission: formatted };
 };
 
@@ -860,9 +869,9 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     throw new ServiceError('Admission request not found', 404);
   }
 
-  if (!['consulting', 'assessing', 'contracting'].includes(admission.status)) {
+  if (!['new_request', 'consulting', 'assessing', 'contracting'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only consulting, assessing, contracting are allowed.`,
+      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting are allowed.`,
       400
     );
   }

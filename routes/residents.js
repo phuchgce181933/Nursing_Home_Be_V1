@@ -740,5 +740,6 @@ router.get('/:residentId', protect, allStaff, getResidentDetail);
 
 // Merge param router for vital logs & medical records
 router.use('/:residentId/medical-records', require('./medicalRecords'));
+router.use('/:residentId/invoices', require('./payments'));
 
 module.exports = router;

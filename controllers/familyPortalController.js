@@ -18,6 +18,24 @@ const getResident = async (req, res) => {
   }
 };
 
+const getResidentBillingSummary = async (req, res) => {
+  try {
+    const result = await familyPortalService.getResidentBillingSummary(req.user, req.params.residentId);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const getResidentInvoices = async (req, res) => {
+  try {
+    const result = await familyPortalService.getResidentInvoices(req.user, req.params.residentId, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const getVitals = async (req, res) => {
   try {
     const result = await familyPortalService.getVitals(req.user, req.params.residentId);
@@ -99,9 +117,40 @@ const getHealthReport = async (req, res) => {
   }
 };
 
+const getDailyActivities = async (req, res) => {
+  try {
+    const result = await familyPortalService.getDailyActivities(req.user, req.params.residentId, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const getCareSchedule = async (req, res) => {
+  try {
+    const result = await familyPortalService.getCareSchedule(req.user, req.params.residentId, req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const downloadReport = async (req, res) => {
+  try {
+    const { csv, filename } = await familyPortalService.downloadReport(req.user, req.params.residentId, req.query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send('﻿' + csv);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getResidents,
   getResident,
+  getResidentBillingSummary,
+  getResidentInvoices,
   getVitals,
   getHealthHistory,
   getHealthChart,
@@ -111,4 +160,7 @@ module.exports = {
   getActivities,
   getCareAppointments,
   getHealthReport,
+  getDailyActivities,
+  getCareSchedule,
+  downloadReport,
 };

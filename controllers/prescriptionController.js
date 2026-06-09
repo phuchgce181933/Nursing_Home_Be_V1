@@ -4,6 +4,7 @@ const Resident = require('../models/resident');
 const Medication = require('../models/medication');
 const StaffProfile = require('../models/staffProfile');
 const MedicationSchedule = require('../models/MedicationSchedule');
+const paymentService = require('../services/paymentService');
 const {
   checkAllergies,
   checkContraindications,
@@ -534,4 +535,28 @@ const getPrescription = async (req, res) => {
   }
 };
 
-module.exports = { createPrescription, editPrescription, listPrescriptions, getPrescription };
+const estimatePrescriptionCost = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { residentId } = req.query;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid prescription id' });
+    }
+    if (!residentId || !isValidObjectId(residentId)) {
+      return res.status(400).json({ success: false, message: 'residentId query parameter is required' });
+    }
+
+    const scope = await getResidentScope(req.user._id, req.user.role);
+    if (!isInScope(residentId, scope)) {
+      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+    }
+
+    const medicationCost = await paymentService.estimateMedicationCostForPrescription(id, residentId);
+    return res.status(200).json({ success: true, data: { medicationCost } });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+module.exports = { createPrescription, editPrescription, listPrescriptions, getPrescription, estimatePrescriptionCost };

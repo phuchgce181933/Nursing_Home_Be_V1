@@ -23,6 +23,7 @@ const {
 } = require('../utils/rolePolicy');
 
 const STAFF_ROLES = ['doctor', 'nurse', 'caregiver', 'chef', 'manager', 'staff', 'pharmacist'];
+const ACCOUNT_CREATION_ROLES = [...STAFF_ROLES, 'family'];
 const STAFF_CODE_PREFIXES = {
   doctor: 'DOC',
   nurse: 'NUR',
@@ -32,8 +33,10 @@ const STAFF_CODE_PREFIXES = {
   staff: 'STF',
   pharmacist: 'PHA',
   admin: 'ADM',
+  family: 'FAM',
 };
-const VALID_ROLES = [...STAFF_ROLES, 'admin'];
+const VALID_STAFF_ROLES = [...STAFF_ROLES, 'admin'];
+const VALID_ROLES = [...ACCOUNT_CREATION_ROLES, 'admin'];
 const DEFAULT_SPECIALTY_BY_ROLE = {
   admin: 'Administration',
   manager: 'Operations Management',
@@ -43,6 +46,7 @@ const DEFAULT_SPECIALTY_BY_ROLE = {
   chef: 'Kitchen Management',
   pharmacist: 'Pharmacy',
   staff: 'General Support',
+  family: 'Family Portal',
 };
 
 const generateStaffCode = (role) => {
@@ -105,7 +109,7 @@ const getMe = async (user) => {
     createdAt: user.createdAt,
   };
 
-  if (VALID_ROLES.includes(user.role)) {
+  if (VALID_STAFF_ROLES.includes(user.role)) {
     const staffProfile = await staffProfileRepo.findByUserId(user._id);
     userData.staffProfile = staffProfile || buildFallbackStaffProfile(user);
   }
@@ -116,8 +120,8 @@ const getMe = async (user) => {
 const listStaffAccounts = async ({ role, isActive, search, page = 1, limit = 20 }) => {
   const filter = { role: { $in: [...STAFF_ROLES, 'admin'] } };
   if (role) {
-    if (![...STAFF_ROLES, 'admin'].includes(role)) {
-      throw new ServiceError(`role phải thuộc một trong: ${[...STAFF_ROLES, 'admin'].join(', ')}`, 400);
+    if (![...STAFF_ROLES, 'admin', 'family'].includes(role)) {
+      throw new ServiceError(`role phải thuộc một trong: ${[...STAFF_ROLES, 'admin', 'family'].join(', ')}`, 400);
     }
     filter.role = role;
   }
@@ -163,6 +167,7 @@ const createStaffAccount = async (
     specialty,
     staffCode,
     certifications,
+    certificationDocuments,
     username,
     avatarUrl,
     avatarPublicId,
@@ -182,7 +187,7 @@ const createStaffAccount = async (
   const normalizedRole = normalizeRole(role);
   if (!normalizedRole) throw new ServiceError('Thiếu trường role', 400);
   assertActorMayCreateRole(currentUser, normalizedRole);
-  const allowedRoles = currentUser?.role === 'manager' ? OPERATIONAL_ASSIGNABLE_ROLES : STAFF_ROLES;
+  const allowedRoles = currentUser?.role === 'manager' ? OPERATIONAL_ASSIGNABLE_ROLES : ACCOUNT_CREATION_ROLES;
   if (!allowedRoles.includes(normalizedRole)) {
     throw new ServiceError(`role phải thuộc một trong: ${allowedRoles.join(', ')}`, 400);
   }
@@ -195,10 +200,17 @@ const createStaffAccount = async (
     if (existingUsername) throw new ServiceError('Tên đăng nhập đã được sử dụng', 409);
   }
 
-  const resolvedStaffCode = staffCode ? staffCode.toUpperCase().trim() : generateStaffCode(normalizedRole);
-  const codeConflict = await staffProfileRepo.findByStaffCode(resolvedStaffCode);
-  if (codeConflict) {
-    throw new ServiceError(`staffCode "${resolvedStaffCode}" đã tồn tại`, 409);
+  const resolvedStaffCode = normalizedRole !== 'family'
+    ? staffCode
+      ? staffCode.toUpperCase().trim()
+      : generateStaffCode(normalizedRole)
+    : undefined;
+
+  if (resolvedStaffCode) {
+    const codeConflict = await staffProfileRepo.findByStaffCode(resolvedStaffCode);
+    if (codeConflict) {
+      throw new ServiceError(`staffCode "${resolvedStaffCode}" đã tồn tại`, 409);
+    }
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -217,13 +229,29 @@ const createStaffAccount = async (
     isActive: true,
   });
 
-  const staffProfile = await staffProfileRepo.createStaffProfile({
-    userId: user._id,
-    staffCode: resolvedStaffCode,
-    roleCategory: normalizedRole,
-    specialty: specialty?.trim() || DEFAULT_SPECIALTY_BY_ROLE[normalizedRole],
-    certifications: certifications || [],
-  });
+  const parsedCertificationDocuments = (() => {
+    if (!certificationDocuments) return [];
+    if (typeof certificationDocuments === 'string') {
+      try {
+        return JSON.parse(certificationDocuments);
+      } catch {
+        return [];
+      }
+    }
+    return Array.isArray(certificationDocuments) ? certificationDocuments : [];
+  })();
+
+  let staffProfile;
+  if (normalizedRole !== 'family') {
+    staffProfile = await staffProfileRepo.createStaffProfile({
+      userId: user._id,
+      staffCode: resolvedStaffCode,
+      roleCategory: normalizedRole,
+      specialty: specialty?.trim() || DEFAULT_SPECIALTY_BY_ROLE[normalizedRole],
+      certifications: certifications || [],
+      certificationDocuments: parsedCertificationDocuments,
+    });
+  }
 
   await mailService.sendStaffAccountCreatedEmail({
     to: user.email,
@@ -246,12 +274,14 @@ const createStaffAccount = async (
       isActive: user.isActive,
       createdAt: user.createdAt,
     },
-    staffProfile: {
-      _id: staffProfile._id,
-      staffCode: staffProfile.staffCode,
-      roleCategory: staffProfile.roleCategory,
-      specialty: staffProfile.specialty,
-    },
+    staffProfile: staffProfile
+      ? {
+          _id: staffProfile._id,
+          staffCode: staffProfile.staffCode,
+          roleCategory: staffProfile.roleCategory,
+          specialty: staffProfile.specialty,
+        }
+      : undefined,
   };
 };
 

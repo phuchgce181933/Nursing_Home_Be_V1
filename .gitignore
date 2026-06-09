@@ -43,6 +43,7 @@ config/firebase-service-account.json
 # Sequence diagrams (local docs only)
 docs/sequence/
 docs/class diagram/
+docs/Specification/
 
 # Postman collections (local test data only)
 *.postman_collection.json

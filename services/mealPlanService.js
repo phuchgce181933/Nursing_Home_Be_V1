@@ -3,6 +3,7 @@ const ServiceError = require('./serviceError');
 const mealPlanDayRepo = require('../repositories/mealPlanDayRepository');
 const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
+const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
 const Resident = require('../models/resident');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 
@@ -114,13 +115,15 @@ const assertValidObjectId = (value, label) => {
   }
 };
 
-const resolveMealTimeFromPublishedSchedule = async (workDateStr, residentId, mealType, publishedCache) => {
-  if (publishedCache?.byResident) {
-    const times = publishedCache.byResident[String(residentId)];
-    if (times?.[mealType]) return times[mealType];
-    return publishedCache.defaultMealTimes?.[mealType] || DEFAULT_MEAL_TIMES[mealType];
+const resolveMealTimeFromSchedule = (residentId, mealType, scheduleCache) => {
+  const times = scheduleCache?.byResident?.[String(residentId)];
+  if (!times?.[mealType]) {
+    throw new ServiceError(
+      `Cư dân không có giờ ${mealType} trong lịch giờ ăn đã chọn`,
+      400
+    );
   }
-  return mealTimeScheduleService.resolveMealTimeForResident(workDateStr, residentId, mealType);
+  return times[mealType];
 };
 
 const validateEntry = (entry, index, mealTimeOverride) => {
@@ -149,22 +152,31 @@ const validateEntry = (entry, index, mealTimeOverride) => {
   };
 };
 
-const normalizeEntriesWithPublishedSchedule = async (entriesInput, workDateStr) => {
-  const publishedCache = await mealTimeScheduleService.getPublishedTimes(workDateStr);
+const normalizeEntriesWithSchedule = async (entriesInput, workDateStr, mealTimeScheduleDayId) => {
+  const residentIds = [...new Set(entriesInput.map((e) => String(e?.residentId || '')).filter(Boolean))];
+  await mealTimeScheduleService.assertPublishedScheduleForMealPlan(
+    mealTimeScheduleDayId,
+    workDateStr,
+    residentIds
+  );
+  const scheduleCache = await mealTimeScheduleService.buildTimesByResidentFromSchedule(mealTimeScheduleDayId);
   const normalized = [];
   for (const [index, raw] of entriesInput.entries()) {
     let mealTimeOverride;
     if (!raw?.mealTime?.trim()) {
-      mealTimeOverride = await resolveMealTimeFromPublishedSchedule(
-        workDateStr,
-        raw.residentId,
-        raw.mealType,
-        publishedCache
-      );
+      mealTimeOverride = resolveMealTimeFromSchedule(raw.residentId, raw.mealType, scheduleCache);
     }
     normalized.push(validateEntry(raw, index, mealTimeOverride));
   }
   return normalized;
+};
+
+const resolveMealTimeScheduleDayId = (body, existingDay) => {
+  const fromBody = body?.mealTimeScheduleDayId;
+  if (fromBody) return String(fromBody).trim();
+  const fromDay = existingDay?.mealTimeScheduleDayId?._id || existingDay?.mealTimeScheduleDayId;
+  if (fromDay) return String(fromDay);
+  throw new ServiceError('mealTimeScheduleDayId là bắt buộc — hãy chọn lịch giờ ăn đã đăng', 400);
 };
 
 const assertEntryMealTimesFromNow = (entries, workDateStr) => {
@@ -217,21 +229,11 @@ const getTemplates = async () => ({
   })),
 });
 
-const listResidentsForMealPlan = async (params = {}) => {
-  const query = { residencyStatus: params.status || 'admitted' };
-  const search = String(params.search || '').trim();
-  if (search) {
-    query.$or = [
-      { fullName: { $regex: search, $options: 'i' } },
-      { residentCode: { $regex: search, $options: 'i' } },
-    ];
+const listResidentsForMealPlan = async (params = {}, actorUser) => {
+  if (!actorUser?._id) {
+    throw new ServiceError('Không xác định được người dùng', 401);
   }
-  const residents = await Resident.find(query)
-    .select('_id residentCode fullName allergies chronicConditions')
-    .sort({ fullName: 1 })
-    .limit(500)
-    .lean();
-  return { data: residents };
+  return listAssignedAdmittedResidentsForUser(actorUser._id, { search: params.search });
 };
 
 const createDraft = async (body, actorUserId) => {
@@ -239,18 +241,20 @@ const createDraft = async (body, actorUserId) => {
   if (workDate < todayVN()) {
     throw new ServiceError('Không thể tạo meal plan cho ngày trong quá khứ', 400);
   }
+  const mealTimeScheduleDayId = resolveMealTimeScheduleDayId(body);
   const careStage = String(body.careStage || '').trim();
   if (!MEAL_STAGES.includes(careStage)) {
     throw new ServiceError(`careStage phải thuộc một trong: ${MEAL_STAGES.join(', ')}`, 400);
   }
   const entriesInput = Array.isArray(body.entries) ? body.entries : [];
   if (!entriesInput.length) throw new ServiceError('entries là bắt buộc và không được để trống', 400);
-  const entries = await normalizeEntriesWithPublishedSchedule(entriesInput, workDate);
+  const entries = await normalizeEntriesWithSchedule(entriesInput, workDate, mealTimeScheduleDayId);
   assertEntryMealTimesFromNow(entries, workDate);
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
-  if (residentIds.length < 2) {
-    throw new ServiceError('Meal plan phải có ít nhất 2 cư dân', 400);
+  if (residentIds.length < 1) {
+    throw new ServiceError('Meal plan phải có ít nhất 1 cư dân', 400);
   }
+  await assertResidentsAssignedToUser(actorUserId, residentIds);
   const residentCount = await Resident.countDocuments({ _id: { $in: residentIds } });
   if (residentCount !== residentIds.length) {
     throw new ServiceError('Có cư dân trong danh sách entries không tồn tại', 400);
@@ -262,6 +266,7 @@ const createDraft = async (body, actorUserId) => {
     const day = await mealPlanDayRepo.create(
       {
         workDate: new Date(workDate),
+        mealTimeScheduleDayId,
         careStage,
         title: body.title?.trim() || `Meal plan ${careStage} - ${workDate}`,
         status: 'draft',
@@ -296,18 +301,32 @@ const updateDraft = async (id, body, actorUserId) => {
     updatePayload.careStage = careStage;
   }
   if (body.title !== undefined) updatePayload.title = body.title?.trim() || null;
+  if (body.mealTimeScheduleDayId !== undefined) {
+    assertValidObjectId(body.mealTimeScheduleDayId, 'mealTimeScheduleDayId');
+    updatePayload.mealTimeScheduleDayId = body.mealTimeScheduleDayId;
+  }
 
   const hasEntries = Array.isArray(body.entries);
   const targetWorkDateStr =
     body.workDate !== undefined
       ? parseWorkDateStrict(body.workDate)
       : workDateToVNString(day.workDate);
+  const mealTimeScheduleDayId = resolveMealTimeScheduleDayId(body, day);
   const normalizedEntries = hasEntries
-    ? await normalizeEntriesWithPublishedSchedule(body.entries, targetWorkDateStr)
+    ? await normalizeEntriesWithSchedule(body.entries, targetWorkDateStr, mealTimeScheduleDayId)
     : null;
   if (hasEntries && !normalizedEntries.length) throw new ServiceError('entries không được để trống', 400);
   if (normalizedEntries) {
     assertEntryMealTimesFromNow(normalizedEntries, targetWorkDateStr);
+  } else if (body.workDate !== undefined || body.mealTimeScheduleDayId !== undefined) {
+    const residentIds = (await mealPlanEntryRepo.findByDayId(id)).map((e) =>
+      String(e.residentId?._id || e.residentId)
+    );
+    await mealTimeScheduleService.assertPublishedScheduleForMealPlan(
+      mealTimeScheduleDayId,
+      targetWorkDateStr,
+      residentIds
+    );
   }
 
   await runWithOptionalTransaction(async (session) => {
@@ -328,9 +347,10 @@ const updateDraft = async (id, body, actorUserId) => {
     );
     if (hasEntries) {
       const residentIds = [...new Set(normalizedEntries.map((e) => e.residentId))];
-      if (residentIds.length < 2) {
-        throw new ServiceError('Meal plan phải có ít nhất 2 cư dân', 400);
+      if (residentIds.length < 1) {
+        throw new ServiceError('Meal plan phải có ít nhất 1 cư dân', 400);
       }
+      await assertResidentsAssignedToUser(actorUserId, residentIds);
       await mealPlanEntryRepo.deleteByDayId(id, dbOpts);
       await mealPlanEntryRepo.createMany(normalizedEntries.map((e) => ({ ...e, mealPlanDayId: id })), dbOpts);
     }
@@ -398,7 +418,15 @@ const publishPlan = async (id, actorUserId) => {
   if (!entries.length) throw new ServiceError('Không thể publish meal plan rỗng', 400);
   assertEntryMealTimesFromNow(entries, workDate);
   const residentIds = [...new Set(entries.map((e) => String(e.residentId?._id || e.residentId)))];
-  if (residentIds.length < 2) throw new ServiceError('Meal plan phải có ít nhất 2 cư dân trước khi publish', 400);
+  if (residentIds.length < 1) {
+    throw new ServiceError('Meal plan phải có ít nhất 1 cư dân trước khi publish', 400);
+  }
+  const scheduleDayId = day.mealTimeScheduleDayId?._id || day.mealTimeScheduleDayId;
+  if (!scheduleDayId) {
+    throw new ServiceError('Meal plan phải gắn với lịch giờ ăn đã đăng trước khi publish', 400);
+  }
+  await mealTimeScheduleService.assertPublishedScheduleForMealPlan(scheduleDayId, workDate, residentIds);
+  await assertResidentsAssignedToUser(actorUserId, residentIds);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

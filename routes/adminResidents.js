@@ -9,7 +9,10 @@ const {
 } = require('../controllers/residentController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('admin'));
+const adminOnly = authorize('admin');
+const adminManager = authorize('admin', 'manager');
+
+router.use(protect);
 
 /**
  * @swagger
@@ -86,7 +89,7 @@ router.use(protect, authorize('admin'));
  *       403:
  *         description: Access forbidden
  */
-router.post('/', adminCreateResident);
+router.post('/', adminOnly, adminCreateResident);
 
 /**
  * @swagger
@@ -149,7 +152,7 @@ router.post('/', adminCreateResident);
  *       200:
  *         description: Paginated list of residents
  */
-router.get('/', adminListResidents);
+router.get('/', adminManager, adminListResidents);
 
 /**
  * @swagger
@@ -171,7 +174,7 @@ router.get('/', adminListResidents);
  *       404:
  *         description: Resident not found
  */
-router.get('/:residentId', adminGetResident);
+router.get('/:residentId', adminManager, adminGetResident);
 
 /**
  * @swagger
@@ -225,7 +228,7 @@ router.get('/:residentId', adminGetResident);
  *       200:
  *         description: Resident personal info updated
  */
-router.patch('/:residentId/personal-info', adminUpdatePersonalInfo);
+router.patch('/:residentId/personal-info', adminOnly, adminUpdatePersonalInfo);
 
 /**
  * @swagger
@@ -260,6 +263,6 @@ router.patch('/:residentId/personal-info', adminUpdatePersonalInfo);
  *       200:
  *         description: Resident family info updated
  */
-router.patch('/:residentId/family-info', adminUpdateFamilyInfo);
+router.patch('/:residentId/family-info', adminOnly, adminUpdateFamilyInfo);
 
 module.exports = router;

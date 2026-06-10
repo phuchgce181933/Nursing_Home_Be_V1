@@ -18,6 +18,7 @@ const {
 } = require('../utils/shiftTime');
 const { triggerReadinessSyncForWorkDate } = require('./readinessSyncService');
 const { assertAssignableStaffProfile, residentCoversStaffArea } = require('../utils/staffAssignment');
+const { assertResidentAssignedToStaffProfile } = require('./assignedResidentService');
 
 const SCHEDULE_TEMPLATES = [
   {
@@ -220,8 +221,11 @@ const createDraft = async (body, actorUserId) => {
   const entries = entriesInput.map(validateAndNormalizeEntry);
   assertEntryTimesFromNow(entries, workDate);
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
-  if (residentIds.length < 2) {
-    throw new ServiceError('Lịch nháp phải có ít nhất 2 cư dân cho kế hoạch nhiều cư dân', 400);
+  if (residentIds.length < 1) {
+    throw new ServiceError('Lịch nháp phải có ít nhất 1 cư dân', 400);
+  }
+  for (const entry of entries) {
+    await assertResidentAssignedToStaffProfile(entry.staffProfileId, entry.residentId);
   }
 
   let createdDayId;
@@ -268,6 +272,13 @@ const updateDraft = async (id, body, actorUserId) => {
   }
   if (entries) {
     assertEntryTimesFromNow(entries, nextWorkDate);
+    const residentIds = [...new Set(entries.map((e) => e.residentId))];
+    if (residentIds.length < 1) {
+      throw new ServiceError('Lịch nháp phải có ít nhất 1 cư dân', 400);
+    }
+    for (const entry of entries) {
+      await assertResidentAssignedToStaffProfile(entry.staffProfileId, entry.residentId);
+    }
   }
 
   await runWithOptionalTransaction(async (session) => {

@@ -19,6 +19,7 @@ const ensureDefaultShiftTemplates = async () => {
           colorLabel: def.colorLabel,
           description: def.description,
           isSystem: true,
+          isFlexibleTime: Boolean(def.isFlexibleTime),
           status: 'active',
         },
         $unset: { minStaff: '', durationHours: '' },

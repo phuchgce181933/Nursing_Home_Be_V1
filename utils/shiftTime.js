@@ -102,6 +102,15 @@ const getShiftEndDateTime = (workDateStr, startTime, endTime) => {
 const isShiftEnded = (workDateStr, startTime, endTime, now = nowVN()) =>
   getShiftEndDateTime(workDateStr, startTime, endTime) <= now;
 
+const UNCONFIRMED_AUTO_CANCEL_GRACE_MS = 30 * 60 * 1000;
+
+const isPastUnconfirmedCancelDeadline = (workDateStr, startTime, now = nowVN()) => {
+  const deadline = new Date(
+    getShiftStartDateTime(workDateStr, startTime).getTime() + UNCONFIRMED_AUTO_CANCEL_GRACE_MS
+  );
+  return deadline <= now;
+};
+
 module.exports = {
   VN_TZ,
   toMinutes,
@@ -116,4 +125,7 @@ module.exports = {
   getShiftStartDateTime,
   getShiftEndDateTime,
   isShiftEnded,
+  UNCONFIRMED_AUTO_CANCEL_GRACE_MS,
+  isPastUnconfirmedCancelDeadline,
+  addDaysToDateStr,
 };

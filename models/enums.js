@@ -1,6 +1,7 @@
 const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'caregiver', 'chef', 'pharmacist', 'family', 'staff'];
 const NON_ASSIGNABLE_ROLES = ['admin', 'manager'];
 const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
+const CARE_TASK_ASSIGNEE_ROLES = ['nurse', 'doctor'];
 const GENDERS = ['male', 'female', 'other', 'unknown'];
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'unknown'];
 
@@ -18,7 +19,7 @@ const ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracti
 
 const SHIFT_STATUSES = ['draft', 'published', 'confirmed', 'completed', 'cancelled'];
 const SHIFT_TEMPLATE_STATUSES = ['active', 'inactive', 'archived'];
-const SHIFT_TYPES = ['morning', 'afternoon', 'night', 'on_call'];
+const SHIFT_TYPES = ['morning', 'afternoon', 'night', 'on_call', 'custom'];
 const CONFLICT_TYPES = [
   'INVALID_TIME',
   'OVERLAP',
@@ -62,6 +63,7 @@ module.exports = {
   ROLES,
   NON_ASSIGNABLE_ROLES,
   OPERATIONAL_ASSIGNABLE_ROLES,
+  CARE_TASK_ASSIGNEE_ROLES,
   GENDERS,
   BLOOD_TYPES,
   ROOM_TYPES,

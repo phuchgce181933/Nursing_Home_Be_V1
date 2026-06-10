@@ -12,8 +12,9 @@ const respond = (res, promise) =>
       })
     );
 
-const listShifts = (req, res) => respond(res, svc.listShifts(req.query, req.query));
-const getShift = (req, res) => respond(res, svc.getShift(req.params.id));
+const listShifts = (req, res) => respond(res, svc.listShifts(req.query, req.query, req.user));
+const listMyShifts = (req, res) => respond(res, svc.listMyShifts(req.user, req.query));
+const getShift = (req, res) => respond(res, svc.getShift(req.params.id, req.user));
 const getSchedule = (req, res) => respond(res, svc.getSchedule(req.query.fromDate, req.query.toDate, {}));
 
 const createShift = (req, res) =>
@@ -34,7 +35,7 @@ const checkConflicts = (req, res) => respond(res, svc.previewConflicts(req.query
 const publishShift = (req, res) =>
   svc.publishShift(req.params.id, req.user._id).then((result) => res.json({ success: true, ...result })).catch((err) => res.status(err.status || 500).json({ success: false, message: err.message, ...(err.conflicts && { conflicts: err.conflicts }) }));
 
-const confirmShift = (req, res) => respond(res, svc.confirmShift(req.params.id, req.user._id));
+const confirmShift = (req, res) => respond(res, svc.confirmShift(req.params.id, req.user));
 
 const updateShift = (req, res) => {
   const isAdmin = ['admin', 'manager'].includes(req.user.role);
@@ -56,6 +57,7 @@ const deleteShift = (req, res) => respond(res, svc.deleteShift(req.params.id));
 
 module.exports = {
   listShifts,
+  listMyShifts,
   getShift,
   getSchedule,
   checkConflicts,

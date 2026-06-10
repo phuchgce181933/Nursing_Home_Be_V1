@@ -3,7 +3,7 @@ const router = express.Router();
 const ctrl = require('../controllers/caregiverCareTaskController');
 const { protect, authorize } = require('../middleware/auth');
 
-const CAREGIVER_ROLES = ['caregiver'];
+const CARE_TASK_SELF_SERVICE_ROLES = ['caregiver', 'nurse', 'doctor'];
 
 /**
  * @swagger
@@ -44,7 +44,7 @@ const CAREGIVER_ROLES = ['caregiver'];
  *       200:
  *         description: Paginated care tasks for the caregiver
  */
-router.get('/', protect, authorize(...CAREGIVER_ROLES), ctrl.listTasks);
+router.get('/', protect, authorize(...CARE_TASK_SELF_SERVICE_ROLES), ctrl.listTasks);
 
 /**
  * @swagger
@@ -66,7 +66,7 @@ router.get('/', protect, authorize(...CAREGIVER_ROLES), ctrl.listTasks);
  *       403:
  *         description: Not your task
  */
-router.get('/:id', protect, authorize(...CAREGIVER_ROLES), ctrl.getTask);
+router.get('/:id', protect, authorize(...CARE_TASK_SELF_SERVICE_ROLES), ctrl.getTask);
 
 /**
  * @swagger
@@ -99,6 +99,6 @@ router.get('/:id', protect, authorize(...CAREGIVER_ROLES), ctrl.getTask);
  *       200:
  *         description: Status updated
  */
-router.put('/:id/status', protect, authorize(...CAREGIVER_ROLES), ctrl.updateStatus);
+router.put('/:id/status', protect, authorize(...CARE_TASK_SELF_SERVICE_ROLES), ctrl.updateStatus);
 
 module.exports = router;

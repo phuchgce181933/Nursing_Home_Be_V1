@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 const ServiceError = require('../services/serviceError');
 const userRepo = require('../repositories/userRepository');
-const { NON_ASSIGNABLE_ROLES } = require('../models/enums');
+const staffProfileRepo = require('../repositories/staffProfileRepository');
+const { NON_ASSIGNABLE_ROLES, CARE_TASK_ASSIGNEE_ROLES } = require('../models/enums');
 
 const isAssignableRole = (role) => {
   if (!role) return false;
@@ -27,6 +28,31 @@ const assertAssignableStaffByUserId = async (userId) => {
   if (!user) throw new ServiceError('Staff not found', 404);
   assertAssignableRole(user.role);
   return user;
+};
+
+const assertCareTaskAssigneeRole = (role) => {
+  if (!CARE_TASK_ASSIGNEE_ROLES.includes(String(role || '').trim().toLowerCase())) {
+    throw new ServiceError(
+      'Chỉ có thể giao nhiệm vụ chăm sóc cho y tá hoặc bác sĩ',
+      400
+    );
+  }
+};
+
+const idOf = (value) => String(value?._id || value || '');
+
+const assertActorOwnsCareTask = async (task, actorUserId) => {
+  if (!actorUserId) {
+    throw new ServiceError('Bạn không có quyền cập nhật trạng thái nhiệm vụ này', 403);
+  }
+  const profile = await staffProfileRepo.findByUserId(actorUserId);
+  if (!profile) {
+    throw new ServiceError('Bạn không có quyền cập nhật trạng thái nhiệm vụ này', 403);
+  }
+  if (idOf(task.staffProfileId) !== idOf(profile._id)) {
+    throw new ServiceError('Chỉ nhân viên được giao nhiệm vụ mới có thể xác nhận đang làm hoặc hoàn thành', 403);
+  }
+  return profile;
 };
 
 const assertAssignableStaffProfile = async (profile) => {
@@ -91,6 +117,8 @@ module.exports = {
   isAssignableRole,
   getAssignableFlags,
   assertAssignableRole,
+  assertCareTaskAssigneeRole,
+  assertActorOwnsCareTask,
   assertAssignableStaffByUserId,
   assertAssignableStaffProfile,
   parseResidentIds,

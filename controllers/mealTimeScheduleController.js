@@ -10,7 +10,7 @@ const getTemplates = (req, res) =>
 
 const listResidents = (req, res) =>
   svc
-    .listResidentsForMealTimeSchedule(req.query)
+    .listResidentsForMealTimeSchedule(req.query, req.user)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
 

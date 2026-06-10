@@ -15,7 +15,9 @@ const listTemplates = async (filter = {}) => {
   if (filter.shiftType) query.shiftType = filter.shiftType;
   const templates = await shiftTemplateRepo.findAll(query);
   const data = templates.map(formatTemplate);
-  const totalHoursPerDay = Math.round(data.reduce((sum, t) => sum + t.totalHours, 0) * 100) / 100;
+  const totalHoursPerDay = Math.round(
+    data.filter((t) => !t.isFlexibleTime).reduce((sum, t) => sum + t.totalHours, 0) * 100
+  ) / 100;
   return { data, totalHoursPerDay };
 };
 

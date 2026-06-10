@@ -144,6 +144,14 @@ const updateById = async (id, data) =>
 
 const deleteById = async (id) => Shift.findByIdAndDelete(id);
 
+const findPublishedInWorkDateRange = (fromDate, toDate) =>
+  Shift.find({
+    status: 'published',
+    workDate: { $gte: fromDate, $lte: toDate },
+  })
+    .select('_id workDate startTime endTime status assignedStaffId')
+    .lean();
+
 module.exports = {
   create,
   findById,
@@ -159,6 +167,7 @@ module.exports = {
   findShiftsByStaffIdsOnDate,
   findByStaffAndDateRange,
   findByDateRange,
+  findPublishedInWorkDateRange,
   updateById,
   deleteById,
 };

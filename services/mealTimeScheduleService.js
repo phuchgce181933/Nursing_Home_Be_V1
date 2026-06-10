@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const mealTimeScheduleDayRepo = require('../repositories/mealTimeScheduleDayRepository');
 const mealTimeScheduleEntryRepo = require('../repositories/mealTimeScheduleEntryRepository');
+const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
 const Resident = require('../models/resident');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 
@@ -135,21 +136,55 @@ const getTemplates = async () => ({
   templates: MEAL_TIME_TEMPLATES.map((t) => ({ ...t, source: 'template' })),
 });
 
-const listResidentsForMealTimeSchedule = async (params = {}) => {
-  const query = { residencyStatus: params.status || 'admitted' };
-  const search = String(params.search || '').trim();
-  if (search) {
-    query.$or = [
-      { fullName: { $regex: search, $options: 'i' } },
-      { residentCode: { $regex: search, $options: 'i' } },
-    ];
+const listResidentsForMealTimeSchedule = async (params = {}, actorUser) => {
+  if (!actorUser?._id) {
+    throw new ServiceError('Không xác định được người dùng', 401);
   }
-  const residents = await Resident.find(query)
-    .select('_id residentCode fullName')
-    .sort({ fullName: 1 })
-    .limit(500)
-    .lean();
-  return { data: residents };
+  return listAssignedAdmittedResidentsForUser(actorUser._id, {
+    search: params.search,
+    select: '_id residentCode fullName',
+  });
+};
+
+const buildTimesByResidentFromSchedule = async (scheduleDayId) => {
+  assertValidObjectId(scheduleDayId, 'mealTimeScheduleDayId');
+  const entries = await mealTimeScheduleEntryRepo.findByDayId(scheduleDayId);
+  const byResident = {};
+  for (const row of entries) {
+    const rid = String(row.residentId?._id || row.residentId);
+    byResident[rid] = {
+      breakfast: row.breakfastTime,
+      lunch: row.lunchTime,
+      dinner: row.dinnerTime,
+    };
+  }
+  return { byResident, defaultMealTimes: DEFAULT_MEAL_TIMES };
+};
+
+const assertPublishedScheduleForMealPlan = async (scheduleDayId, workDateStr, residentIds = []) => {
+  assertValidObjectId(scheduleDayId, 'mealTimeScheduleDayId');
+  const day = await mealTimeScheduleDayRepo.findById(scheduleDayId);
+  if (!day) throw new ServiceError('Không tìm thấy lịch giờ ăn', 404);
+  if (day.status !== 'published') {
+    throw new ServiceError('Meal plan chỉ có thể gắn với lịch giờ ăn đã đăng (published)', 400);
+  }
+  const scheduleWorkDate = workDateToVNString(day.workDate);
+  if (scheduleWorkDate !== workDateStr) {
+    throw new ServiceError('workDate của meal plan phải trùng với ngày của lịch giờ ăn đã chọn', 400);
+  }
+
+  const ids = [...new Set((residentIds || []).map(String).filter(Boolean))];
+  if (!ids.length) return day;
+
+  const { byResident } = await buildTimesByResidentFromSchedule(scheduleDayId);
+  const missing = ids.filter((rid) => !byResident[rid]);
+  if (missing.length) {
+    throw new ServiceError(
+      'Có cư dân trong meal plan không thuộc lịch giờ ăn đã chọn. Hãy cập nhật lịch giờ ăn hoặc chọn lịch phù hợp.',
+      400
+    );
+  }
+  return day;
 };
 
 const getPublishedTimes = async (workDateInput, residentIdsInput = []) => {
@@ -201,9 +236,10 @@ const createDraft = async (body, actorUserId) => {
   assertEntryTimesFromNow(entries, workDate);
 
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
-  if (residentIds.length < 2) {
-    throw new ServiceError('Lịch giờ ăn phải có ít nhất 2 cư dân', 400);
+  if (residentIds.length < 1) {
+    throw new ServiceError('Lịch giờ ăn phải có ít nhất 1 cư dân', 400);
   }
+  await assertResidentsAssignedToUser(actorUserId, residentIds);
   const residentCount = await Resident.countDocuments({ _id: { $in: residentIds } });
   if (residentCount !== residentIds.length) {
     throw new ServiceError('Có cư dân trong danh sách entries không tồn tại', 400);
@@ -275,9 +311,10 @@ const updateDraft = async (id, body, actorUserId) => {
     );
     if (hasEntries) {
       const residentIds = [...new Set(normalizedEntries.map((e) => e.residentId))];
-      if (residentIds.length < 2) {
-        throw new ServiceError('Lịch giờ ăn phải có ít nhất 2 cư dân', 400);
+      if (residentIds.length < 1) {
+        throw new ServiceError('Lịch giờ ăn phải có ít nhất 1 cư dân', 400);
       }
+      await assertResidentsAssignedToUser(actorUserId, residentIds);
       await mealTimeScheduleEntryRepo.deleteByDayId(id, dbOpts);
       await mealTimeScheduleEntryRepo.createMany(
         normalizedEntries.map((e) => ({ ...e, mealTimeScheduleDayId: id })),
@@ -325,6 +362,12 @@ const deleteDraft = async (id) => {
     throw new ServiceError('Chỉ có thể xóa lịch giờ ăn ở trạng thái nháp', 400);
   }
 
+  const MealPlanDay = require('../models/mealPlanDay');
+  const linkedPlans = await MealPlanDay.countDocuments({ mealTimeScheduleDayId: id });
+  if (linkedPlans > 0) {
+    throw new ServiceError('Không thể xóa lịch giờ ăn đang được meal plan sử dụng', 409);
+  }
+
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
     await mealTimeScheduleEntryRepo.deleteByDayId(id, dbOpts);
@@ -360,9 +403,10 @@ const publishSchedule = async (id, actorUserId) => {
   );
 
   const residentIds = [...new Set(entries.map((e) => String(e.residentId?._id || e.residentId)))];
-  if (residentIds.length < 2) {
-    throw new ServiceError('Lịch giờ ăn phải có ít nhất 2 cư dân trước khi publish', 400);
+  if (residentIds.length < 1) {
+    throw new ServiceError('Lịch giờ ăn phải có ít nhất 1 cư dân trước khi publish', 400);
   }
+  await assertResidentsAssignedToUser(actorUserId, residentIds);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
@@ -386,6 +430,8 @@ module.exports = {
   DEFAULT_MEAL_TIMES,
   getTemplates,
   listResidentsForMealTimeSchedule,
+  buildTimesByResidentFromSchedule,
+  assertPublishedScheduleForMealPlan,
   getPublishedTimes,
   resolveMealTimeForResident,
   createDraft,

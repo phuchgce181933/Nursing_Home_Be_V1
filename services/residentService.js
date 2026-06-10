@@ -14,9 +14,23 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
-  const limitNum = Math.min(100, Math.max(1, parseInt(query.limit || 20, 10)));
+  const limitNum = Math.min(200, Math.max(1, parseInt(query.limit || 20, 10)));
   const skip = (pageNum - 1) * limitNum;
   return { pageNum, limitNum, skip };
+};
+
+const startOfDay = (value, fieldName) => {
+  const date = parseOptionalDate(value, fieldName);
+  if (!date) return undefined;
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const endOfDay = (value, fieldName) => {
+  const date = parseOptionalDate(value, fieldName);
+  if (!date) return undefined;
+  date.setHours(23, 59, 59, 999);
+  return date;
 };
 
 const parseOptionalDate = (value, fieldName) => {
@@ -948,6 +962,13 @@ const adminListResidents = async (query) => {
   if (query.bloodType) filter.bloodType = query.bloodType;
   if (query.roomId) filter.roomId = query.roomId;
   if (query.bedId) filter.bedId = query.bedId;
+  if (query.admittedFrom || query.admittedTo) {
+    filter.admittedAt = {};
+    const from = startOfDay(query.admittedFrom, 'admittedFrom');
+    const to = endOfDay(query.admittedTo, 'admittedTo');
+    if (from) filter.admittedAt.$gte = from;
+    if (to) filter.admittedAt.$lte = to;
+  }
   if (query.search) {
     const term = String(query.search).trim();
     if (term) {

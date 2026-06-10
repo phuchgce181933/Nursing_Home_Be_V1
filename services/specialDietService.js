@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const specialDietDayRepo = require('../repositories/specialDietDayRepository');
 const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
+const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
 const Resident = require('../models/resident');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 
@@ -139,21 +140,11 @@ const getTemplates = async () => ({
   })),
 });
 
-const listResidentsForSpecialDiet = async (params = {}) => {
-  const query = { residencyStatus: params.status || 'admitted' };
-  const search = String(params.search || '').trim();
-  if (search) {
-    query.$or = [
-      { fullName: { $regex: search, $options: 'i' } },
-      { residentCode: { $regex: search, $options: 'i' } },
-    ];
+const listResidentsForSpecialDiet = async (params = {}, actorUser) => {
+  if (!actorUser?._id) {
+    throw new ServiceError('Không xác định được người dùng', 401);
   }
-  const residents = await Resident.find(query)
-    .select('_id residentCode fullName allergies chronicConditions')
-    .sort({ fullName: 1 })
-    .limit(500)
-    .lean();
-  return { data: residents };
+  return listAssignedAdmittedResidentsForUser(actorUser._id, { search: params.search });
 };
 
 const createDraft = async (body, actorUserId) => {
@@ -167,9 +158,10 @@ const createDraft = async (body, actorUserId) => {
   assertEntryTimesFromNow(entries, workDate);
 
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
-  if (residentIds.length < 2) {
-    throw new ServiceError('Special diet plan phải có ít nhất 2 cư dân', 400);
+  if (residentIds.length < 1) {
+    throw new ServiceError('Special diet plan phải có ít nhất 1 cư dân', 400);
   }
+  await assertResidentsAssignedToUser(actorUserId, residentIds);
   const residentCount = await Resident.countDocuments({ _id: { $in: residentIds } });
   if (residentCount !== residentIds.length) {
     throw new ServiceError('Có cư dân trong danh sách entries không tồn tại', 400);
@@ -239,9 +231,10 @@ const updateDraft = async (id, body, actorUserId) => {
     );
     if (hasEntries) {
       const residentIds = [...new Set(normalizedEntries.map((e) => e.residentId))];
-      if (residentIds.length < 2) {
-        throw new ServiceError('Special diet plan phải có ít nhất 2 cư dân', 400);
+      if (residentIds.length < 1) {
+        throw new ServiceError('Special diet plan phải có ít nhất 1 cư dân', 400);
       }
+      await assertResidentsAssignedToUser(actorUserId, residentIds);
       await specialDietEntryRepo.deleteByDayId(id, dbOpts);
       await specialDietEntryRepo.createMany(normalizedEntries.map((e) => ({ ...e, specialDietDayId: id })), dbOpts);
     }
@@ -311,9 +304,10 @@ const publishPlan = async (id, actorUserId) => {
   assertEntryTimesFromNow(entries, workDate);
 
   const residentIds = [...new Set(entries.map((e) => String(e.residentId?._id || e.residentId)))];
-  if (residentIds.length < 2) {
-    throw new ServiceError('Special diet plan phải có ít nhất 2 cư dân trước khi publish', 400);
+  if (residentIds.length < 1) {
+    throw new ServiceError('Special diet plan phải có ít nhất 1 cư dân trước khi publish', 400);
   }
+  await assertResidentsAssignedToUser(actorUserId, residentIds);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

@@ -27,6 +27,16 @@ const DEFAULT_SHIFTS = [
     colorLabel: '#FF9800',
     description: 'Ca 3 — Chiều/Tối (16:00 – 24:00)',
   },
+  {
+    shiftCode: 'SPLIT',
+    name: 'Ca gãy',
+    shiftType: 'custom',
+    startTime: '00:00',
+    endTime: '23:59',
+    colorLabel: '#9C27B0',
+    description: 'Ca đột xuất — nhập giờ bắt đầu/kết thúc khi phân công',
+    isFlexibleTime: true,
+  },
 ];
 
 const SYSTEM_SHIFT_CODES = DEFAULT_SHIFTS.map((s) => s.shiftCode);

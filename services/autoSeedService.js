@@ -24,10 +24,16 @@ const runAutoSeedIfNeeded = async () => {
     return;
   }
 
+  const { seed } = require('../scripts/seed');
+
+  if (typeof seed !== 'function') {
+    console.log('ℹ️  Auto-seed disabled (scripts/seed.js exports no seed function) — skipping.');
+    return;
+  }
+
   const reason = meta ? '🔄 Seed file changed' : '🌱 No seed data found';
   console.log(`${reason} — running auto-seed (additive mode)...`);
 
-  const { seed } = require('../scripts/seed');
   await seed({ force: false }); // upsert structural, skip content nếu đã có
 
   await col.updateOne(

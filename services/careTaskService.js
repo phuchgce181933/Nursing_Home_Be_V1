@@ -4,9 +4,14 @@ const staffProfileRepo = require('../repositories/staffProfileRepository');
 const userRepo = require('../repositories/userRepository');
 const shiftRepo = require('../repositories/shiftRepository');
 const leaveRequestRepo = require('../repositories/leaveRequestRepository');
-const { CARE_TASK_TYPES, CARE_TASK_STATUSES, CARE_LEVELS, OPERATIONAL_ASSIGNABLE_ROLES } = require('../models/enums');
+const { CARE_TASK_TYPES, CARE_TASK_STATUSES, CARE_LEVELS, CARE_TASK_ASSIGNEE_ROLES } = require('../models/enums');
 const { triggerReadinessSyncForWorkDate } = require('./readinessSyncService');
-const { assertAssignableStaffProfile, residentCoversStaffArea } = require('../utils/staffAssignment');
+const {
+  assertAssignableStaffProfile,
+  assertCareTaskAssigneeRole,
+  assertActorOwnsCareTask,
+  residentCoversStaffArea,
+} = require('../utils/staffAssignment');
 const Resident = require('../models/resident');
 const StaffProfile = require('../models/staffProfile');
 const {
@@ -157,7 +162,7 @@ const getAssignmentContext = async (workDateInput) => {
   const now = nowVN();
 
   const users = await userRepo.findStaffUsers(
-    { role: { $in: OPERATIONAL_ASSIGNABLE_ROLES }, isActive: true, isBanned: false },
+    { role: { $in: CARE_TASK_ASSIGNEE_ROLES }, isActive: true, isBanned: false },
     { skip: 0, limit: 1000 }
   );
 
@@ -250,7 +255,8 @@ const assignCareTask = async (body, actorUserId) => {
   const profile = await resolveStaffProfileId(staffProfileIdInput, userId);
   const staffProfileId = profile._id;
 
-  await assertAssignableStaffProfile(profile);
+  const assigneeRole = await assertAssignableStaffProfile(profile);
+  assertCareTaskAssigneeRole(assigneeRole);
 
   const workDateStr = String(workDate).trim();
   try {
@@ -427,7 +433,9 @@ const getCareTask = async (id) => {
   return task;
 };
 
-const updateCareTaskStatus = async (id, status, notes) => {
+const ASSIGNEE_ONLY_STATUSES = ['in_progress', 'completed'];
+
+const updateCareTaskStatus = async (id, status, notes, actorUser) => {
   const task = await careTaskRepo.findById(id);
   if (!task) throw new ServiceError('Không tìm thấy nhiệm vụ chăm sóc', 404);
 
@@ -436,6 +444,11 @@ const updateCareTaskStatus = async (id, status, notes) => {
       'Chỉ có thể cập nhật thủ công sang in_progress, completed hoặc skipped (bỏ qua). Trạng thái missed (bỏ lỡ) do hệ thống tự gán khi hết ca.',
       400
     );
+  }
+
+  if (ASSIGNEE_ONLY_STATUSES.includes(status)) {
+    const actorId = actorUser?._id || actorUser;
+    await assertActorOwnsCareTask(task, actorId);
   }
 
   const allowed = VALID_TRANSITIONS[task.status];

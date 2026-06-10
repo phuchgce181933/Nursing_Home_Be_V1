@@ -14,6 +14,7 @@ const {
   isRoleAllowedForShiftType,
   isPastWorkDate,
   toMinutes,
+  validateFlexibleShiftTimes,
 } = require('../utils/shiftValidation');
 const {
   todayVN,
@@ -21,9 +22,67 @@ const {
   workDateToVNString,
   getShiftStartDateTime,
   getShiftEndDateTime,
+  addDaysToDateStr,
+  isPastUnconfirmedCancelDeadline,
 } = require('../utils/shiftTime');
 const { isAssignableRole } = require('../utils/staffAssignment');
 const { assertNoActiveCareTasksForShift } = require('../utils/careTaskGuards');
+const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
+
+const MANAGER_ROLES = ['admin', 'manager'];
+const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
+
+const isShiftManager = (role) => MANAGER_ROLES.includes(role);
+
+const getAssignedStaffProfileId = (shift) =>
+  String(shift.assignedStaffId?._id || shift.assignedStaffId || '');
+
+const getActorStaffProfile = async (actorUser) => {
+  let profile = await staffProfileRepo.findByUserId(actorUser._id);
+  if (!profile) {
+    profile = await ensureStaffProfileForUser(actorUser);
+  }
+  if (!profile) {
+    throw Object.assign(new Error('Không tìm thấy hồ sơ nhân viên'), { status: 404 });
+  }
+  return profile;
+};
+
+const assertActorMayConfirmShift = async (shift, actorUser) => {
+  if (isShiftManager(actorUser.role)) {
+    throw Object.assign(
+      new Error('Chỉ nhân viên được phân công mới có thể xác nhận ca'),
+      { status: 403 }
+    );
+  }
+  if (!STAFF_SHIFT_ROLES.includes(actorUser.role)) {
+    throw Object.assign(new Error('Không có quyền xác nhận ca'), { status: 403 });
+  }
+  const profile = await getActorStaffProfile(actorUser);
+  if (getAssignedStaffProfileId(shift) !== String(profile._id)) {
+    throw Object.assign(
+      new Error('Bạn chỉ có thể xác nhận ca được gán cho mình'),
+      { status: 403 }
+    );
+  }
+};
+
+const assertActorMayViewShift = async (shift, actorUser) => {
+  if (!actorUser || isShiftManager(actorUser.role)) return;
+  const profile = await staffProfileRepo.findByUserId(actorUser._id);
+  if (!profile || getAssignedStaffProfileId(shift) !== String(profile._id)) {
+    throw Object.assign(new Error('Bạn không có quyền xem ca này'), { status: 403 });
+  }
+  if (shift.status === 'draft') {
+    throw Object.assign(new Error('Bạn không có quyền xem ca này'), { status: 403 });
+  }
+};
+
+const emptyListResult = (options = {}) => {
+  const page = parseInt(options.page) || 1;
+  const limit = parseInt(options.limit) || 20;
+  return { data: [], total: 0, totalHours: 0, page, limit, totalPages: 0 };
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -198,7 +257,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
   // 4. ROLE_MISMATCH (ERROR) — role must match shift template type
   const shiftType = template?.shiftType;
   if (shiftType && !isRoleAllowedForShiftType(staffRole, shiftType)) {
-    const shiftTypeVi = { morning: 'sáng', afternoon: 'chiều', night: 'đêm', on_call: 'trực' }[shiftType] || shiftType;
+    const shiftTypeVi = { morning: 'sáng', afternoon: 'chiều', night: 'đêm', on_call: 'trực', custom: 'gãy' }[shiftType] || shiftType;
     const roleVi = { doctor: 'bác sĩ', nurse: 'điều dưỡng', caregiver: 'chăm sóc viên', staff: 'nhân viên', chef: 'đầu bếp' }[staffRole] || staffRole;
     conflicts.push({
       type: 'ROLE_MISMATCH',
@@ -266,9 +325,18 @@ const assertNoBlockingConflicts = (conflicts) => {
 
 const FORBIDDEN_DIRECT_TIME_FIELDS = ['name', 'startTime', 'endTime'];
 
-const assertNoDirectTimeFields = (body) => {
+const assertNoDirectTimeFields = (body, { isFlexibleTime = false } = {}) => {
   for (const field of FORBIDDEN_DIRECT_TIME_FIELDS) {
-    if (body[field] !== undefined) {
+    if (field === 'name') {
+      if (body[field] !== undefined) {
+        throw Object.assign(
+          new Error(`${field} cannot be set directly. Use shiftTemplateId to select a default shift slot.`),
+          { status: 400 }
+        );
+      }
+      continue;
+    }
+    if (!isFlexibleTime && body[field] !== undefined) {
       throw Object.assign(
         new Error(`${field} cannot be set directly. Use shiftTemplateId to select a default shift slot.`),
         { status: 400 }
@@ -277,19 +345,43 @@ const assertNoDirectTimeFields = (body) => {
   }
 };
 
-const resolveSystemShiftTemplate = async (shiftTemplateId) => {
+const loadSystemShiftTemplate = async (shiftTemplateId) => {
   if (!shiftTemplateId) {
     throw Object.assign(new Error('shiftTemplateId là bắt buộc'), { status: 400 });
   }
 
   const template = await shiftTemplateRepo.findById(shiftTemplateId);
   if (!template || !template.isSystem) {
-    throw Object.assign(new Error('Mẫu ca không hợp lệ. Phải là 1 trong 3 ca mặc định của hệ thống.'), {
+    throw Object.assign(new Error('Mẫu ca không hợp lệ. Phải là một trong các ca mặc định của hệ thống.'), {
       status: 400,
     });
   }
   if (template.status !== 'active') {
     throw Object.assign(new Error('Mẫu ca chưa ở trạng thái hoạt động'), { status: 400 });
+  }
+  return template;
+};
+
+const resolveShiftTemplate = async (shiftTemplateId, { startTime, endTime } = {}) => {
+  const template = await loadSystemShiftTemplate(shiftTemplateId);
+
+  if (template.isFlexibleTime) {
+    const flexible = validateFlexibleShiftTimes(startTime, endTime);
+    return {
+      shiftTemplateId: template._id,
+      name: `Ca gãy (${flexible.startTime}–${flexible.endTime})`,
+      startTime: flexible.startTime,
+      endTime: flexible.endTime,
+      totalHours: flexible.totalHours,
+      template,
+    };
+  }
+
+  if (startTime !== undefined || endTime !== undefined) {
+    throw Object.assign(
+      new Error('startTime/endTime chỉ được dùng với mẫu ca gãy (SPLIT)'),
+      { status: 400 }
+    );
   }
 
   const totalHours =
@@ -302,22 +394,24 @@ const resolveSystemShiftTemplate = async (shiftTemplateId) => {
     startTime: template.startTime,
     endTime: template.endTime,
     totalHours,
+    template,
   };
 };
 
 // ── Shift CRUD ────────────────────────────────────────────────────────────────
 
 const createShift = async (body, actorUserId) => {
-  const { workDate, assignedStaffId, shiftTemplateId, taskDescription, notes } = body;
-
-  assertNoDirectTimeFields(body);
+  const { workDate, assignedStaffId, shiftTemplateId, taskDescription, notes, startTime, endTime } = body;
 
   if (!workDate || !assignedStaffId || !shiftTemplateId) {
     throw Object.assign(new Error('shiftTemplateId, workDate và assignedStaffId là bắt buộc'), { status: 400 });
   }
 
-  const { name, startTime, endTime, totalHours, shiftTemplateId: resolvedTemplateId } =
-    await resolveSystemShiftTemplate(shiftTemplateId);
+  const template = await loadSystemShiftTemplate(shiftTemplateId);
+  assertNoDirectTimeFields(body, { isFlexibleTime: template.isFlexibleTime });
+
+  const { name, startTime: resolvedStart, endTime: resolvedEnd, totalHours, shiftTemplateId: resolvedTemplateId } =
+    await resolveShiftTemplate(shiftTemplateId, { startTime, endTime });
 
   const parsedDate = parseWorkDateUtc(workDate);
   const resolvedStaffProfileId = await resolveStaffProfileId(assignedStaffId);
@@ -326,16 +420,16 @@ const createShift = async (body, actorUserId) => {
   const conflicts = await checkConflicts({
     assignedStaffId: resolvedStaffProfileId,
     workDate: parsedDate,
-    startTime,
-    endTime,
+    startTime: resolvedStart,
+    endTime: resolvedEnd,
     shiftTemplateId: resolvedTemplateId,
   });
   assertNoBlockingConflicts(conflicts);
 
   const shiftPayload = {
     name,
-    startTime,
-    endTime,
+    startTime: resolvedStart,
+    endTime: resolvedEnd,
     totalHours,
     workDate: parsedDate,
     assignedStaffId: resolvedStaffProfileId,
@@ -392,12 +486,15 @@ const publishShift = async (id, actorUserId) => {
   return { shift: updated, conflicts };
 };
 
-const confirmShift = async (id, actorUserId) => {
+const confirmShift = async (id, actorUser) => {
   const shift = await shiftRepo.findById(id);
   if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
   if (shift.status !== 'published')
     throw Object.assign(new Error(`Chỉ có thể xác nhận ca ở trạng thái đã đăng (trạng thái hiện tại: ${shift.status})`), { status: 400 });
 
+  await assertActorMayConfirmShift(shift, actorUser);
+
+  const actorUserId = actorUser._id || actorUser;
   const logEntry = { changedBy: actorUserId, fieldsChanged: ['status'], oldValues: { status: 'published' }, newValues: { status: 'confirmed' }, reason: 'Confirmed' };
   const updated = await shiftRepo.updateById(id, {
     status: 'confirmed',
@@ -424,12 +521,16 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
       throw Object.assign(new Error('Không thể chỉnh sửa ca khi còn dưới 2 giờ trước khi bắt đầu'), { status: 400 });
   }
 
-  if (!body.changeReason || !body.changeReason.trim())
-    throw Object.assign(new Error('changeReason là bắt buộc khi cập nhật ca'), { status: 400 });
+  const reason = body.changeReason?.trim() || null;
 
-  assertNoDirectTimeFields(body);
+  const templateIdForAssert =
+    body.shiftTemplateId !== undefined
+      ? body.shiftTemplateId
+      : shift.shiftTemplateId?._id || shift.shiftTemplateId;
+  const templateForAssert = await loadSystemShiftTemplate(templateIdForAssert);
+  assertNoDirectTimeFields(body, { isFlexibleTime: templateForAssert.isFlexibleTime });
 
-  const allowedFields = ['workDate', 'assignedStaffId', 'shiftTemplateId', 'taskDescription', 'notes'];
+  const allowedFields = ['workDate', 'assignedStaffId', 'shiftTemplateId', 'taskDescription', 'notes', 'startTime', 'endTime'];
   const oldValues = {};
   const newValues = {};
   const fieldsChanged = [];
@@ -456,14 +557,22 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
       ? body.shiftTemplateId
       : shift.shiftTemplateId?._id || shift.shiftTemplateId;
 
-  const { name, startTime, endTime, totalHours, shiftTemplateId: resolvedTemplateId } =
-    await resolveSystemShiftTemplate(templateId);
+  const resolvedTemplate = await loadSystemShiftTemplate(templateId);
+  const timeOverride = resolvedTemplate.isFlexibleTime
+    ? {
+        startTime: body.startTime !== undefined ? body.startTime : shift.startTime,
+        endTime: body.endTime !== undefined ? body.endTime : shift.endTime,
+      }
+    : {};
+
+  const { name, startTime: resolvedStart, endTime: resolvedEnd, totalHours, shiftTemplateId: resolvedTemplateId } =
+    await resolveShiftTemplate(templateId, timeOverride);
 
   const conflicts = await checkConflicts({
     assignedStaffId: resolvedUpdateStaffId,
     workDate: updatedDate,
-    startTime,
-    endTime,
+    startTime: resolvedStart,
+    endTime: resolvedEnd,
     excludeId: id,
     shiftTemplateId: resolvedTemplateId,
   });
@@ -474,13 +583,15 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
     fieldsChanged: [...fieldsChanged],
     oldValues,
     newValues,
-    reason: body.changeReason,
+    reason,
   };
 
   const currentTemplateId = String(shift.shiftTemplateId?._id || shift.shiftTemplateId || '');
   const templateChanged = String(resolvedTemplateId) !== currentTemplateId;
+  const timesChanged =
+    resolvedStart !== shift.startTime || resolvedEnd !== shift.endTime || name !== shift.name;
 
-  if (templateChanged) {
+  if (templateChanged || timesChanged) {
     logEntry.fieldsChanged = [
       ...new Set([...fieldsChanged, 'shiftTemplateId', 'name', 'startTime', 'endTime', 'totalHours']),
     ];
@@ -496,19 +607,19 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
       ...newValues,
       shiftTemplateId: resolvedTemplateId,
       name,
-      startTime,
-      endTime,
+      startTime: resolvedStart,
+      endTime: resolvedEnd,
       totalHours,
     };
   }
 
   const updatePayload = {
     name,
-    startTime,
-    endTime,
+    startTime: resolvedStart,
+    endTime: resolvedEnd,
     totalHours,
     shiftTemplateId: resolvedTemplateId,
-    changeReason: body.changeReason,
+    changeReason: reason,
     $push: { changeLog: logEntry },
   };
 
@@ -522,6 +633,62 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
   if (body.workDate) triggerReadinessSyncForWorkDate(updatedDate);
 
   return { shift: enrichShift(updated), conflicts };
+};
+
+const AUTO_CANCEL_REASON =
+  'Auto-cancelled: not confirmed within 30 minutes of shift start';
+
+const cancelShiftAsSystem = async (shift, reason = AUTO_CANCEL_REASON) => {
+  const logEntry = {
+    changedBy: null,
+    fieldsChanged: ['status'],
+    oldValues: { status: shift.status },
+    newValues: { status: 'cancelled' },
+    reason,
+  };
+  const cancelled = await shiftRepo.updateById(shift._id, {
+    status: 'cancelled',
+    $push: { changeLog: logEntry },
+  });
+  triggerReadinessSyncForWorkDate(shift.workDate);
+  return cancelled;
+};
+
+const autoCancelUnconfirmedPublishedShifts = async () => {
+  const fromStr = addDaysToDateStr(todayVN(), -1);
+  const toStr = addDaysToDateStr(todayVN(), 1);
+  const fromDate = new Date(`${fromStr}T00:00:00.000Z`);
+  const toDate = new Date(`${toStr}T23:59:59.999Z`);
+  const shifts = await shiftRepo.findPublishedInWorkDateRange(fromDate, toDate);
+  const now = nowVN();
+  let cancelled = 0;
+  let skipped = 0;
+
+  for (const shift of shifts) {
+    const workDateStr = workDateToVNString(shift.workDate);
+    let pastDeadline = false;
+    try {
+      pastDeadline = isPastUnconfirmedCancelDeadline(workDateStr, shift.startTime, now);
+    } catch {
+      continue;
+    }
+    if (!pastDeadline) continue;
+
+    try {
+      await assertNoActiveCareTasksForShift(shift._id);
+    } catch (err) {
+      skipped += 1;
+      console.warn(
+        `[shiftService] Auto-cancel skipped shift ${shift._id}: ${err.message}`
+      );
+      continue;
+    }
+
+    await cancelShiftAsSystem(shift);
+    cancelled += 1;
+  }
+
+  return { cancelled, skipped };
 };
 
 const cancelShift = async (id, actorUserId, reason = 'Cancelled') => {
@@ -554,13 +721,14 @@ const deleteShift = async (id) => {
   return { deleted: true };
 };
 
-const getShift = async (id) => {
+const getShift = async (id, actorUser = null) => {
   const s = await shiftRepo.findById(id);
   if (!s) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
+  await assertActorMayViewShift(s, actorUser);
   return enrichShift(s);
 };
 
-const listShifts = async (filter = {}, options = {}) => {
+const buildListQuery = (filter = {}) => {
   const query = {};
   if (filter.status) query.status = filter.status;
   if (filter.assignedStaffId) query.assignedStaffId = filter.assignedStaffId;
@@ -570,7 +738,21 @@ const listShifts = async (filter = {}, options = {}) => {
     if (filter.fromDate) query.workDate.$gte = new Date(filter.fromDate + 'T00:00:00.000Z');
     if (filter.toDate) query.workDate.$lte = new Date(filter.toDate + 'T23:59:59.999Z');
   }
+  return query;
+};
 
+const listShifts = async (filter = {}, options = {}, actorUser = null) => {
+  let scopedFilter = { ...filter };
+
+  if (actorUser && !isShiftManager(actorUser.role)) {
+    const profile = await staffProfileRepo.findByUserId(actorUser._id);
+    if (!profile) return emptyListResult(options);
+    scopedFilter.assignedStaffId = profile._id;
+    if (scopedFilter.status === 'draft') return emptyListResult(options);
+    if (!scopedFilter.status) scopedFilter.status = { $ne: 'draft' };
+  }
+
+  const query = buildListQuery(scopedFilter);
   const page = parseInt(options.page) || 1;
   const limit = parseInt(options.limit) || 20;
   const skip = (page - 1) * limit;
@@ -578,6 +760,20 @@ const listShifts = async (filter = {}, options = {}) => {
   const data = rows.map(enrichShift);
   const totalHours = Math.round(data.reduce((sum, s) => sum + (s.totalHours || 0), 0) * 100) / 100;
   return { data, total, totalHours, page, limit, totalPages: Math.ceil(total / limit) };
+};
+
+const listMyShifts = async (actorUser, options = {}) => {
+  const profile = await getActorStaffProfile(actorUser);
+  const filter = { assignedStaffId: profile._id };
+  if (options.status) {
+    if (options.status === 'draft') return emptyListResult(options);
+    filter.status = options.status;
+  } else {
+    filter.status = { $ne: 'draft' };
+  }
+  if (options.fromDate) filter.fromDate = options.fromDate;
+  if (options.toDate) filter.toDate = options.toDate;
+  return listShifts(filter, options);
 };
 
 const getSchedule = async (fromDate, toDate, extraFilter = {}) => {
@@ -592,22 +788,22 @@ const getSchedule = async (fromDate, toDate, extraFilter = {}) => {
 };
 
 const previewConflicts = async (query) => {
-  const { assignedStaffId, workDate, excludeId, shiftTemplateId } = query;
+  const { assignedStaffId, workDate, excludeId, shiftTemplateId, startTime, endTime } = query;
 
   if (!assignedStaffId || !workDate || !shiftTemplateId) {
     throw Object.assign(new Error('assignedStaffId, workDate và shiftTemplateId là bắt buộc'), { status: 400 });
   }
 
-  const { startTime, endTime, shiftTemplateId: resolvedTemplateId } =
-    await resolveSystemShiftTemplate(shiftTemplateId);
+  const { startTime: resolvedStart, endTime: resolvedEnd, shiftTemplateId: resolvedTemplateId } =
+    await resolveShiftTemplate(shiftTemplateId, { startTime, endTime });
 
   const parsedDate = parseWorkDateUtc(workDate);
   const resolvedStaffProfileId = await resolveStaffProfileId(assignedStaffId);
   const conflicts = await checkConflicts({
     assignedStaffId: resolvedStaffProfileId,
     workDate: parsedDate,
-    startTime,
-    endTime,
+    startTime: resolvedStart,
+    endTime: resolvedEnd,
     excludeId,
     shiftTemplateId: resolvedTemplateId,
   });
@@ -624,7 +820,9 @@ module.exports = {
   deleteShift,
   getShift,
   listShifts,
+  listMyShifts,
   getSchedule,
   checkConflicts,
   previewConflicts,
+  autoCancelUnconfirmedPublishedShifts,
 };

@@ -9,6 +9,7 @@ const MealTimeScheduleDay = require('../models/mealTimeScheduleDay');
 const MealTimeScheduleEntry = require('../models/mealTimeScheduleEntry');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const mealIntakeNoteRepo = require('../repositories/mealIntakeNoteRepository');
+const { getAssignedResidentIdSetForUser } = require('./assignedResidentService');
 const {
   parseWorkDate,
   todayVN,
@@ -84,10 +85,20 @@ const groupEntriesByResidentAndDate = (days, entries, dayIdField, entryMapper) =
   return map;
 };
 
-const loadNutritionContext = async (from, to) => {
+const loadNutritionContext = async (from, to, actorUser) => {
+  if (!actorUser?._id) {
+    throw new ServiceError('Không xác định được người dùng', 401);
+  }
+
+  const assignedIds = await getAssignedResidentIdSetForUser(actorUser._id);
+  const residentFilter =
+    assignedIds.size > 0
+      ? { _id: { $in: [...assignedIds] }, residencyStatus: 'admitted' }
+      : { _id: { $in: [] } };
+
   const [residents, mealPlanDays, specialDietDays, mealTimeDays, mealNotes, mealIntakeRows] =
     await Promise.all([
-      Resident.find({ residencyStatus: 'admitted' })
+      Resident.find(residentFilter)
         .select('_id fullName residentCode allergies chronicConditions')
         .sort({ fullName: 1 })
         .lean(),
@@ -252,9 +263,9 @@ const buildResidentRow = (resident, ctx) => {
   };
 };
 
-const getSummary = async (query) => {
+const getSummary = async (query, actorUser) => {
   const { from, to } = parsePeriod(query);
-  const ctx = await loadNutritionContext(from, to);
+  const ctx = await loadNutritionContext(from, to, actorUser);
 
   const missingMealPlan = ctx.residents.filter((r) => !ctx.residentsWithMealPlan.has(idOf(r._id)));
 
@@ -277,9 +288,9 @@ const getSummary = async (query) => {
   };
 };
 
-const listResidents = async (query) => {
+const listResidents = async (query, actorUser) => {
   const { from, to } = parsePeriod(query);
-  const ctx = await loadNutritionContext(from, to);
+  const ctx = await loadNutritionContext(from, to, actorUser);
 
   const search = String(query.search || '').trim().toLowerCase();
   let rows = ctx.residents.map((r) => buildResidentRow(r, ctx));
@@ -305,13 +316,21 @@ const listResidents = async (query) => {
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1, period: { from, to } };
 };
 
-const getResidentReport = async (residentId, query) => {
+const getResidentReport = async (residentId, query, actorUser) => {
   if (!mongoose.Types.ObjectId.isValid(String(residentId || ''))) {
     throw new ServiceError('residentId không hợp lệ', 400);
   }
+  if (!actorUser?._id) {
+    throw new ServiceError('Không xác định được người dùng', 401);
+  }
+
+  const assignedIds = await getAssignedResidentIdSetForUser(actorUser._id);
+  if (!assignedIds.has(String(residentId))) {
+    throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+  }
 
   const { from, to } = parsePeriod(query);
-  const ctx = await loadNutritionContext(from, to);
+  const ctx = await loadNutritionContext(from, to, actorUser);
 
   const resident = ctx.residents.find((r) => idOf(r._id) === String(residentId));
   if (!resident) {

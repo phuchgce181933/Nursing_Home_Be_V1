@@ -41,10 +41,11 @@ router.get('/residents', protect, authorize(...NURSE_ROLES), ctrl.listResidents)
  * /api/nurse/meal-plans/drafts:
  *   post:
  *     tags: [MealPlans]
- *     summary: Create meal plan draft
+ *     summary: Create meal plan draft (requires published mealTimeScheduleDayId)
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       201: { description: Draft created }
+ *       400: { description: Missing mealTimeScheduleDayId or resident not in schedule }
  */
 router.post('/drafts', protect, authorize(...NURSE_ROLES), ctrl.createDraft);
 
@@ -77,10 +78,11 @@ router.get('/:id', protect, authorize(...NURSE_ROLES), ctrl.getPlan);
  * /api/nurse/meal-plans/{id}:
  *   put:
  *     tags: [MealPlans]
- *     summary: Update meal plan draft
+ *     summary: Update meal plan draft (mealTimeScheduleDayId required if not set on document)
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       200: { description: Updated }
+ *       400: { description: Invalid schedule link or residents }
  */
 router.put('/:id', protect, authorize(...NURSE_ROLES), ctrl.updateDraft);
 

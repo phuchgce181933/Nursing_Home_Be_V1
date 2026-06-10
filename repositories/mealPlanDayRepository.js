@@ -5,7 +5,8 @@ const create = async (data, options = {}) => MealPlanDay.create([data], options)
 const findById = async (id) =>
   MealPlanDay.findById(id)
     .populate({ path: 'createdBy', select: 'fullName role' })
-    .populate({ path: 'publishedBy', select: 'fullName role' });
+    .populate({ path: 'publishedBy', select: 'fullName role' })
+    .populate({ path: 'mealTimeScheduleDayId', select: 'title workDate status' });
 
 const findAll = async (filter, { skip = 0, limit = 20, sort = { workDate: 1, createdAt: -1 } } = {}) =>
   MealPlanDay.find(filter).sort(sort).skip(skip).limit(limit);

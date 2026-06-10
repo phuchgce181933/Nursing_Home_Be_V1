@@ -2,7 +2,7 @@
 const app = require('../app');
 const http = require('http');
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 const server = http.createServer(app);
 
@@ -14,6 +14,34 @@ server.listen(PORT, () => {
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`Port ${PORT} is already in use`);
+    // #region agent log
+    let portListeners = [];
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync(`netstat -ano | findstr ":${PORT}"`, { encoding: 'utf8' });
+      portListeners = out
+        .trim()
+        .split('\n')
+        .filter((l) => l.includes('LISTENING'))
+        .map((l) => l.trim());
+    } catch (_) {}
+    fetch('http://127.0.0.1:7774/ingest/dee35c7c-2867-4feb-9059-e3223db025b0', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '67518e' },
+      body: JSON.stringify({
+        sessionId: '67518e',
+        location: 'bin/www:EADDRINUSE',
+        message: 'Port bind failed — already in use',
+        data: { port: PORT, portListeners, errCode: err.code },
+        timestamp: Date.now(),
+        hypothesisId: 'A',
+        runId: 'port-conflict',
+      }),
+    }).catch(() => {});
+    // #endregion
+    console.error(
+      'Another process is already listening on this port. Stop the other dev server (Ctrl+C in its terminal) or run: netstat -ano | findstr ":3000"'
+    );
   } else {
     console.error(err);
   }

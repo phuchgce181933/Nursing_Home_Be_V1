@@ -6,6 +6,7 @@ const Resident = require('../models/resident');
 const EMPTY_MSG = 'Chưa được phân công cư dân. Liên hệ quản lý.';
 
 const MINIMAL_SELECT = '_id fullName residentCode';
+const MEAL_RESIDENT_SELECT = '_id fullName residentCode allergies chronicConditions';
 const FULL_SELECT =
   'residentCode fullName dateOfBirth gender bloodType allergies drugAllergies chronicConditions initialHealthCondition admittedAt residencyStatus roomId bedId';
 
@@ -149,6 +150,85 @@ const assertValidObjectId = (value, label) => {
   }
 };
 
+const buildAdmittedAssignedFilter = (assignedIds, search) => {
+  const filter = { _id: { $in: assignedIds }, residencyStatus: 'admitted' };
+  const searchTrim = String(search || '').trim();
+  if (searchTrim) {
+    const re = new RegExp(searchTrim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    filter.$or = [{ fullName: re }, { residentCode: re }];
+  }
+  return filter;
+};
+
+const listAssignedAdmittedResidentsForUser = async (userId, options = {}) => {
+  const { search, select = MEAL_RESIDENT_SELECT } = options;
+  const profile = await getStaffProfileByUserId(userId);
+  const ids = (profile.assignedResidentIds || []).map((r) => r._id || r);
+
+  if (!ids.length) {
+    return { data: [], total: 0, message: EMPTY_MSG };
+  }
+
+  const rows = await Resident.find(buildAdmittedAssignedFilter(ids, search))
+    .select(select)
+    .sort({ fullName: 1 })
+    .lean();
+
+  return { data: rows, total: rows.length };
+};
+
+const listAssignedAdmittedResidentsForStaffProfile = async (staffProfileId, options = {}) => {
+  assertValidObjectId(staffProfileId, 'staffProfileId');
+  const profile = await staffProfileRepo.findById(staffProfileId);
+  if (!profile) {
+    throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
+  }
+
+  const ids = (profile.assignedResidentIds || []).map((r) => r._id || r);
+  if (!ids.length) {
+    return { data: [], total: 0 };
+  }
+
+  const { search, select = MINIMAL_SELECT } = options;
+  const rows = await Resident.find(buildAdmittedAssignedFilter(ids, search))
+    .select(select)
+    .sort({ fullName: 1 })
+    .lean();
+
+  return { data: rows, total: rows.length };
+};
+
+const getAssignedResidentIdSetForUser = async (userId) => {
+  const profile = await getStaffProfileByUserId(userId);
+  return new Set((profile.assignedResidentIds || []).map((r) => String(r._id || r)));
+};
+
+const assertResidentsAssignedToUser = async (userId, residentIds) => {
+  const ids = [...new Set((residentIds || []).map((id) => String(id)).filter(Boolean))];
+  if (!ids.length) return;
+
+  const assigned = await getAssignedResidentIdSetForUser(userId);
+  const outside = ids.filter((id) => !assigned.has(id));
+  if (outside.length) {
+    throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+  }
+};
+
+const assertResidentAssignedToStaffProfile = async (staffProfileId, residentId) => {
+  assertValidObjectId(staffProfileId, 'staffProfileId');
+  assertValidObjectId(residentId, 'residentId');
+
+  const profile = await staffProfileRepo.findById(staffProfileId);
+  if (!profile) {
+    throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
+  }
+
+  const assigned = (profile.assignedResidentIds || []).map((r) => String(r._id || r));
+  if (!assigned.includes(String(residentId))) {
+    throw new ServiceError('Cư dân không thuộc danh sách phụ trách của nhân viên được chọn', 400);
+  }
+};
+
 const getAssignedResidentById = async (userId, residentId) => {
   assertValidObjectId(residentId, 'residentId');
   const profile = await getStaffProfileByUserId(userId);
@@ -170,7 +250,13 @@ const getAssignedResidentById = async (userId, residentId) => {
 };
 
 module.exports = {
+  MEAL_RESIDENT_SELECT,
   getStaffProfileByUserId,
   listAssignedResidentsForUser,
+  listAssignedAdmittedResidentsForUser,
+  listAssignedAdmittedResidentsForStaffProfile,
+  assertResidentsAssignedToUser,
+  assertResidentAssignedToStaffProfile,
+  getAssignedResidentIdSetForUser,
   getAssignedResidentById,
 };

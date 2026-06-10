@@ -104,6 +104,12 @@ const initDB = async () => {
     const { runAutoSeedIfNeeded } = require('./services/autoSeedService');
     await runAutoSeedIfNeeded();
 
+    const { ensureStaffProfilesForAssignableUsers } = require('./services/staffProfileBootstrap');
+    const profileBootstrap = await ensureStaffProfilesForAssignableUsers();
+    if (profileBootstrap.created) {
+      console.log(`Staff profile bootstrap: ${profileBootstrap.created} profile(s) created.`);
+    }
+
     const { ensureDefaultShiftTemplates } = require('./services/defaultShiftBootstrap');
     await ensureDefaultShiftTemplates();
 
@@ -125,6 +131,8 @@ const initDB = async () => {
     startLeaveRequestAutoRejectJob();
     const { startCareTaskAutoSkipJob } = require('./jobs/careTaskAutoSkipJob');
     startCareTaskAutoSkipJob();
+    const { startShiftAutoCancelJob } = require('./jobs/shiftAutoCancelJob');
+    startShiftAutoCancelJob();
     startReminderScheduler();
     initMedicationJobs();
   } catch (err) {

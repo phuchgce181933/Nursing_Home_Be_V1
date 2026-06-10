@@ -40,7 +40,7 @@ const getCareTask = (req, res) =>
 
 const updateCareTaskStatus = (req, res) =>
   svc
-    .updateCareTaskStatus(req.params.id, req.body.status, req.body.notes)
+    .updateCareTaskStatus(req.params.id, req.body.status, req.body.notes, req.user)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
 

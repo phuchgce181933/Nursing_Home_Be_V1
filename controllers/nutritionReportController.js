@@ -4,13 +4,13 @@ const statusCode = (err) => err.statusCode || err.status || 500;
 
 const getSummary = (req, res) =>
   svc
-    .getSummary(req.query)
+    .getSummary(req.query, req.user)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
 
 const listResidents = (req, res) =>
   svc
-    .listResidents(req.query)
+    .listResidents(req.query, req.user)
     .then((result) =>
       res.json({
         success: true,
@@ -26,7 +26,7 @@ const listResidents = (req, res) =>
 
 const getResidentReport = (req, res) =>
   svc
-    .getResidentReport(req.params.residentId, req.query)
+    .getResidentReport(req.params.residentId, req.query, req.user)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
 

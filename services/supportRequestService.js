@@ -1,5 +1,7 @@
-const { SupportRequest } = require('../models');
+const supportRequestRepo = require('../repositories/supportRequestRepository');
 const mongoose = require('mongoose');
+
+const FAMILY_POPULATE = { path: 'familyAccountId', select: 'fullName email phone' };
 
 const submitSupportRequest = async (user, payload /*, req */) => {
   const { fullName, age, phone, address, notes } = payload || {};
@@ -9,7 +11,7 @@ const submitSupportRequest = async (user, payload /*, req */) => {
   if (!address || !address.trim()) throw { statusCode: 400, message: 'address is required' };
 
   const subject = `Support request from ${fullName}`;
-  const doc = await SupportRequest.create({
+  const doc = await supportRequestRepo.create({
     familyAccountId: new mongoose.Types.ObjectId(user._id || user.id),
     subject,
     fullName,
@@ -36,22 +38,20 @@ const listSupportRequests = async (user, query) => {
 
   if (query.status) filter.status = query.status;
 
-  const total = await SupportRequest.countDocuments(filter);
-  const items = await SupportRequest.find(filter)
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .lean();
+  const total = await supportRequestRepo.count(filter);
+  const populate = user.role === 'admin' ? FAMILY_POPULATE : null;
+  const items = await supportRequestRepo.find({ filter, skip: (page - 1) * limit, limit, populate });
 
   return { page, limit, total, items };
 };
 
 const getSupportRequest = async (user, requestId) => {
   let doc;
+  const populate = user.role === 'admin' ? FAMILY_POPULATE : FAMILY_POPULATE; // show family info for both roles
   if (user.role === 'admin') {
-    doc = await SupportRequest.findById(requestId).lean();
+    doc = await supportRequestRepo.findById(requestId, populate);
   } else {
-    doc = await SupportRequest.findOne({ _id: requestId, familyAccountId: new mongoose.Types.ObjectId(user._id || user.id) }).lean();
+    doc = await supportRequestRepo.findOne({ _id: requestId, familyAccountId: new mongoose.Types.ObjectId(user._id || user.id) }, populate);
   }
 
   if (!doc) throw { statusCode: 404, message: 'Support request not found' };
@@ -62,7 +62,7 @@ const closeSupportRequest = async (user, requestId, body /*, req */) => {
   const action = body && body.action ? body.action : 'close';
   if (!['close', 'cancel'].includes(action)) throw { statusCode: 400, message: 'Invalid action' };
 
-  const doc = await SupportRequest.findById(requestId);
+  const doc = await supportRequestRepo.findByIdRaw(requestId);
   if (!doc) throw { statusCode: 404, message: 'Support request not found' };
 
   // ensure family can only close their own requests
@@ -76,9 +76,10 @@ const closeSupportRequest = async (user, requestId, body /*, req */) => {
 
   doc.status = action === 'cancel' ? 'closed' : 'resolved';
   doc.closedAt = new Date();
-  await doc.save();
+  await supportRequestRepo.save(doc);
 
-  return doc.toObject();
+  const populated = await supportRequestRepo.findById(doc._id, FAMILY_POPULATE);
+  return populated;
 };
 
 module.exports = {

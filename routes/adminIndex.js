@@ -7,5 +7,6 @@ router.use('/service-packages', require('./adminServicePackages'));
 router.use('/residents', require('./adminResidents'));
 router.use('/activities', require('./adminActivities'));
 router.use('/reports', require('./adminReports'));
+router.use('/conversations', require('./conversations'));
 
 module.exports = router;

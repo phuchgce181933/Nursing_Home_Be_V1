@@ -16,11 +16,16 @@ const fileAttachmentSchema = new Schema(
 const messageSchema = new Schema(
   {
     conversationId: { type: Types.ObjectId, ref: 'Conversation', required: true, index: true },
-    senderUserId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
+    // senderUserId may be null for guest messages
+    senderUserId: { type: Types.ObjectId, ref: 'User', index: true },
     content: { type: String, required: true, trim: true },
     attachments: [fileAttachmentSchema],
     readByUserIds: [{ type: Types.ObjectId, ref: 'User' }],
     sentAt: { type: Date, default: Date.now, index: true },
+    // Optional guest sender info when senderUserId is not present
+    guestName: { type: String, trim: true },
+    guestEmail: { type: String, trim: true },
+    guestPhone: { type: String, trim: true },
   },
   { timestamps: true }
 );

@@ -6,6 +6,30 @@ const PORT = Number(process.env.PORT) || 3000;
 
 const server = http.createServer(app);
 
+// Initialize Socket.IO for real-time notifications
+try {
+  const { Server } = require('socket.io');
+  const io = new Server(server, {
+    cors: {
+      origin: ['http://localhost:5173', 'http://localhost:3000'],
+      methods: ['GET', 'POST'],
+      credentials: true,
+    },
+  });
+  app.set('io', io);
+  io.on('connection', (socket) => {
+    // clients can join conversation rooms
+    socket.on('join', (room) => {
+      try { socket.join(room); } catch (e) {}
+    });
+    socket.on('leave', (room) => {
+      try { socket.leave(room); } catch (e) {}
+    });
+  });
+} catch (e) {
+  console.warn('Socket.IO not initialized:', e.message);
+}
+
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Swagger docs: http://localhost:${PORT}/api-docs`);

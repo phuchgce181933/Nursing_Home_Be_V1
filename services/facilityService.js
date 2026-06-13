@@ -572,6 +572,222 @@ const updateBed = async (bedId, data, user, req) => {
   return bed.toObject();
 };
 
+const deleteBed = async (bedId, user, req) => {
+  const Bed = require('../models/bed');
+  const bed = await Bed.findById(bedId);
+  if (!bed) throw Object.assign(new Error('Không tìm thấy giường'), { status: 404 });
+
+  if (bed.status === 'occupied') {
+    throw Object.assign(new Error('Không thể xóa giường đang có cư dân sử dụng'), { status: 400 });
+  }
+
+  const beforeData = { bedCode: bed.bedCode, status: bed.status };
+
+  await Bed.findByIdAndDelete(bedId);
+
+  const { createAuditLog } = require('../utils/auditLog');
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'DELETE_BED',
+    module: 'facility',
+    targetEntityType: 'Bed',
+    targetEntityId: bed._id,
+    beforeData,
+    afterData: null,
+    req,
+  });
+
+  return { message: 'Giường đã được xóa thành công', success: true };
+};
+
+const listEquipment = async (filters = {}) => {
+  const Equipment = require('../models/equipment');
+  const query = {};
+  if (filters.status) query.status = filters.status;
+  if (filters.category) query.category = filters.category;
+  if (filters.roomId) query.roomId = filters.roomId;
+
+  return Equipment.find(query)
+    .populate('buildingId', 'name code')
+    .populate('floorId', 'name floorNumber')
+    .populate('roomId', 'roomNumber')
+    .populate('bedId', 'bedCode')
+    .sort({ name: 1 })
+    .lean();
+};
+
+const createEquipment = async (data, user, req) => {
+  const Equipment = require('../models/equipment');
+  const code = String(data.code || '').trim().toUpperCase();
+  const name = String(data.name || '').trim();
+  const category = String(data.category || '').trim();
+  const status = data.status || 'available';
+  const locationType = data.locationType || 'storage';
+  const notes = String(data.notes || '').trim();
+
+  if (!code) throw Object.assign(new Error('Mã thiết bị là bắt buộc'), { status: 400 });
+  if (!name) throw Object.assign(new Error('Tên thiết bị là bắt buộc'), { status: 400 });
+
+  const existing = await Equipment.findOne({ code });
+  if (existing) throw Object.assign(new Error(`Mã thiết bị ${code} đã tồn tại`), { status: 409 });
+
+  const { EQUIPMENT_STATUSES, EQUIPMENT_LOCATION_TYPES } = require('../models/enums');
+  if (!EQUIPMENT_STATUSES.includes(status)) {
+    throw Object.assign(new Error('Trạng thái thiết bị không hợp lệ'), { status: 400 });
+  }
+  if (!EQUIPMENT_LOCATION_TYPES.includes(locationType)) {
+    throw Object.assign(new Error('Loại vị trí thiết bị không hợp lệ'), { status: 400 });
+  }
+
+  const equipment = await Equipment.create({
+    code,
+    name,
+    category: category || undefined,
+    status,
+    locationType,
+    buildingId: data.buildingId || undefined,
+    floorId: data.floorId || undefined,
+    roomId: data.roomId || undefined,
+    bedId: data.bedId || undefined,
+    maintenanceDueAt: data.maintenanceDueAt ? new Date(data.maintenanceDueAt) : undefined,
+    notes: notes || undefined,
+  });
+
+  const { createAuditLog } = require('../utils/auditLog');
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'CREATE_EQUIPMENT',
+    module: 'facility',
+    targetEntityType: 'Equipment',
+    targetEntityId: equipment._id,
+    afterData: { code, name, category, status, locationType },
+    req,
+  });
+
+  return equipment.toObject();
+};
+
+const updateEquipment = async (id, data, user, req) => {
+  const Equipment = require('../models/equipment');
+  const equipment = await Equipment.findById(id);
+  if (!equipment) throw Object.assign(new Error('Không tìm thấy thiết bị'), { status: 404 });
+
+  const beforeData = {
+    code: equipment.code,
+    name: equipment.name,
+    category: equipment.category,
+    status: equipment.status,
+    locationType: equipment.locationType,
+    buildingId: equipment.buildingId,
+    floorId: equipment.floorId,
+    roomId: equipment.roomId,
+    bedId: equipment.bedId,
+    maintenanceDueAt: equipment.maintenanceDueAt,
+    notes: equipment.notes,
+  };
+
+  if (data.code !== undefined) {
+    const nextCode = String(data.code || '').trim().toUpperCase();
+    if (!nextCode) throw Object.assign(new Error('Mã thiết bị không được để trống'), { status: 400 });
+    if (nextCode !== equipment.code) {
+      const existing = await Equipment.findOne({ code: nextCode });
+      if (existing) throw Object.assign(new Error(`Mã thiết bị ${nextCode} đã tồn tại`), { status: 409 });
+      equipment.code = nextCode;
+    }
+  }
+
+  if (data.name !== undefined) {
+    const nextName = String(data.name || '').trim();
+    if (!nextName) throw Object.assign(new Error('Tên thiết bị không được để trống'), { status: 400 });
+    equipment.name = nextName;
+  }
+
+  if (data.category !== undefined) {
+    equipment.category = String(data.category || '').trim() || undefined;
+  }
+
+  if (data.status !== undefined) {
+    const { EQUIPMENT_STATUSES } = require('../models/enums');
+    if (!EQUIPMENT_STATUSES.includes(data.status)) {
+      throw Object.assign(new Error('Trạng thái thiết bị không hợp lệ'), { status: 400 });
+    }
+    equipment.status = data.status;
+  }
+
+  if (data.locationType !== undefined) {
+    const { EQUIPMENT_LOCATION_TYPES } = require('../models/enums');
+    if (!EQUIPMENT_LOCATION_TYPES.includes(data.locationType)) {
+      throw Object.assign(new Error('Loại vị trí thiết bị không hợp lệ'), { status: 400 });
+    }
+    equipment.locationType = data.locationType;
+  }
+
+  // Handle locations mapping
+  if (data.buildingId !== undefined) equipment.buildingId = data.buildingId || undefined;
+  if (data.floorId !== undefined) equipment.floorId = data.floorId || undefined;
+  if (data.roomId !== undefined) equipment.roomId = data.roomId || undefined;
+  if (data.bedId !== undefined) equipment.bedId = data.bedId || undefined;
+
+  if (data.maintenanceDueAt !== undefined) {
+    equipment.maintenanceDueAt = data.maintenanceDueAt ? new Date(data.maintenanceDueAt) : undefined;
+  }
+
+  if (data.notes !== undefined) {
+    equipment.notes = String(data.notes || '').trim() || undefined;
+  }
+
+  await equipment.save();
+
+  const { createAuditLog } = require('../utils/auditLog');
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'UPDATE_EQUIPMENT',
+    module: 'facility',
+    targetEntityType: 'Equipment',
+    targetEntityId: equipment._id,
+    beforeData,
+    afterData: {
+      code: equipment.code,
+      name: equipment.name,
+      category: equipment.category,
+      status: equipment.status,
+      locationType: equipment.locationType,
+      notes: equipment.notes,
+    },
+    req,
+  });
+
+  return equipment.toObject();
+};
+
+const deleteEquipment = async (id, user, req) => {
+  const Equipment = require('../models/equipment');
+  const equipment = await Equipment.findById(id);
+  if (!equipment) throw Object.assign(new Error('Không tìm thấy thiết bị'), { status: 404 });
+
+  const beforeData = { code: equipment.code, status: equipment.status };
+
+  await Equipment.findByIdAndDelete(id);
+
+  const { createAuditLog } = require('../utils/auditLog');
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'DELETE_EQUIPMENT',
+    module: 'facility',
+    targetEntityType: 'Equipment',
+    targetEntityId: equipment._id,
+    beforeData,
+    afterData: null,
+    req,
+  });
+
+  return { message: 'Thiết bị đã được xóa thành công', success: true };
+};
+
 module.exports = {
   listBuildings,
   listFloors,
@@ -589,4 +805,9 @@ module.exports = {
   deleteRoom,
   createBed,
   updateBed,
+  deleteBed,
+  listEquipment,
+  createEquipment,
+  updateEquipment,
+  deleteEquipment,
 };

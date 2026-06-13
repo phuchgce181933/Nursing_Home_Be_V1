@@ -98,5 +98,11 @@ router.delete('/rooms/:id', protect, adminManager, ctrl.deleteRoom);
 
 router.post('/beds', protect, adminManager, ctrl.createBed);
 router.put('/beds/:id', protect, adminManager, ctrl.updateBed);
+router.delete('/beds/:id', protect, adminManager, ctrl.deleteBed);
+
+router.get('/equipment', protect, ctrl.listEquipment);
+router.post('/equipment', protect, adminManager, ctrl.createEquipment);
+router.put('/equipment/:id', protect, adminManager, ctrl.updateEquipment);
+router.delete('/equipment/:id', protect, adminManager, ctrl.deleteEquipment);
 
 module.exports = router;

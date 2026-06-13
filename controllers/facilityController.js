@@ -23,10 +23,19 @@ const listRoomsByFloor = (req, res) => respond(res, svc.listRoomsByFloor(req.par
 
 const listAvailableBedsByRoom = (req, res) => respond(res, svc.listAvailableBedsByRoom(req.params.roomId));
 
+const createBuilding = (req, res) => respond(res, svc.createBuilding(req.body, req.user, req));
+
+const updateBuilding = (req, res) => respond(res, svc.updateBuilding(req.params.id, req.body, req.user, req));
+
+const deleteBuilding = (req, res) => respond(res, svc.deleteBuilding(req.params.id, req.user, req));
+
 module.exports = {
   listBuildings,
   listFloors,
   getFloor,
   listRoomsByFloor,
   listAvailableBedsByRoom,
+  createBuilding,
+  updateBuilding,
+  deleteBuilding,
 };

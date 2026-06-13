@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const ctrl = require('../controllers/facilityController');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
+const adminManager = authorize('admin', 'manager');
 
 /**
  * @swagger
@@ -83,5 +84,9 @@ router.get('/floors/:floorId/rooms', protect, ctrl.listRoomsByFloor);
 router.get('/floors/:floorId', protect, ctrl.getFloor);
 
 router.get('/rooms/:roomId/beds', protect, ctrl.listAvailableBedsByRoom);
+
+router.post('/buildings', protect, adminManager, ctrl.createBuilding);
+router.put('/buildings/:id', protect, adminManager, ctrl.updateBuilding);
+router.delete('/buildings/:id', protect, adminManager, ctrl.deleteBuilding);
 
 module.exports = router;

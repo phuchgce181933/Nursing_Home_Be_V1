@@ -89,4 +89,9 @@ router.post('/buildings', protect, adminManager, ctrl.createBuilding);
 router.put('/buildings/:id', protect, adminManager, ctrl.updateBuilding);
 router.delete('/buildings/:id', protect, adminManager, ctrl.deleteBuilding);
 
+router.post('/floors', protect, adminManager, ctrl.createFloor);
+router.put('/floors/:id', protect, adminManager, ctrl.updateFloor);
+router.delete('/floors/:id', protect, adminManager, ctrl.deleteFloor);
+router.post('/rooms', protect, adminManager, ctrl.createRoom);
+
 module.exports = router;

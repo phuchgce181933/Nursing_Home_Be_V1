@@ -29,6 +29,14 @@ const updateBuilding = (req, res) => respond(res, svc.updateBuilding(req.params.
 
 const deleteBuilding = (req, res) => respond(res, svc.deleteBuilding(req.params.id, req.user, req));
 
+const createFloor = (req, res) => respond(res, svc.createFloor(req.body, req.user, req));
+
+const updateFloor = (req, res) => respond(res, svc.updateFloor(req.params.id, req.body, req.user, req));
+
+const deleteFloor = (req, res) => respond(res, svc.deleteFloor(req.params.id, req.user, req));
+
+const createRoom = (req, res) => respond(res, svc.createRoom(req.body, req.user, req));
+
 module.exports = {
   listBuildings,
   listFloors,
@@ -38,4 +46,8 @@ module.exports = {
   createBuilding,
   updateBuilding,
   deleteBuilding,
+  createFloor,
+  updateFloor,
+  deleteFloor,
+  createRoom,
 };

@@ -58,9 +58,13 @@ const listRoomsByFloor = async (floorId) => {
   }));
 };
 
-const listAvailableBedsByRoom = async (roomId) => {
+const listAvailableBedsByRoom = async (roomId, { all = false } = {}) => {
   const Bed = require('../models/bed');
-  return Bed.find({ roomId, status: 'available' }).sort({ bedCode: 1 }).lean();
+  const filter = { roomId };
+  if (!all) {
+    filter.status = 'available';
+  }
+  return Bed.find(filter).sort({ bedCode: 1 }).lean();
 };
 
 const createBuilding = async (data, user, req) => {
@@ -351,6 +355,223 @@ const createRoom = async (data, user, req) => {
   return room.toObject();
 };
 
+const updateRoom = async (roomId, data, user, req) => {
+  const Room = require('../models/room');
+  const room = await Room.findById(roomId);
+  if (!room) throw Object.assign(new Error('Không tìm thấy phòng'), { status: 404 });
+
+  const beforeData = { roomNumber: room.roomNumber, roomType: room.roomType, capacity: room.capacity, status: room.status, notes: room.notes };
+
+  if (data.roomNumber !== undefined) {
+    const nextNum = String(data.roomNumber || '').trim();
+    if (!nextNum) throw Object.assign(new Error('roomNumber không được để trống'), { status: 400 });
+    if (nextNum !== room.roomNumber) {
+      const existing = await Room.findOne({ floorId: room.floorId, roomNumber: nextNum });
+      if (existing) throw Object.assign(new Error(`Phòng số ${nextNum} đã tồn tại ở tầng này`), { status: 409 });
+      room.roomNumber = nextNum;
+    }
+  }
+
+  if (data.roomType !== undefined) {
+    const { ROOM_TYPES } = require('../models/enums');
+    if (!ROOM_TYPES.includes(data.roomType)) {
+      throw Object.assign(new Error(`Loại phòng không hợp lệ. Phải thuộc: ${ROOM_TYPES.join(', ')}`), { status: 400 });
+    }
+    room.roomType = data.roomType;
+  }
+
+  if (data.capacity !== undefined) {
+    const nextCap = Number(data.capacity);
+    if (Number.isNaN(nextCap) || nextCap < 1) throw Object.assign(new Error('capacity phải là số lớn hơn hoặc bằng 1'), { status: 400 });
+    if (nextCap < room.occupiedCount) {
+      throw Object.assign(new Error(`Không thể giảm sức chứa xuống ${nextCap} vì đang có ${room.occupiedCount} cư dân đang ở phòng này`), { status: 400 });
+    }
+    room.capacity = nextCap;
+  }
+
+  if (data.status !== undefined) {
+    const { ROOM_STATUSES } = require('../models/enums');
+    if (!ROOM_STATUSES.includes(data.status)) {
+      throw Object.assign(new Error('Trạng thái phòng không hợp lệ'), { status: 400 });
+    }
+    room.status = data.status;
+  }
+
+  if (data.notes !== undefined) {
+    room.notes = String(data.notes || '').trim() || undefined;
+  }
+
+  if (room.status !== 'closed' && room.status !== 'maintenance') {
+    room.status = room.occupiedCount >= room.capacity ? 'full' : 'available';
+  }
+
+  await room.save();
+
+  const { createAuditLog } = require('../utils/auditLog');
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'UPDATE_ROOM',
+    module: 'facility',
+    targetEntityType: 'Room',
+    targetEntityId: room._id,
+    beforeData,
+    afterData: { roomNumber: room.roomNumber, roomType: room.roomType, capacity: room.capacity, status: room.status, notes: room.notes },
+    req,
+  });
+
+  return room.toObject();
+};
+
+const deleteRoom = async (roomId, user, req) => {
+  const Room = require('../models/room');
+  const room = await Room.findById(roomId);
+  if (!room) throw Object.assign(new Error('Không tìm thấy phòng'), { status: 404 });
+
+  if (room.occupiedCount > 0) {
+    throw Object.assign(new Error('Không thể xóa phòng đang có cư dân cư trú'), { status: 400 });
+  }
+
+  const beforeData = { roomNumber: room.roomNumber, status: room.status };
+
+  room.status = 'closed';
+  await room.save();
+
+  const Bed = require('../models/bed');
+  await Bed.updateMany({ roomId }, { status: 'maintenance' });
+
+  const { createAuditLog } = require('../utils/auditLog');
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'DELETE_ROOM',
+    module: 'facility',
+    targetEntityType: 'Room',
+    targetEntityId: room._id,
+    beforeData,
+    afterData: { roomNumber: room.roomNumber, status: 'closed' },
+    req,
+  });
+
+  return { message: 'Phòng đã được đóng thành công', success: true };
+};
+
+const createBed = async (data, user, req) => {
+  const Bed = require('../models/bed');
+  const Room = require('../models/room');
+  const roomId = data.roomId;
+  const bedCode = String(data.bedCode || '').trim();
+  const bedType = data.bedType || 'normal';
+  const condition = data.condition || 'good';
+  const notes = String(data.notes || '').trim();
+
+  if (!roomId) throw Object.assign(new Error('roomId là bắt buộc'), { status: 400 });
+  if (!bedCode) throw Object.assign(new Error('bedCode là bắt buộc'), { status: 400 });
+
+  const room = await Room.findById(roomId);
+  if (!room) throw Object.assign(new Error('Không tìm thấy phòng'), { status: 404 });
+
+  const existing = await Bed.findOne({ roomId, bedCode });
+  if (existing) throw Object.assign(new Error(`Giường mã ${bedCode} đã tồn tại trong phòng này`), { status: 409 });
+
+  const { BED_TYPES, BED_CONDITIONS } = require('../models/enums');
+  if (!BED_TYPES.includes(bedType)) {
+    throw Object.assign(new Error(`Loại giường không hợp lệ. Phải thuộc: ${BED_TYPES.join(', ')}`), { status: 400 });
+  }
+  if (!BED_CONDITIONS.includes(condition)) {
+    throw Object.assign(new Error(`Tình trạng giường không hợp lệ. Phải thuộc: ${BED_CONDITIONS.join(', ')}`), { status: 400 });
+  }
+
+  const bed = await Bed.create({
+    roomId,
+    bedCode,
+    bedType,
+    status: 'available',
+    condition,
+    notes: notes || undefined,
+  });
+
+  const { createAuditLog } = require('../utils/auditLog');
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'CREATE_BED',
+    module: 'facility',
+    targetEntityType: 'Bed',
+    targetEntityId: bed._id,
+    afterData: { roomId, bedCode, bedType, condition },
+    req,
+  });
+
+  return bed.toObject();
+};
+
+const updateBed = async (bedId, data, user, req) => {
+  const Bed = require('../models/bed');
+  const bed = await Bed.findById(bedId);
+  if (!bed) throw Object.assign(new Error('Không tìm thấy giường'), { status: 404 });
+
+  const beforeData = { bedCode: bed.bedCode, bedType: bed.bedType, status: bed.status, condition: bed.condition, notes: bed.notes };
+
+  if (data.bedCode !== undefined) {
+    const nextCode = String(data.bedCode || '').trim();
+    if (!nextCode) throw Object.assign(new Error('bedCode không được để trống'), { status: 400 });
+    if (nextCode !== bed.bedCode) {
+      const existing = await Bed.findOne({ roomId: bed.roomId, bedCode: nextCode });
+      if (existing) throw Object.assign(new Error(`Giường mã ${nextCode} đã tồn tại trong phòng này`), { status: 409 });
+      bed.bedCode = nextCode;
+    }
+  }
+
+  if (data.bedType !== undefined) {
+    const { BED_TYPES } = require('../models/enums');
+    if (!BED_TYPES.includes(data.bedType)) {
+      throw Object.assign(new Error(`Loại giường không hợp lệ. Phải thuộc: ${BED_TYPES.join(', ')}`), { status: 400 });
+    }
+    bed.bedType = data.bedType;
+  }
+
+  if (data.condition !== undefined) {
+    const { BED_CONDITIONS } = require('../models/enums');
+    if (!BED_CONDITIONS.includes(data.condition)) {
+      throw Object.assign(new Error('Tình trạng giường không hợp lệ'), { status: 400 });
+    }
+    bed.condition = data.condition;
+  }
+
+  if (data.status !== undefined) {
+    const { BED_STATUSES } = require('../models/enums');
+    if (!BED_STATUSES.includes(data.status)) {
+      throw Object.assign(new Error('Trạng thái giường không hợp lệ'), { status: 400 });
+    }
+    if (data.status === 'maintenance' && bed.status === 'occupied') {
+      throw Object.assign(new Error('Không thể chuyển giường đang sử dụng sang trạng thái bảo trì'), { status: 400 });
+    }
+    bed.status = data.status;
+  }
+
+  if (data.notes !== undefined) {
+    bed.notes = String(data.notes || '').trim() || undefined;
+  }
+
+  await bed.save();
+
+  const { createAuditLog } = require('../utils/auditLog');
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'UPDATE_BED',
+    module: 'facility',
+    targetEntityType: 'Bed',
+    targetEntityId: bed._id,
+    beforeData,
+    afterData: { bedCode: bed.bedCode, bedType: bed.bedType, status: bed.status, condition: bed.condition, notes: bed.notes },
+    req,
+  });
+
+  return bed.toObject();
+};
+
 module.exports = {
   listBuildings,
   listFloors,
@@ -364,4 +585,8 @@ module.exports = {
   updateFloor,
   deleteFloor,
   createRoom,
+  updateRoom,
+  deleteRoom,
+  createBed,
+  updateBed,
 };

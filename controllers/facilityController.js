@@ -21,7 +21,7 @@ const getFloor = (req, res) => respond(res, svc.getFloor(req.params.floorId));
 
 const listRoomsByFloor = (req, res) => respond(res, svc.listRoomsByFloor(req.params.floorId));
 
-const listAvailableBedsByRoom = (req, res) => respond(res, svc.listAvailableBedsByRoom(req.params.roomId));
+const listAvailableBedsByRoom = (req, res) => respond(res, svc.listAvailableBedsByRoom(req.params.roomId, { all: req.query.all === 'true' }));
 
 const createBuilding = (req, res) => respond(res, svc.createBuilding(req.body, req.user, req));
 
@@ -37,6 +37,14 @@ const deleteFloor = (req, res) => respond(res, svc.deleteFloor(req.params.id, re
 
 const createRoom = (req, res) => respond(res, svc.createRoom(req.body, req.user, req));
 
+const updateRoom = (req, res) => respond(res, svc.updateRoom(req.params.id, req.body, req.user, req));
+
+const deleteRoom = (req, res) => respond(res, svc.deleteRoom(req.params.id, req.user, req));
+
+const createBed = (req, res) => respond(res, svc.createBed(req.body, req.user, req));
+
+const updateBed = (req, res) => respond(res, svc.updateBed(req.params.id, req.body, req.user, req));
+
 module.exports = {
   listBuildings,
   listFloors,
@@ -50,4 +58,8 @@ module.exports = {
   updateFloor,
   deleteFloor,
   createRoom,
+  updateRoom,
+  deleteRoom,
+  createBed,
+  updateBed,
 };

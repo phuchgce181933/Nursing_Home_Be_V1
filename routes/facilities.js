@@ -93,5 +93,10 @@ router.post('/floors', protect, adminManager, ctrl.createFloor);
 router.put('/floors/:id', protect, adminManager, ctrl.updateFloor);
 router.delete('/floors/:id', protect, adminManager, ctrl.deleteFloor);
 router.post('/rooms', protect, adminManager, ctrl.createRoom);
+router.put('/rooms/:id', protect, adminManager, ctrl.updateRoom);
+router.delete('/rooms/:id', protect, adminManager, ctrl.deleteRoom);
+
+router.post('/beds', protect, adminManager, ctrl.createBed);
+router.put('/beds/:id', protect, adminManager, ctrl.updateBed);
 
 module.exports = router;

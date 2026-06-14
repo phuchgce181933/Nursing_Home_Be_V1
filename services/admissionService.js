@@ -1167,9 +1167,15 @@ const checkInResident = async (admin, admissionId, body, req) => {
     });
   }
 
-  // Update bed status
+  // Update bed status and room occupancy
   if (assignedBedId) {
-    await Bed.findByIdAndUpdate(assignedBedId, { status: 'occupied' });
+    const bedRepo = require('../repositories/bedRepository');
+    await bedRepo.occupyBed(assignedBedId, resident._id, new Date());
+  }
+
+  if (assignedRoomId) {
+    const roomRepo = require('../repositories/roomRepository');
+    await roomRepo.adjustOccupiedCount(assignedRoomId, 1);
   }
 
   const updated = await admissionRepo.updateAdmission(admissionId, {

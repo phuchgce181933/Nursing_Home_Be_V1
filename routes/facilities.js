@@ -89,6 +89,7 @@ router.get('/rooms/:roomId/beds', protect, ctrl.listAvailableBedsByRoom);
 router.post('/buildings', protect, adminManager, ctrl.createBuilding);
 router.put('/buildings/:id', protect, adminManager, ctrl.updateBuilding);
 router.delete('/buildings/:id', protect, adminManager, ctrl.deleteBuilding);
+router.get('/buildings/:id/stats', protect, ctrl.getBuildingStats);
 
 router.post('/floors', protect, adminManager, ctrl.createFloor);
 router.put('/floors/:id', protect, adminManager, ctrl.updateFloor);

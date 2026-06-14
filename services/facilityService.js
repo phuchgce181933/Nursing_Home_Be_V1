@@ -10,7 +10,7 @@ const formatFloorLabel = (floor) => {
 
 const listBuildings = async ({ activeOnly = true } = {}) => {
   const filter = activeOnly ? { isActive: { $ne: false } } : {};
-  return Building.find(filter).select('code name address isActive').sort({ name: 1 }).lean();
+  return Building.find(filter).select('code name address description isActive').sort({ name: 1 }).lean();
 };
 
 const listFloors = async ({ buildingId, activeOnly = true } = {}) => {
@@ -416,6 +416,9 @@ const updateRoom = async (roomId, data, user, req) => {
     if (!ROOM_STATUSES.includes(data.status)) {
       throw Object.assign(new Error('Trạng thái phòng không hợp lệ'), { status: 400 });
     }
+    if (room.occupiedCount > 0 && (data.status === 'closed' || data.status === 'maintenance')) {
+      throw Object.assign(new Error('Không thể chuyển trạng thái phòng đang có cư dân cư trú sang Đóng hoặc Bảo trì'), { status: 400 });
+    }
     room.status = data.status;
   }
 
@@ -810,6 +813,58 @@ const deleteEquipment = async (id, user, req) => {
   return { message: 'Thiết bị đã được xóa thành công', success: true };
 };
 
+const getBuildingStats = async (buildingId) => {
+  const Floor = require('../models/floor');
+  const Room = require('../models/room');
+  const Bed = require('../models/bed');
+
+  const building = await Building.findById(buildingId).lean();
+  if (!building) {
+    throw Object.assign(new Error('Không tìm thấy tòa nhà'), { status: 404 });
+  }
+
+  const floorsCount = await Floor.countDocuments({ buildingId });
+  const roomsCount = await Room.countDocuments({ buildingId });
+
+  // Get rooms to find bed statistics
+  const rooms = await Room.find({ buildingId }).select('_id').lean();
+  const roomIds = rooms.map((r) => r._id);
+
+  const totalBeds = await Bed.countDocuments({ roomId: { $in: roomIds } });
+
+  // Aggregate bed statuses
+  const bedStatsRaw = await Bed.aggregate([
+    { $match: { roomId: { $in: roomIds } } },
+    { $group: { _id: '$status', count: { $sum: 1 } } },
+  ]);
+
+  const bedStats = {
+    available: 0,
+    occupied: 0,
+    reserved: 0,
+    maintenance: 0,
+  };
+
+  bedStatsRaw.forEach((stat) => {
+    if (bedStats[stat._id] !== undefined) {
+      bedStats[stat._id] = stat.count;
+    }
+  });
+
+  return {
+    building: {
+      _id: building._id,
+      code: building.code,
+      name: building.name,
+      isActive: building.isActive,
+    },
+    floorsCount,
+    roomsCount,
+    bedsCount: totalBeds,
+    bedStats,
+  };
+};
+
 module.exports = {
   listBuildings,
   listFloors,
@@ -818,6 +873,7 @@ module.exports = {
   listAllRooms,
   listAllBeds,
   getStats,
+  getBuildingStats,
   listAvailableBedsByRoom,
   createBuilding,
   updateBuilding,

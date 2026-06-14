@@ -30,6 +30,7 @@ const createBuilding = (req, res) => respond(res, svc.createBuilding(req.body, r
 const updateBuilding = (req, res) => respond(res, svc.updateBuilding(req.params.id, req.body, req.user, req));
 
 const deleteBuilding = (req, res) => respond(res, svc.deleteBuilding(req.params.id, req.user, req));
+const getBuildingStats = (req, res) => respond(res, svc.getBuildingStats(req.params.id));
 
 const createFloor = (req, res) => respond(res, svc.createFloor(req.body, req.user, req));
 
@@ -75,6 +76,7 @@ module.exports = {
   createBuilding,
   updateBuilding,
   deleteBuilding,
+  getBuildingStats,
   createFloor,
   updateFloor,
   deleteFloor,

@@ -19,14 +19,75 @@ const listFloors = (req, res) =>
 
 const getFloor = (req, res) => respond(res, svc.getFloor(req.params.floorId));
 
+const getStats = (req, res) => respond(res, svc.getStats());
+
 const listRoomsByFloor = (req, res) => respond(res, svc.listRoomsByFloor(req.params.floorId));
 
-const listAvailableBedsByRoom = (req, res) => respond(res, svc.listAvailableBedsByRoom(req.params.roomId));
+const listAvailableBedsByRoom = (req, res) => respond(res, svc.listAvailableBedsByRoom(req.params.roomId, { all: req.query.all === 'true' }));
+
+const createBuilding = (req, res) => respond(res, svc.createBuilding(req.body, req.user, req));
+
+const updateBuilding = (req, res) => respond(res, svc.updateBuilding(req.params.id, req.body, req.user, req));
+
+const deleteBuilding = (req, res) => respond(res, svc.deleteBuilding(req.params.id, req.user, req));
+const getBuildingStats = (req, res) => respond(res, svc.getBuildingStats(req.params.id));
+
+const createFloor = (req, res) => respond(res, svc.createFloor(req.body, req.user, req));
+
+const updateFloor = (req, res) => respond(res, svc.updateFloor(req.params.id, req.body, req.user, req));
+
+const deleteFloor = (req, res) => respond(res, svc.deleteFloor(req.params.id, req.user, req));
+
+const createRoom = (req, res) => respond(res, svc.createRoom(req.body, req.user, req));
+
+const updateRoom = (req, res) => respond(res, svc.updateRoom(req.params.id, req.body, req.user, req));
+
+const deleteRoom = (req, res) => respond(res, svc.deleteRoom(req.params.id, req.user, req));
+
+const createBed = (req, res) => respond(res, svc.createBed(req.body, req.user, req));
+
+const updateBed = (req, res) => respond(res, svc.updateBed(req.params.id, req.body, req.user, req));
+
+const deleteBed = (req, res) => respond(res, svc.deleteBed(req.params.id, req.user, req));
+
+const listEquipment = (req, res) =>
+  respond(
+    res,
+    svc.listEquipment({
+      status: req.query.status,
+      category: req.query.category,
+      roomId: req.query.roomId,
+    })
+  );
+
+const createEquipment = (req, res) => respond(res, svc.createEquipment(req.body, req.user, req));
+
+const updateEquipment = (req, res) => respond(res, svc.updateEquipment(req.params.id, req.body, req.user, req));
+
+const deleteEquipment = (req, res) => respond(res, svc.deleteEquipment(req.params.id, req.user, req));
 
 module.exports = {
   listBuildings,
   listFloors,
   getFloor,
+  getStats,
   listRoomsByFloor,
   listAvailableBedsByRoom,
+  createBuilding,
+  updateBuilding,
+  deleteBuilding,
+  getBuildingStats,
+  createFloor,
+  updateFloor,
+  deleteFloor,
+  createRoom,
+  updateRoom,
+  deleteRoom,
+  createBed,
+  updateBed,
+  deleteBed,
+  listEquipment,
+  createEquipment,
+  updateEquipment,
+  deleteEquipment,
 };

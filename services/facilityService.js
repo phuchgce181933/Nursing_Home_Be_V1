@@ -58,6 +58,28 @@ const listRoomsByFloor = async (floorId) => {
   }));
 };
 
+const listAllRooms = async ({ activeOnly = false } = {}) => {
+  const Room = require('../models/room');
+  const filter = activeOnly ? { status: { $ne: 'closed' } } : {};
+  return Room.find(filter).select('_id roomNumber roomType status floorId buildingId').lean();
+};
+
+const listAllBeds = async ({ activeOnly = false } = {}) => {
+  const Bed = require('../models/bed');
+  const filter = activeOnly ? { status: { $ne: 'maintenance' } } : {};
+  return Bed.find(filter).select('_id bedCode status roomId').lean();
+};
+
+const getStats = async () => {
+  const [buildings, floors, rooms, beds] = await Promise.all([
+    require('../models/building').countDocuments({}),
+    require('../models/floor').countDocuments({}),
+    require('../models/room').countDocuments({}),
+    require('../models/bed').countDocuments({}),
+  ]);
+  return { buildingsCount: buildings, floorsCount: floors, roomsCount: rooms, bedsCount: beds };
+};
+
 const listAvailableBedsByRoom = async (roomId, { all = false } = {}) => {
   const Bed = require('../models/bed');
   const filter = { roomId };
@@ -793,6 +815,9 @@ module.exports = {
   listFloors,
   getFloor,
   listRoomsByFloor,
+  listAllRooms,
+  listAllBeds,
+  getStats,
   listAvailableBedsByRoom,
   createBuilding,
   updateBuilding,

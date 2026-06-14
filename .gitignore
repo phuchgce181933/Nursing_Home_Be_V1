@@ -45,6 +45,7 @@ docs/sequence/
 docs/class diagram/
 docs/Specification/
 
+
 # Postman collections (local test data only)
 *.postman_collection.json
 *.postman_environment.json

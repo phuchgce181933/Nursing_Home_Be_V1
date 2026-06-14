@@ -26,6 +26,7 @@ const adminManager = authorize('admin', 'manager');
  *       200: { description: List of buildings }
  */
 router.get('/buildings', protect, ctrl.listBuildings);
+router.get('/stats', protect, ctrl.getStats);
 
 /**
  * @swagger

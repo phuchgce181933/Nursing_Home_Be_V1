@@ -19,6 +19,8 @@ const listFloors = (req, res) =>
 
 const getFloor = (req, res) => respond(res, svc.getFloor(req.params.floorId));
 
+const getStats = (req, res) => respond(res, svc.getStats());
+
 const listRoomsByFloor = (req, res) => respond(res, svc.listRoomsByFloor(req.params.floorId));
 
 const listAvailableBedsByRoom = (req, res) => respond(res, svc.listAvailableBedsByRoom(req.params.roomId, { all: req.query.all === 'true' }));
@@ -67,6 +69,7 @@ module.exports = {
   listBuildings,
   listFloors,
   getFloor,
+  getStats,
   listRoomsByFloor,
   listAvailableBedsByRoom,
   createBuilding,

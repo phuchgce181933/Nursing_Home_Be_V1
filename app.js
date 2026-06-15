@@ -11,12 +11,13 @@ const { startReminderScheduler } = require('./services/reminderSchedulerService'
 // import all models through index to ensure schemas are registered
 const models = require('./models');
 const { initMedicationJobs } = require('./jobs/medicationReminderJob');
+const auditLogger = require('./middleware/auditLogger');
 
 const app = express();
 
 // Configure CORS to allow requests from frontend
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:8081'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -44,6 +45,7 @@ app.use(
 app.use(require('./middleware/parseJsonBody'));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use(auditLogger);
 // app.use((req, res, next) => {
 //   const _json = res.json.bind(res);
 //   res.json = (body) => _json(convertDates(JSON.parse(JSON.stringify(body))));

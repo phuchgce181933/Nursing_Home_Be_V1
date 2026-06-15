@@ -1,6 +1,7 @@
 const ServiceError = require('./serviceError');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
+const paymentService = require('./paymentService');
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -66,6 +67,20 @@ const getResidentInvoices = async (user, residentId, query) => {
     familyPortalRepo.countInvoicesByResidentId(residentId),
   ]);
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
+};
+
+const getInvoicePaymentUrl = async (user, residentId, invoiceId, req) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+  
+  const invoices = await familyPortalRepo.findInvoicesByResidentId(residentId, { limit: 100 });
+  const foundInvoice = invoices.find(inv => String(inv._id) === String(invoiceId));
+  if (!foundInvoice) throw new ServiceError('Invoice not found', 404);
+  
+  // Use paymentService to generate the checkout URL with checksum
+  const paymentUrl = paymentService.buildPayosCheckoutUrl(req, foundInvoice);
+  return { paymentUrl };
 };
 
 const getVitals = async (user, residentId) => {
@@ -510,6 +525,7 @@ module.exports = {
   getResident,
   getResidentBillingSummary,
   getResidentInvoices,
+  getInvoicePaymentUrl,
   getVitals,
   getHealthHistory,
   getHealthChart,

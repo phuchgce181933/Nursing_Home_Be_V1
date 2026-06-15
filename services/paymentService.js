@@ -338,10 +338,25 @@ const buildPayosCheckoutUrl = (req, invoice) => {
   return `${baseUrl}/api/residents/${encodeURIComponent(residentId)}/invoices/payos/checkout/${encodeURIComponent(invoice._id)}?clientId=${encodeURIComponent(clientId)}&checksum=${encodeURIComponent(checksum)}`;
 };
 
+const buildPayosWalletTopupUrl = (req, topupData) => {
+  const { clientId, apiKey, checksumKey } = getPayosCredentials();
+  const checksum = buildPayosChecksum({ clientId, apiKey, checksumKey, invoiceNumber: topupData.invoiceNumber, amount: topupData.amount });
+  const baseUrl = process.env.PAYOS_CHECKOUT_URL || `${req.protocol}://${req.get('host')}`;
+  return `${baseUrl}/api/family/wallet/topup/payos/checkout/${encodeURIComponent(topupData._id)}?clientId=${encodeURIComponent(clientId)}&checksum=${encodeURIComponent(checksum)}&amount=${encodeURIComponent(topupData.amount)}`;
+};
+
 const verifyPayosCheckoutChecksum = (invoice, clientId, checksum) => {
   if (!clientId || !checksum) return false;
   const { apiKey, checksumKey } = getPayosCredentials();
   const expected = buildPayosChecksum({ clientId, apiKey, checksumKey, invoiceNumber: invoice.invoiceNumber, amount: invoice.totalAmount });
+  return expected === checksum;
+};
+
+const verifyPayosWalletTopupChecksum = (topupId, amount, clientId, checksum) => {
+  if (!clientId || !checksum || !topupId || !amount) return false;
+  const { apiKey, checksumKey } = getPayosCredentials();
+  const invoiceNumber = `TOPUP-${topupId.split('_').pop()}`;
+  const expected = buildPayosChecksum({ clientId, apiKey, checksumKey, invoiceNumber, amount: parseInt(amount) });
   return expected === checksum;
 };
 
@@ -430,8 +445,10 @@ module.exports = {
   createInvoice,
   estimateMedicationCostForPrescription,
   buildPayosCheckoutUrl,
+  buildPayosWalletTopupUrl,
   createPayosPaymentRequest,
   findInvoiceById,
   findInvoiceForCheckout,
   recordPayment,
+  verifyPayosWalletTopupChecksum,
 };

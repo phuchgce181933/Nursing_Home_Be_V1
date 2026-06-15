@@ -25,7 +25,7 @@ const ensureDefaultShiftTemplates = async () => {
         $unset: { minStaff: '', durationHours: '' },
         $setOnInsert: { shiftCode: def.shiftCode },
       },
-      { upsert: true, runValidators: true }
+      { upsert: true, returnDocument: 'after', runValidators: true }
     );
   }
 

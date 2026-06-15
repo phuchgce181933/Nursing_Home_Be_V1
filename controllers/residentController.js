@@ -1,4 +1,5 @@
 const residentService = require('../services/residentService');
+const { createAuditLog } = require('../utils/auditLog');
 
 const statusCode = (err) => err.statusCode || err.status || 500;
 
@@ -123,6 +124,24 @@ const getTransferTargets = async (req, res) => {
 const transferResidentToRoom = async (req, res) => {
   try {
     const result = await residentService.transferResidentToRoom(req.params.residentId, req.body);
+
+    await createAuditLog({
+      actorUserId: req.user._id,
+      actorRole: req.user.role,
+      action: 'TRANSFER_RESIDENT_ROOM',
+      displayAction: 'Chuyển cư dân',
+      businessModule: 'resident',
+      module: 'resident',
+      description: `Chuyển cư dân ${result.resident.fullName || req.params.residentId} từ ${result.from.room?.roomNumber || 'phòng cũ'} sang ${result.to.room?.roomNumber || 'phòng mới'}`,
+      targetEntityType: 'Resident',
+      targetEntityId: req.params.residentId,
+      targetName: result.resident.residentCode || result.resident.fullName || req.params.residentId,
+      beforeData: result.from,
+      afterData: result.to,
+      req,
+      statusCode: 200,
+    });
+
     res.json(result);
   } catch (err) {
     res.status(statusCode(err)).json({ message: err.message });

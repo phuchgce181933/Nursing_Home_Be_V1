@@ -5,6 +5,11 @@ const {
   getResident,
   getResidentBillingSummary,
   getResidentInvoices,
+  getInvoicePaymentUrl,
+  getWalletBalance,
+  generateWalletTopupUrl,
+  confirmWalletTopup,
+  getWalletTopupCheckoutPage,
   getVitals,
   getHealthHistory,
   getHealthChart,
@@ -20,6 +25,10 @@ const {
 } = require('../controllers/familyPortalController');
 const { protect, authorize } = require('../middleware/auth');
 
+// Public checkout endpoints (no auth required - use checksum verification instead)
+router.get('/wallet/topup/payos/checkout/:topupId', getWalletTopupCheckoutPage);
+
+// Protected routes - require authentication
 router.use(protect, authorize('family'));
 
 /**
@@ -117,6 +126,132 @@ router.get('/residents/:residentId/billing-summary', getResidentBillingSummary);
  *         description: Resident not found
  */
 router.get('/residents/:residentId/invoices', getResidentInvoices);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/invoices/{invoiceId}/payment-url:
+ *   get:
+ *     summary: Get PayOS payment URL for an invoice (for mobile app)
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: invoiceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/invoices/{invoiceId}/payment-url:
+ *   get:
+ *     summary: Get payment URL for an invoice
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *       - in: path
+ *         name: invoiceId
+ *         required: true
+ *     responses:
+ *       200:
+ *         description: Payment URL with checksum
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Invoice not found
+ */
+router.get('/residents/:residentId/invoices/:invoiceId/payment-url', getInvoicePaymentUrl);
+
+/**
+ * @swagger
+ * /api/family/wallet/balance:
+ *   get:
+ *     summary: Get wallet balance for logged-in family member
+ *     tags: [Family Wallet]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Wallet balance information
+ *         schema:
+ *           type: object
+ *           properties:
+ *             balance:
+ *               type: number
+ *               description: Current wallet balance
+ *             totalTopup:
+ *               type: number
+ *               description: Total amount topped up
+ *             totalSpent:
+ *               type: number
+ *               description: Total amount spent
+ */
+router.get('/wallet/balance', getWalletBalance);
+
+/**
+ * @swagger
+ * /api/family/wallet/topup:
+ *   post:
+ *     summary: Generate payment URL for wallet topup
+ *     tags: [Family Wallet]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               amount:
+ *                 type: number
+ *                 example: 100000
+ *                 description: Amount to topup in VND
+ *     responses:
+ *       200:
+ *         description: Payment URL with checksum for topup
+ *       400:
+ *         description: Invalid amount
+ */
+router.post('/wallet/topup', generateWalletTopupUrl);
+
+/**
+ * @swagger
+ * /api/family/wallet/topup/confirm:
+ *   post:
+ *     summary: Confirm wallet topup after successful payment
+ *     tags: [Family Wallet]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               amount:
+ *                 type: number
+ *                 example: 100000
+ *                 description: Amount that was topped up in VND
+ *     responses:
+ *       200:
+ *         description: Topup confirmed, wallet updated
+ *       400:
+ *         description: Invalid request
+ */
+router.post('/wallet/topup/confirm', confirmWalletTopup);
 
 /**
  * @swagger

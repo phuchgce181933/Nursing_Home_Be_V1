@@ -1,4 +1,5 @@
 const invoiceRepo = require('../repositories/invoiceRepository');
+const walletService = require('../services/walletService');
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const ADMIN_DASHBOARD_URL = `${FRONTEND_URL.replace(/\/$/, '')}/admin/dashboard`;
@@ -25,7 +26,15 @@ const handleReturn = async (req, res, next) => {
   try {
     const { invoiceId, status } = req.query;
 
-    if (status === 'PAID' && invoiceId) {
+    if (invoiceId && String(invoiceId).startsWith('topup_') && status === 'PAID') {
+      try {
+        const parts = String(invoiceId).split('_');
+        const userId = parts[1];
+        await walletService.confirmTopup(userId, String(invoiceId), String(invoiceId));
+      } catch (err) {
+        console.warn('PayOS return: unable to confirm wallet topup', err.message || err);
+      }
+    } else if (status === 'PAID' && invoiceId) {
       try {
         await invoiceRepo.updateById(invoiceId, { status: 'paid' });
       } catch (err) {

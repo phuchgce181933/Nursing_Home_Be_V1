@@ -1,4 +1,5 @@
 const paymentService = require('../services/paymentService');
+const walletService = require('../services/walletService');
 const ServiceError = require('../services/serviceError');
 
 const createInvoice = async (req, res, next) => {
@@ -67,10 +68,49 @@ const getPayosCheckoutPage = async (req, res, next) => {
 };
 
 const recordPayment = async (req, res, next) => {
+  const { paymentMethod, amount: requestedAmount, note } = req.body;
+  const walletPayment = paymentMethod === 'wallet';
+  let deductedFromWallet = false;
+
   try {
-    const payment = await paymentService.recordPayment(req.user, req.params.invoiceId, req.body);
+    const invoice = await paymentService.findInvoiceById(req.user, req.params.invoiceId);
+    const amount = Number(requestedAmount != null ? requestedAmount : invoice.totalAmount) || 0;
+    if (amount <= 0) {
+      throw new ServiceError('Payment amount must be greater than 0', 400);
+    }
+
+    if (walletPayment) {
+      await walletService.deductFromWallet(
+        req.user._id,
+        amount,
+        `Thanh toán hóa đơn ${invoice.invoiceNumber}`,
+        req.params.invoiceId,
+      );
+      deductedFromWallet = true;
+    }
+
+    const payment = await paymentService.recordPayment(req.user, req.params.invoiceId, {
+      ...req.body,
+      amount,
+    });
+
     return res.status(201).json({ success: true, data: payment });
   } catch (error) {
+    if (walletPayment && deductedFromWallet) {
+      try {
+        const refundAmount = Number(requestedAmount != null ? requestedAmount : 0) || 0;
+        if (refundAmount > 0) {
+          await walletService.refundToWallet(
+            req.user._id,
+            refundAmount,
+            `Hoàn tiền do lỗi thanh toán hóa đơn ${req.params.invoiceId}`,
+            req.params.invoiceId,
+          );
+        }
+      } catch (refundError) {
+        console.error('Failed to refund wallet after payment error:', refundError);
+      }
+    }
     return next(error);
   }
 };

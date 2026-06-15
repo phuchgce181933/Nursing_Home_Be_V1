@@ -50,6 +50,7 @@ const MedicationSchedule = require('./MedicationSchedule');
 const ContraindicationRule = require('./ContraindicationRule');
 const DrugInteraction = require('./DrugInteraction');
 const ElderlyDosageGuideline = require('./ElderlyDosageGuideline');
+const FamilyWallet = require('./familyWallet');
 
 module.exports = {
   User,
@@ -104,4 +105,5 @@ module.exports = {
   ContraindicationRule,
   DrugInteraction,
   ElderlyDosageGuideline,
+  FamilyWallet,
 };

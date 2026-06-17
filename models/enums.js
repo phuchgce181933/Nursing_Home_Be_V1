@@ -40,7 +40,7 @@ const MEDICATION_ADMIN_STATUSES = ['pending', 'taken', 'missed', 'overdue'];
 const INCIDENT_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const INCIDENT_STATUSES = ['open', 'investigating', 'resolved', 'closed'];
 const APPOINTMENT_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];
-const CARE_NOTE_TYPES = ['meal', 'activity', 'health', 'general'];
+const CARE_NOTE_TYPES = ['meal', 'activity', 'daily_living', 'health', 'general'];
 
 const INVOICE_STATUSES = ['draft', 'issued', 'partially_paid', 'paid', 'overdue', 'cancelled'];
 const PAYMENT_METHODS = ['bank_transfer', 'card', 'wallet', 'cash'];

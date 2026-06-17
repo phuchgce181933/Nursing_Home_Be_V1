@@ -41,6 +41,16 @@ const generateTopupPaymentUrl = async (user, amount, req) => {
   };
 
   const wallet = await getOrCreateWallet(user._id);
+  const payosData = await paymentService.createPayosPaymentRequest({
+    invoice: topupInvoice,
+    req,
+  });
+
+  if (!payosData.checkoutUrl) {
+    throw new ServiceError('Không nhận được URL thanh toán từ PayOS', 500);
+  }
+
+  // Store transaction AFTER getting orderCode from PayOS so we can verify later
   const existingPending = wallet.transactions.find((tx) => tx.paymentId === topupId);
   if (!existingPending) {
     wallet.transactions.push({
@@ -48,31 +58,22 @@ const generateTopupPaymentUrl = async (user, amount, req) => {
       amount,
       description: 'Nạp tiền vào ví',
       paymentId: topupId,
+      orderCode: payosData.orderCode || null,
       status: 'pending',
       createdAt: new Date(),
     });
     await wallet.save();
-  }
-
-  const payosData = await paymentService.createPayosPaymentRequest({
-    invoice: topupInvoice,
-    req,
-  });
-
-  console.log('[Wallet Topup] PayOS Response:', JSON.stringify({
-    hasCheckoutUrl: !!payosData.checkoutUrl,
-    checkoutUrl: payosData.checkoutUrl,
-    payosDataKeys: Object.keys(payosData),
-  }));
-
-  if (!payosData.checkoutUrl) {
-    throw new ServiceError('Không nhận được URL thanh toán từ PayOS', 500);
+  } else if (!existingPending.orderCode && payosData.orderCode) {
+    existingPending.orderCode = payosData.orderCode;
+    await wallet.save();
   }
 
   return {
     checkoutUrl: payosData.checkoutUrl,
-    amount: amount,
+    qrCode: payosData.qrCode || null,
+    amount,
     topupId,
+    orderCode: payosData.orderCode || null,
   };
 };
 
@@ -105,6 +106,87 @@ const confirmTopupByTopupId = async (topupId, paymentId) => {
   }
   const userId = parts[1];
   return confirmTopup(userId, topupId, paymentId);
+};
+
+// Poll-based verification: check real payment status with PayOS API and auto-confirm if paid
+const verifyAndConfirmTopup = async (userId, topupId) => {
+  const wallet = await getOrCreateWallet(userId);
+  const tx = wallet.transactions.find((t) => t.paymentId === topupId && t.type === 'topup');
+
+  if (!tx) throw new ServiceError('Yêu cầu nạp tiền không tồn tại', 404);
+
+  // Already confirmed
+  if (tx.status === 'completed') {
+    return {
+      status: 'PAID',
+      wallet: { balance: wallet.balance, totalTopup: wallet.totalTopup, totalSpent: wallet.totalSpent },
+    };
+  }
+
+  if (!tx.orderCode) {
+    // No orderCode stored — cannot verify with PayOS; return pending
+    return { status: 'PENDING' };
+  }
+
+  let paymentData;
+  try {
+    paymentData = await paymentService.getPayosPaymentStatus(tx.orderCode);
+  } catch (err) {
+    console.warn('[verifyAndConfirmTopup] PayOS API error:', err.message);
+    return { status: 'PENDING' };
+  }
+
+  const payosStatus = String(paymentData.status || 'PENDING').toUpperCase();
+
+  if (payosStatus === 'PAID') {
+    tx.status = 'completed';
+    wallet.balance += tx.amount;
+    wallet.totalTopup += tx.amount;
+    await wallet.save();
+    return {
+      status: 'PAID',
+      wallet: { balance: wallet.balance, totalTopup: wallet.totalTopup, totalSpent: wallet.totalSpent },
+    };
+  }
+
+  if (payosStatus === 'CANCELLED' || payosStatus === 'EXPIRED') {
+    tx.status = 'failed';
+    await wallet.save();
+    return { status: payosStatus };
+  }
+
+  return { status: 'PENDING' };
+};
+
+// Used by PayOS webhook: find the most-recent pending topup for this amount across all wallets
+const confirmPendingTopupByAmount = async (amount, paymentId) => {
+  const wallet = await FamilyWallet.findOne({
+    transactions: {
+      $elemMatch: { type: 'topup', amount, status: 'pending' },
+    },
+  }).sort({ updatedAt: -1 });
+
+  if (!wallet) {
+    throw new ServiceError('Không tìm thấy giao dịch nạp tiền chờ xác nhận', 404);
+  }
+
+  const tx = wallet.transactions
+    .filter((t) => t.type === 'topup' && t.amount === amount && t.status === 'pending')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+
+  if (!tx) {
+    throw new ServiceError('Không tìm thấy giao dịch nạp tiền chờ xác nhận', 404);
+  }
+
+  if (tx.status === 'completed') return wallet;
+
+  tx.status = 'completed';
+  if (paymentId) tx.paymentId = paymentId;
+  wallet.balance += tx.amount;
+  wallet.totalTopup += tx.amount;
+
+  await wallet.save();
+  return wallet;
 };
 
 const deductFromWallet = async (userId, amount, description, invoiceId) => {
@@ -153,6 +235,9 @@ module.exports = {
   getWalletBalance,
   generateTopupPaymentUrl,
   confirmTopup,
+  confirmTopupByTopupId,
+  confirmPendingTopupByAmount,
+  verifyAndConfirmTopup,
   deductFromWallet,
   refundToWallet,
 };

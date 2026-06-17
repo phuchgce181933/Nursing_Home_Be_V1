@@ -9,6 +9,7 @@ const {
   getWalletBalance,
   generateWalletTopupUrl,
   confirmWalletTopup,
+  verifyWalletTopup,
   getWalletTopupCheckoutPage,
   getVitals,
   getHealthHistory,
@@ -252,6 +253,7 @@ router.post('/wallet/topup', generateWalletTopupUrl);
  *         description: Invalid request
  */
 router.post('/wallet/topup/confirm', confirmWalletTopup);
+router.post('/wallet/topup/verify', verifyWalletTopup);
 
 /**
  * @swagger

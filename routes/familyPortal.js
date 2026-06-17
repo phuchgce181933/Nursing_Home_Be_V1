@@ -29,6 +29,24 @@ const { protect, authorize } = require('../middleware/auth');
 // Public checkout endpoints (no auth required - use checksum verification instead)
 router.get('/wallet/topup/payos/checkout/:topupId', getWalletTopupCheckoutPage);
 
+// Proxy QR image from PayOS to avoid CORS on mobile/web
+router.get('/wallet/qr-proxy', async (req, res) => {
+  const { url } = req.query;
+  if (!url || typeof url !== 'string') return res.status(400).json({ message: 'url required' });
+  try {
+    const https = require('https');
+    const http = require('http');
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(url, (upstream) => {
+      res.set('Content-Type', upstream.headers['content-type'] || 'image/png');
+      res.set('Cache-Control', 'public, max-age=600');
+      upstream.pipe(res);
+    }).on('error', () => res.status(502).json({ message: 'Failed to fetch QR' }));
+  } catch {
+    res.status(502).json({ message: 'Failed to fetch QR' });
+  }
+});
+
 // Protected routes - require authentication
 router.use(protect, authorize('family'));
 

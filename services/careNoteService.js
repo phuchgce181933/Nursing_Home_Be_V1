@@ -3,24 +3,31 @@ const ServiceError = require('./serviceError');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const Resident = require('../models/resident');
+const { CARE_NOTE_TYPES } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
 
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 
-const VALID_NOTE_TYPES = ['meal', 'activity', 'health', 'general'];
-
-// Metadata enum values for structured note types
+// Meal metadata
 const VALID_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 const VALID_INTAKE_AMOUNTS = ['none', 'little', 'half', 'most', 'all'];
 const VALID_APPETITE = ['poor', 'fair', 'good', 'excellent'];
 
+// Activity (recreational / program) metadata
 const VALID_ACTIVITY_TYPES = [
-  'walking', 'exercise', 'physiotherapy', 'bathing', 'grooming',
-  'reading', 'socializing', 'other',
+  'walking', 'exercise', 'physiotherapy', 'reading', 'socializing', 'entertainment', 'other',
 ];
 const VALID_PARTICIPATION_LEVELS = ['refused', 'assisted', 'supervised', 'independent'];
 const VALID_MOODS = ['happy', 'neutral', 'sad', 'agitated', 'anxious'];
 
+// Daily living (ADL – hoạt động sinh hoạt hằng ngày) metadata
+const VALID_DAILY_LIVING_TYPES = [
+  'bathing', 'grooming', 'dressing', 'eating', 'mobility', 'toileting', 'sleeping', 'other',
+];
+const VALID_ASSISTANCE_LEVELS = ['independent', 'supervised', 'assisted', 'total_care'];
+const VALID_COMPLETION_STATUSES = ['completed', 'partial', 'refused'];
+
+// Health (tình trạng sức khỏe & thay đổi thể trạng) metadata
 const VALID_CONSCIOUSNESS = ['alert', 'confused', 'drowsy', 'unresponsive'];
 const VALID_FALL_RISKS = ['low', 'medium', 'high'];
 
@@ -29,6 +36,33 @@ const parsePagination = (query) => {
   const limitNum = Math.min(100, Math.max(1, parseInt(query.limit || 20, 10)));
   const skip = (pageNum - 1) * limitNum;
   return { pageNum, limitNum, skip };
+};
+
+// Convert YYYY-MM-DD string to a [startOfDay, endOfDay] UTC range
+const dateToRange = (dateStr) => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  const start = new Date(d);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(d);
+  end.setUTCHours(23, 59, 59, 999);
+  return { start, end };
+};
+
+const buildNoteAtFilter = (query) => {
+  // `date` (YYYY-MM-DD) takes priority over from/to
+  if (query.date) {
+    const range = dateToRange(query.date);
+    if (!range) throw new ServiceError('date must be a valid date (YYYY-MM-DD)', 400);
+    return { $gte: range.start, $lte: range.end };
+  }
+  if (query.from || query.to) {
+    const filter = {};
+    if (query.from) filter.$gte = new Date(query.from);
+    if (query.to) filter.$lte = new Date(query.to);
+    return filter;
+  }
+  return null;
 };
 
 const validateMetadata = (noteType, metadata) => {
@@ -64,6 +98,27 @@ const validateMetadata = (noteType, metadata) => {
     }
   }
 
+  if (noteType === 'daily_living') {
+    if (metadata.activityType && !VALID_DAILY_LIVING_TYPES.includes(metadata.activityType)) {
+      throw new ServiceError(`activityType must be one of: ${VALID_DAILY_LIVING_TYPES.join(', ')}`, 400);
+    }
+    if (metadata.assistanceLevel && !VALID_ASSISTANCE_LEVELS.includes(metadata.assistanceLevel)) {
+      throw new ServiceError(`assistanceLevel must be one of: ${VALID_ASSISTANCE_LEVELS.join(', ')}`, 400);
+    }
+    if (metadata.completionStatus && !VALID_COMPLETION_STATUSES.includes(metadata.completionStatus)) {
+      throw new ServiceError(`completionStatus must be one of: ${VALID_COMPLETION_STATUSES.join(', ')}`, 400);
+    }
+    if (metadata.mood && !VALID_MOODS.includes(metadata.mood)) {
+      throw new ServiceError(`mood must be one of: ${VALID_MOODS.join(', ')}`, 400);
+    }
+    if (metadata.duration !== undefined) {
+      const dur = Number(metadata.duration);
+      if (!Number.isFinite(dur) || dur < 0) {
+        throw new ServiceError('duration must be a non-negative number (minutes)', 400);
+      }
+    }
+  }
+
   if (noteType === 'health') {
     if (metadata.consciousness && !VALID_CONSCIOUSNESS.includes(metadata.consciousness)) {
       throw new ServiceError(`consciousness must be one of: ${VALID_CONSCIOUSNESS.join(', ')}`, 400);
@@ -73,6 +128,24 @@ const validateMetadata = (noteType, metadata) => {
     }
     if (metadata.symptoms !== undefined && !Array.isArray(metadata.symptoms)) {
       throw new ServiceError('symptoms must be an array of strings', 400);
+    }
+    if (metadata.painLevel !== undefined) {
+      const level = Number(metadata.painLevel);
+      if (!Number.isFinite(level) || level < 0 || level > 10) {
+        throw new ServiceError('painLevel must be a number between 0 and 10', 400);
+      }
+    }
+    if (metadata.temperature !== undefined) {
+      const temp = Number(metadata.temperature);
+      if (!Number.isFinite(temp) || temp < 30 || temp > 45) {
+        throw new ServiceError('temperature must be a valid body temperature (30–45°C)', 400);
+      }
+    }
+    if (metadata.pulse !== undefined) {
+      const pulse = Number(metadata.pulse);
+      if (!Number.isFinite(pulse) || pulse < 20 || pulse > 300) {
+        throw new ServiceError('pulse must be a valid heart rate (20–300 bpm)', 400);
+      }
     }
   }
 };
@@ -84,8 +157,8 @@ const createNote = async (user, body, req) => {
   if (!content || content.trim().length < 5) {
     throw new ServiceError('content is required and must be at least 5 characters', 400);
   }
-  if (noteType && !VALID_NOTE_TYPES.includes(noteType)) {
-    throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+  if (noteType && !CARE_NOTE_TYPES.includes(noteType)) {
+    throw new ServiceError(`noteType must be one of: ${CARE_NOTE_TYPES.join(', ')}`, 400);
   }
   if (noteAt && new Date(noteAt) > new Date()) {
     throw new ServiceError('noteAt cannot be a future date', 400);
@@ -132,8 +205,8 @@ const listNotes = async (query) => {
     filter.residentId = query.residentId;
   }
   if (query.noteType) {
-    if (!VALID_NOTE_TYPES.includes(query.noteType)) {
-      throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+    if (!CARE_NOTE_TYPES.includes(query.noteType)) {
+      throw new ServiceError(`noteType must be one of: ${CARE_NOTE_TYPES.join(', ')}`, 400);
     }
     filter.noteType = query.noteType;
   }
@@ -142,11 +215,9 @@ const listNotes = async (query) => {
     filter.authorStaffId = query.authorStaffId;
   }
   if (query.search) filter.content = { $regex: query.search.trim(), $options: 'i' };
-  if (query.from || query.to) {
-    filter.noteAt = {};
-    if (query.from) filter.noteAt.$gte = new Date(query.from);
-    if (query.to) filter.noteAt.$lte = new Date(query.to);
-  }
+
+  const noteAtFilter = buildNoteAtFilter(query);
+  if (noteAtFilter) filter.noteAt = noteAtFilter;
 
   const { pageNum, limitNum, skip } = parsePagination(query);
   const [data, total] = await Promise.all([
@@ -159,14 +230,26 @@ const listNotes = async (query) => {
 
 const getNoteHistory = async (residentId, query) => {
   if (!isValidId(residentId)) throw new ServiceError('residentId is not a valid ID', 400);
+
   const filter = { residentId };
-  if (query.noteType) filter.noteType = query.noteType;
-  if (query.from || query.to) {
-    filter.noteAt = {};
-    if (query.from) filter.noteAt.$gte = new Date(query.from);
-    if (query.to) filter.noteAt.$lte = new Date(query.to);
+  if (query.noteType) {
+    if (!CARE_NOTE_TYPES.includes(query.noteType)) {
+      throw new ServiceError(`noteType must be one of: ${CARE_NOTE_TYPES.join(', ')}`, 400);
+    }
+    filter.noteType = query.noteType;
   }
-  return careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: -1 }, limit: 0 });
+  if (query.search) filter.content = { $regex: query.search.trim(), $options: 'i' };
+
+  const noteAtFilter = buildNoteAtFilter(query);
+  if (noteAtFilter) filter.noteAt = noteAtFilter;
+
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const [data, total] = await Promise.all([
+    careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: -1 }, skip, limit: limitNum }),
+    careNoteRepo.countDocuments(filter),
+  ]);
+
+  return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
 const getNote = async (id) => {
@@ -176,7 +259,7 @@ const getNote = async (id) => {
   return note;
 };
 
-// Nurses can only update their own notes; doctor can update any note.
+// Nurses can only update their own notes; doctor/admin can update any note.
 const updateNote = async (user, id, body, req) => {
   if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
 
@@ -197,8 +280,8 @@ const updateNote = async (user, id, body, req) => {
   if (body.content !== undefined && body.content.trim().length < 5) {
     throw new ServiceError('content must be at least 5 characters', 400);
   }
-  if (body.noteType && !VALID_NOTE_TYPES.includes(body.noteType)) {
-    throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+  if (body.noteType && !CARE_NOTE_TYPES.includes(body.noteType)) {
+    throw new ServiceError(`noteType must be one of: ${CARE_NOTE_TYPES.join(', ')}`, 400);
   }
   if (body.noteAt && new Date(body.noteAt) > new Date()) {
     throw new ServiceError('noteAt cannot be a future date', 400);
@@ -232,7 +315,7 @@ const updateNote = async (user, id, body, req) => {
   return careNoteRepo.findByIdWithPopulate(note._id);
 };
 
-// Nurses can only delete their own notes; doctor can delete any note.
+// Nurses can only delete their own notes; doctor/admin can delete any note.
 const deleteNote = async (user, id, req) => {
   if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
   const note = await careNoteRepo.findById(id);
@@ -262,7 +345,7 @@ const deleteNote = async (user, id, req) => {
   return { message: 'Care note deleted successfully' };
 };
 
-// Returns paginated list of care notes written by the currently authenticated staff.
+// Paginated list of care notes written by the currently authenticated staff.
 const getMyNotes = async (user, query) => {
   const staffProfile = await staffProfileRepo.findByUserId(user._id);
   if (!staffProfile) throw new ServiceError('Staff profile not found', 400);

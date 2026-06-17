@@ -14,7 +14,8 @@ const familyWalletSchema = new Schema(
         amount: { type: Number, required: true },
         description: { type: String, trim: true },
         invoiceId: { type: Types.ObjectId, ref: 'Invoice' },
-        paymentId: { type: String, trim: true }, // PayOS payment ID
+        paymentId: { type: String, trim: true },
+        orderCode: { type: Number }, // PayOS orderCode — used to verify payment status via API
         status: { type: String, enum: ['pending', 'completed', 'failed'], default: 'pending' },
         createdAt: { type: Date, default: Date.now },
       },

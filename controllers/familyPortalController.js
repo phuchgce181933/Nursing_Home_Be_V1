@@ -179,20 +179,27 @@ const generateWalletTopupUrl = async (req, res) => {
 const confirmWalletTopup = async (req, res) => {
   try {
     const { topupId, status } = req.body;
-
     if (topupId && status === 'PAID') {
       await walletService.confirmTopup(req.user._id, topupId, topupId);
     }
-
     const walletBalance = await walletService.getWalletBalance(req.user);
-
-    res.json({ 
-      success: true, 
-      message: 'Kiểm tra trạng thái nạp tiền',
-      data: walletBalance 
-    });
+    res.json({ success: true, message: 'Kiểm tra trạng thái nạp tiền', data: walletBalance });
   } catch (err) {
     console.error('Confirm topup error:', err);
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// Active verification: asks PayOS API for real payment status, confirms topup if paid
+const verifyWalletTopup = async (req, res) => {
+  try {
+    const { topupId } = req.body;
+    if (!topupId) return res.status(400).json({ message: 'topupId là bắt buộc' });
+
+    const result = await walletService.verifyAndConfirmTopup(req.user._id, topupId);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('Verify topup error:', err);
     res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
@@ -309,6 +316,7 @@ module.exports = {
   getWalletBalance,
   generateWalletTopupUrl,
   confirmWalletTopup,
+  verifyWalletTopup,
   getWalletTopupCheckoutPage,
   getVitals,
   getHealthHistory,

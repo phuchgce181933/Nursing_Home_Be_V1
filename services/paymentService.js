@@ -644,12 +644,53 @@ const adminGetInvoice = async (invoiceId) => {
   return invoice;
 };
 
+const getPayosPaymentStatus = async (orderCode) => {
+  const { clientId, apiKey, partnerCode } = getPayosCredentials();
+  const apiUrl = new URL(`/v2/payment-requests/${orderCode}`, getPayosApiBaseUrl());
+  const headers = {
+    'x-client-id': clientId,
+    'x-api-key': apiKey,
+  };
+  if (partnerCode) headers['x-partner-code'] = partnerCode;
+
+  return new Promise((resolve, reject) => {
+    const reqOptions = {
+      hostname: apiUrl.hostname,
+      port: apiUrl.port || 443,
+      path: apiUrl.pathname + apiUrl.search,
+      method: 'GET',
+      headers,
+    };
+
+    const request = https.request(reqOptions, (response) => {
+      let responseBody = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { responseBody += chunk; });
+      response.on('end', () => {
+        try {
+          const parsed = JSON.parse(responseBody || '{}');
+          if (parsed.code !== '00') {
+            return reject(new ServiceError(parsed.desc || `PayOS status check failed: ${response.statusCode}`, 502));
+          }
+          return resolve(parsed.data || {});
+        } catch (err) {
+          return reject(new ServiceError(`Invalid PayOS response: ${err.message}`, 502));
+        }
+      });
+    });
+
+    request.on('error', (err) => reject(new ServiceError(`PayOS request error: ${err.message}`, 502)));
+    request.end();
+  });
+};
+
 module.exports = {
   createInvoice,
   estimateMedicationCostForPrescription,
   buildPayosCheckoutUrl,
   buildPayosWalletTopupUrl,
   createPayosPaymentRequest,
+  getPayosPaymentStatus,
   findInvoiceById,
   findInvoiceForCheckout,
   recordPayment,

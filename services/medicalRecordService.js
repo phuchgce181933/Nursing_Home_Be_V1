@@ -3,6 +3,7 @@ const medicalRecordRepo = require('../repositories/medicalRecordRepository');
 const residentRepo = require('../repositories/residentRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const paymentService = require('./paymentService');
+const chargeService = require('./chargeService');
 const { createAuditLog } = require('../utils/auditLog');
 
 const checkAbnormalVitals = (body) => {
@@ -34,7 +35,190 @@ const checkAbnormalVitals = (body) => {
   return false;
 };
 
+const normalizeString = (value) => (typeof value === 'string' ? value.trim() : '');
+const normalizeNumber = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+};
+
+const normalizePhysicalExamination = (value) => {
+  if (!value) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? { summary: trimmed } : undefined;
+  }
+  return {
+    general: normalizeString(value.general),
+    cardiovascular: normalizeString(value.cardiovascular),
+    respiratory: normalizeString(value.respiratory),
+    abdominal: normalizeString(value.abdominal),
+    neurological: normalizeString(value.neurological),
+    musculoskeletal: normalizeString(value.musculoskeletal),
+    skin: normalizeString(value.skin),
+    other: normalizeString(value.other),
+    summary: normalizeString(value.summary),
+  };
+};
+
+const normalizeLabResults = (value) => {
+  if (!value) return [];
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [{ testName: 'Tổng quan', result: trimmed, unit: '', referenceRange: '', notes: '' }] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => ({
+      testName: normalizeString(item.testName),
+      result: normalizeString(item.result),
+      unit: normalizeString(item.unit),
+      referenceRange: normalizeString(item.referenceRange),
+      notes: normalizeString(item.notes),
+    }))
+    .filter((item) => item.testName || item.result || item.notes);
+};
+
+const normalizeUrinalysisResults = (value) => {
+  if (!value) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? { notes: trimmed } : undefined;
+  }
+  return {
+    appearance: normalizeString(value.appearance),
+    color: normalizeString(value.color),
+    pH: normalizeNumber(value.pH),
+    specificGravity: normalizeNumber(value.specificGravity),
+    protein: normalizeString(value.protein),
+    glucose: normalizeString(value.glucose),
+    ketones: normalizeString(value.ketones),
+    blood: normalizeString(value.blood),
+    leukocyteEsterase: normalizeString(value.leukocyteEsterase),
+    nitrites: normalizeString(value.nitrites),
+    urobilinogen: normalizeString(value.urobilinogen),
+    bilirubin: normalizeString(value.bilirubin),
+    microscopy: normalizeString(value.microscopy),
+    notes: normalizeString(value.notes),
+  };
+};
+
+const normalizeECGResults = (value) => {
+  if (!value) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? { interpretation: trimmed } : undefined;
+  }
+  return {
+    heartRate: normalizeNumber(value.heartRate),
+    rhythm: normalizeString(value.rhythm),
+    prInterval: normalizeString(value.prInterval),
+    qrsDuration: normalizeString(value.qrsDuration),
+    qtInterval: normalizeString(value.qtInterval),
+    axis: normalizeString(value.axis),
+    interpretation: normalizeString(value.interpretation),
+    notes: normalizeString(value.notes),
+  };
+};
+
+const normalizeImagingResults = (value) => {
+  if (!value) return [];
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [{ modality: '', bodyPart: '', finding: '', impression: '', imageUrls: [], cloudinaryPublicIds: [], notes: trimmed }] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => ({
+      modality: normalizeString(item.modality),
+      bodyPart: normalizeString(item.bodyPart),
+      finding: normalizeString(item.finding),
+      impression: normalizeString(item.impression),
+      imageUrls: Array.isArray(item.imageUrls) ? item.imageUrls.map(normalizeString).filter(Boolean) : [],
+      cloudinaryPublicIds: Array.isArray(item.cloudinaryPublicIds) ? item.cloudinaryPublicIds.map(normalizeString).filter(Boolean) : [],
+      notes: normalizeString(item.notes),
+    }))
+    .filter((item) => item.modality || item.bodyPart || item.finding || item.impression || item.notes);
+};
+
+const normalizeCognitiveFunction = (value) => {
+  if (!value) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? { notes: trimmed } : undefined;
+  }
+  return {
+    assessmentTool: normalizeString(value.assessmentTool),
+    score: normalizeString(value.score),
+    orientation: normalizeString(value.orientation),
+    memory: normalizeString(value.memory),
+    attention: normalizeString(value.attention),
+    language: normalizeString(value.language),
+    executiveFunction: normalizeString(value.executiveFunction),
+    notes: normalizeString(value.notes),
+  };
+};
+
+const normalizeFunctionalStatus = (value) => {
+  if (!value) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? { notes: trimmed } : undefined;
+  }
+  return {
+    mobility: normalizeString(value.mobility),
+    transfers: normalizeString(value.transfers),
+    adls: normalizeString(value.adls),
+    iadls: normalizeString(value.iadls),
+    assistanceRequired: normalizeString(value.assistanceRequired),
+    notes: normalizeString(value.notes),
+  };
+};
+
+const normalizeFallRisk = (value) => {
+  if (!value) return undefined;
+  if (typeof value === 'string') {
+    const level = normalizeString(value).toLowerCase();
+    return {
+      level: ['low', 'medium', 'high'].includes(level) ? level : undefined,
+      notes: normalizeString(value),
+    };
+  }
+  return {
+    level: ['low', 'medium', 'high'].includes(normalizeString(value.level).toLowerCase()) ? normalizeString(value.level).toLowerCase() : undefined,
+    historyOfFalls: value.historyOfFalls === true || value.historyOfFalls === 'true',
+    gait: normalizeString(value.gait),
+    balance: normalizeString(value.balance),
+    medications: normalizeString(value.medications),
+    vision: normalizeString(value.vision),
+    cognition: normalizeString(value.cognition),
+    notes: normalizeString(value.notes),
+  };
+};
+
+const normalizeNutritionalStatus = (value) => {
+  if (!value) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? { notes: trimmed } : undefined;
+  }
+  return {
+    bmi: normalizeNumber(value.bmi),
+    weightChange: normalizeString(value.weightChange),
+    appetite: normalizeString(value.appetite),
+    dietType: normalizeString(value.dietType),
+    swallowing: normalizeString(value.swallowing),
+    proteinIntake: normalizeString(value.proteinIntake),
+    hydration: normalizeString(value.hydration),
+    notes: normalizeString(value.notes),
+  };
+};
+
 const recordMedicalRecord = async (user, residentId, body, req) => {
+  console.log('[recordMedicalRecord] Called with body keys:', Object.keys(body));
+  console.log('[recordMedicalRecord] selectedServices:', body.selectedServices);
+  console.log('[recordMedicalRecord] consentToPayment:', body.consentToPayment);
+  
   const {
     bloodPressureSystolic,
     bloodPressureDiastolic,
@@ -61,12 +245,16 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     otherCost,
     paymentMethod,
     consentToPayment,
+    selectedServices,
   } = body;
 
   if (!residentId) throw new ServiceError('Resident ID is required', 400);
 
   const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
+  
+  console.log('[recordMedicalRecord] Destructured selectedServices:', selectedServices);
+  console.log('[recordMedicalRecord] Destructured consentToPayment:', consentToPayment);
 
   // Find staff profile of the logged-in doctor/nurse
   const staffProfile = await staffProfileRepo.findByUserId(user._id);
@@ -81,7 +269,9 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     return sum + (Number.isNaN(amount) ? 0 : Math.max(0, amount));
   }, 0);
 
-  if (consentToPayment === true || consentToPayment === 'true') {
+  // if consentToPayment and no selected services, create legacy invoice (room/meds/etc)
+  if (!(body.selectedServices && Array.isArray(body.selectedServices) && body.selectedServices.length > 0) && (consentToPayment === true || consentToPayment === 'true')) {
+    // legacy invoice creation (room/medication/care/other)
     const invoice = await paymentService.createInvoice(user, residentId, {
       roomCost,
       medicationCost,
@@ -107,15 +297,15 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     bloodSugar,
     weightKg,
     heightCm,
-    physicalExamination,
-    laboratoryTestResults,
-    urinalysisResults,
-    ecgResults,
-    imagingResults,
-    cognitiveFunction,
-    functionalStatus,
-    fallRisk,
-    nutritionalStatus,
+    physicalExamination: normalizePhysicalExamination(physicalExamination),
+    laboratoryTestResults: normalizeLabResults(laboratoryTestResults),
+    urinalysisResults: normalizeUrinalysisResults(urinalysisResults),
+    ecgResults: normalizeECGResults(ecgResults),
+    imagingResults: normalizeImagingResults(imagingResults),
+    cognitiveFunction: normalizeCognitiveFunction(cognitiveFunction),
+    functionalStatus: normalizeFunctionalStatus(functionalStatus),
+    fallRisk: normalizeFallRisk(fallRisk),
+    nutritionalStatus: normalizeNutritionalStatus(nutritionalStatus),
     roomCost,
     medicationCost,
     careServiceCost,
@@ -126,6 +316,59 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     abnormalFlag,
     summary,
   });
+
+  // If selectedServices provided, create charges (with origin linked to this record) and invoice for them
+  if (body.selectedServices && Array.isArray(body.selectedServices) && body.selectedServices.length > 0 && (consentToPayment === true || consentToPayment === 'true')) {
+    console.log('[medicalRecordService] Creating charges for resident:', residentId, 'Services:', body.selectedServices.length);
+    const createdCharges = [];
+    for (const s of body.selectedServices) {
+      try {
+        const charge = await chargeService.createChargeForRecord({
+          originType: 'MedicalRecord',
+          originId: record._id,
+          residentId,
+          serviceCode: s.serviceCode,
+          serviceName: s.serviceName,
+          category: 'CLINICAL_SERVICE',
+          performedById: user._id,
+          performedBy: user.fullName || user.name || user.email || '',
+          performedAt: new Date(),
+          quantity: s.quantity || 1,
+          unitPrice: s.unitPrice || 0,
+        });
+        if (charge) {
+          console.log('[medicalRecordService] Charge created successfully:', charge._id);
+          createdCharges.push(charge);
+        }
+      } catch (err) {
+        console.error('[medicalRecordService] Failed creating charge for selected service:', s.serviceName, err.message || err);
+      }
+    }
+    console.log('[medicalRecordService] Total charges created:', createdCharges.length);
+
+    const items = createdCharges.map((c) => ({
+      chargeId: c._id,
+      description: c.serviceName || c.serviceCode,
+      amount: c.totalPrice || ((c.unitPrice || 0) * (c.quantity || 1)),
+      category: 'SERVICE',
+    }));
+
+    if (items.length) {
+      const invoice = await paymentService.createInvoice(user, residentId, {
+        items,
+        billingPeriodStart: body.billingPeriodStart,
+        billingPeriodEnd: body.billingPeriodEnd,
+        dueDate: body.dueDate,
+      });
+      // attach invoice id to record if created
+      try {
+        const MedicalRecord = require('../models/medicalRecord');
+        await MedicalRecord.findByIdAndUpdate(record._id, { invoiceId: invoice._id });
+      } catch (err) {
+        console.error('Failed to attach invoiceId to medical record:', err.message || err);
+      }
+    }
+  }
 
   // Automatically sync bloodType and initial health condition back to Resident profile
   if (bloodType && bloodType !== 'unknown') {

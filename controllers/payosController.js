@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const invoiceRepo = require('../repositories/invoiceRepository');
 const walletService = require('../services/walletService');
+const paymentService = require('../services/paymentService');
 
 const getChecksumKey = () =>
   process.env.PAYOS_CHECKSUM_KEY || '2928b277a4b208bd9725946d9b5098013948863a43931e59ce5da5765dabccee';
@@ -84,10 +85,10 @@ const handleReturn = async (req, res, next) => {
       }
     } else if (status === 'PAID' && invoiceId && !String(invoiceId).startsWith('topup_')) {
       try {
-        await invoiceRepo.updateById(invoiceId, { status: 'paid' });
+        await paymentService.markInvoiceAsPaid(invoiceId);
         console.log('[PayOS Return] Invoice marked paid:', invoiceId);
       } catch (err) {
-        console.warn('[PayOS Return] Unable to update invoice status:', err.message);
+        console.warn('[PayOS Return] Unable to mark invoice paid:', err.message || err);
       }
     }
 

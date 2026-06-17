@@ -5,6 +5,7 @@ router.use('/admission-requests', require('./adminAdmissions'));
 router.use('/tours', require('./adminTours'));
 router.use('/service-packages', require('./adminServicePackages'));
 router.use('/residents', require('./adminResidents'));
+router.use('/invoices', require('./adminInvoices'));
 router.use('/activities', require('./adminActivities'));
 router.use('/reports', require('./adminReports'));
 router.use('/audit-logs', require('./adminAuditLogs'));

@@ -148,23 +148,6 @@ router.get('/residents/:residentId/invoices', getResidentInvoices);
  *           type: string
  *     responses:
  *       200:
-/**
- * @swagger
- * /api/family/residents/{residentId}/invoices/{invoiceId}/payment-url:
- *   get:
- *     summary: Get payment URL for an invoice
- *     tags: [Family Portal]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: residentId
- *         required: true
- *       - in: path
- *         name: invoiceId
- *         required: true
- *     responses:
- *       200:
  *         description: Payment URL with checksum
  *       403:
  *         description: Access denied

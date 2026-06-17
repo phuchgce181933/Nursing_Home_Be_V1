@@ -9,6 +9,7 @@ const residentRepo = require('../repositories/residentRepository');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 const medicationStockRepo = require('../repositories/medicationStockRepository');
+const MedicalCharge = require('../models/medicalCharge');
 const Admission = require('../models/admission');
 const Prescription = require('../models/prescription');
 const { createAuditLog } = require('../utils/auditLog');
@@ -28,6 +29,30 @@ const normalizeCost = (value) => {
   return Number.isNaN(amount) ? 0 : Math.max(0, amount);
 };
 
+const markInvoiceAsPaid = async (invoiceId) => {
+  const invoice = await invoiceRepo.findById(invoiceId);
+  if (!invoice) {
+    throw new ServiceError('Invoice not found', 404);
+  }
+
+  if (invoice.status === 'PAID') {
+    return invoice;
+  }
+
+  const updatedInvoice = await invoiceRepo.updateById(invoiceId, { status: 'PAID' });
+  const chargeIds = (invoice.items || [])
+    .map((it) => it.chargeId)
+    .filter(Boolean);
+
+  const chargeFilter = [{ invoiceId: invoice._id }];
+  if (chargeIds.length > 0) {
+    chargeFilter.unshift({ _id: { $in: chargeIds } });
+  }
+
+  await MedicalCharge.updateMany({ $or: chargeFilter }, { $set: { billingStatus: 'PAID' } });
+  return updatedInvoice;
+};
+
 const buildPayosChecksum = ({ clientId, apiKey, checksumKey, invoiceNumber, amount }) => {
   const payload = `${clientId}|${invoiceNumber}|${amount}|${apiKey}|${checksumKey}`;
   return crypto.createHash('sha256').update(payload, 'utf8').digest('hex');
@@ -39,6 +64,96 @@ const resolveObjectIdString = (value) => {
   if (value._id) return String(value._id);
   if (typeof value.toString === 'function' && value.toString() !== '[object Object]') return value.toString();
   return null;
+};
+
+const parsePagination = (query) => {
+  const pageNum = Math.max(1, parseInt(query.page || 1, 10));
+  const limitNum = Math.min(100, Math.max(1, parseInt(query.limit || 20, 10)));
+  const skip = (pageNum - 1) * limitNum;
+  return { pageNum, limitNum, skip };
+};
+
+const buildInvoiceFilter = (query) => {
+  const filter = {};
+  const search = query.search?.trim();
+  const invoiceNumber = query.invoiceNumber?.trim();
+  const status = query.status?.trim();
+  const residentId = query.residentId?.trim();
+  const familyAccountId = query.familyAccountId?.trim();
+  const minAmount = Number(query.minAmount);
+  const maxAmount = Number(query.maxAmount);
+
+  if (search) {
+    filter.$or = [{ invoiceNumber: { $regex: search, $options: 'i' } }];
+    if (Types.ObjectId.isValid(search)) {
+      filter.$or.push({ residentId: search });
+      filter.$or.push({ familyAccountId: search });
+    }
+  }
+
+  if (invoiceNumber) {
+    filter.invoiceNumber = { $regex: invoiceNumber, $options: 'i' };
+  }
+
+  if (status) {
+    filter.status = status;
+  }
+
+  if (residentId) {
+    filter.residentId = residentId;
+  }
+
+  if (familyAccountId) {
+    filter.familyAccountId = familyAccountId;
+  }
+
+  if (!Number.isNaN(minAmount) && minAmount >= 0) {
+    filter.totalAmount = { ...filter.totalAmount, $gte: minAmount };
+  }
+
+  if (!Number.isNaN(maxAmount) && maxAmount >= 0) {
+    filter.totalAmount = { ...filter.totalAmount, $lte: maxAmount };
+  }
+
+  if (query.issueFrom || query.issueTo) {
+    filter.issuedAt = {};
+    if (query.issueFrom) {
+      const from = new Date(query.issueFrom);
+      if (!Number.isNaN(from.getTime())) {
+        filter.issuedAt.$gte = from;
+      }
+    }
+    if (query.issueTo) {
+      const to = new Date(query.issueTo);
+      if (!Number.isNaN(to.getTime())) {
+        filter.issuedAt.$lte = to;
+      }
+    }
+  }
+
+  if (query.dueFrom || query.dueTo) {
+    filter.dueDate = {};
+    if (query.dueFrom) {
+      const from = new Date(query.dueFrom);
+      if (!Number.isNaN(from.getTime())) {
+        filter.dueDate.$gte = from;
+      }
+    }
+    if (query.dueTo) {
+      const to = new Date(query.dueTo);
+      if (!Number.isNaN(to.getTime())) {
+        filter.dueDate.$lte = to;
+      }
+    }
+  }
+
+  if (query.isOverdue === 'true') {
+    const now = new Date();
+    filter.dueDate = { ...filter.dueDate, $lt: now };
+    filter.status = filter.status || { $ne: 'paid' };
+  }
+
+  return filter;
 };
 
 const getPayosCredentials = () => {
@@ -271,6 +386,61 @@ const createInvoice = async (user, residentId, body) => {
       medicationCost = await estimateMedicationCostFromPrescription(prescription);
     }
   }
+  // If caller provided explicit invoice items (service-line items), use them and ignore legacy cost fields
+  if (body.items && Array.isArray(body.items) && body.items.length > 0) {
+    const items = body.items.map((it) => ({
+      chargeId: it.chargeId,
+      description: it.description,
+      amount: Number(it.amount) || 0,
+      category: it.category || 'SERVICE',
+    }));
+    const subTotal = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+    const tax = Number(body.tax) || 0;
+    const totalAmount = subTotal + tax;
+    const { start, end } = buildDefaultBillingPeriod();
+    const invoice = await invoiceRepo.create({
+      invoiceNumber: buildInvoiceNumber(),
+      residentId,
+      familyAccountId,
+      prescriptionId,
+      billingPeriodStart: body.billingPeriodStart ? new Date(body.billingPeriodStart) : start,
+      billingPeriodEnd: body.billingPeriodEnd ? new Date(body.billingPeriodEnd) : end,
+      items,
+      subTotal,
+      tax,
+      total: totalAmount,
+      totalAmount,
+      status: totalAmount === 0 ? 'PAID' : 'ISSUED',
+      dueDate: body.dueDate ? new Date(body.dueDate) : end,
+    });
+
+    const chargeIds = items
+      .map((it) => it.chargeId)
+      .filter((id) => id)
+      .map((id) => {
+        if (Types.ObjectId.isValid(id)) return new Types.ObjectId(id);
+        return null;
+      })
+      .filter(Boolean);
+
+    if (chargeIds.length > 0) {
+      await MedicalCharge.updateMany(
+        { _id: { $in: chargeIds }, residentId },
+        { $set: { billingStatus: 'BILLED', invoiceId: invoice._id } }
+      );
+    }
+
+    await createAuditLog({
+      actorUserId: user._id,
+      actorRole: user.role,
+      action: 'CREATE_INVOICE',
+      module: 'billing',
+      targetEntityType: 'Invoice',
+      targetEntityId: invoice._id,
+      afterData: invoice.toObject(),
+    });
+    return invoice;
+  }
 
   if ((body.careServiceCost === undefined || body.careServiceCost === '' || body.careServiceCost === null) && resident.servicePackage) {
     const packagePrice = await getResidentServicePackagePrice(resident);
@@ -294,7 +464,8 @@ const createInvoice = async (user, residentId, body) => {
     careServiceCost,
     otherCost,
     totalAmount,
-    status: totalAmount === 0 ? 'paid' : 'issued',
+    total: totalAmount,
+    status: totalAmount === 0 ? 'PAID' : 'ISSUED',
     dueDate: body.dueDate ? new Date(body.dueDate) : end,
   });
 
@@ -425,8 +596,12 @@ const recordPayment = async (user, invoiceId, body) => {
     note: body.note,
   });
 
-  const status = amount >= invoice.totalAmount ? 'paid' : 'partially_paid';
-  await invoiceRepo.updateById(invoiceId, { status });
+  const status = amount >= invoice.totalAmount ? 'PAID' : invoice.status || 'ISSUED';
+
+  const updatedInvoice = await invoiceRepo.updateById(invoiceId, { status });
+  if (status === 'PAID') {
+    await markInvoiceAsPaid(invoiceId);
+  }
 
   await createAuditLog({
     actorUserId: user._id,
@@ -441,6 +616,34 @@ const recordPayment = async (user, invoiceId, body) => {
   return payment;
 };
 
+const adminListInvoices = async (query) => {
+  const filter = buildInvoiceFilter(query);
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const sortBy = ['issuedAt', 'dueDate', 'totalAmount', 'invoiceNumber'].includes(query.sortBy)
+    ? query.sortBy
+    : 'issuedAt';
+  const sortDirection = query.sortOrder === 'asc' ? 1 : -1;
+
+  const [data, total] = await Promise.all([
+    invoiceRepo.findAll(filter, { sort: { [sortBy]: sortDirection }, skip, limit: limitNum }),
+    invoiceRepo.countAll(filter),
+  ]);
+
+  return {
+    data,
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages: Math.max(Math.ceil(total / limitNum), 1),
+  };
+};
+
+const adminGetInvoice = async (invoiceId) => {
+  const invoice = await invoiceRepo.findById(invoiceId);
+  if (!invoice) throw new ServiceError('Invoice not found', 404);
+  return invoice;
+};
+
 module.exports = {
   createInvoice,
   estimateMedicationCostForPrescription,
@@ -450,5 +653,8 @@ module.exports = {
   findInvoiceById,
   findInvoiceForCheckout,
   recordPayment,
+  markInvoiceAsPaid,
   verifyPayosWalletTopupChecksum,
+  adminListInvoices,
+  adminGetInvoice,
 };

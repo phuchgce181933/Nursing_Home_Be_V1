@@ -50,9 +50,17 @@ const getResidentBillingSummary = async (user, residentId) => {
     familyPortalRepo.countInvoicesByResidentId(residentId),
   ]);
 
+  const normalizedInvoice = latestInvoice
+    ? {
+        ...latestInvoice.toObject ? latestInvoice.toObject() : latestInvoice,
+        totalAmount: latestInvoice.totalAmount ?? latestInvoice.total ?? latestInvoice.subTotal ?? 0,
+        status: latestInvoice.status?.toString().toUpperCase?.() || 'DRAFT',
+      }
+    : null;
+
   return {
     resident,
-    latestInvoice,
+    latestInvoice: normalizedInvoice,
     invoiceCount,
   };
 };

@@ -1,5 +1,6 @@
 const invoiceRepo = require('../repositories/invoiceRepository');
 const walletService = require('../services/walletService');
+const paymentService = require('../services/paymentService');
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const ADMIN_DASHBOARD_URL = `${FRONTEND_URL.replace(/\/$/, '')}/admin/dashboard`;
@@ -36,9 +37,9 @@ const handleReturn = async (req, res, next) => {
       }
     } else if (status === 'PAID' && invoiceId) {
       try {
-        await invoiceRepo.updateById(invoiceId, { status: 'paid' });
+        await paymentService.markInvoiceAsPaid(invoiceId);
       } catch (err) {
-        console.warn('PayOS return: unable to update invoice status', err.message || err);
+        console.warn('PayOS return: unable to mark invoice paid', err.message || err);
       }
     }
 

@@ -85,10 +85,21 @@ const handleReturn = async (req, res, next) => {
       }
     } else if (status === 'PAID' && invoiceId && !String(invoiceId).startsWith('topup_')) {
       try {
-        await paymentService.markInvoiceAsPaid(invoiceId);
-        console.log('[PayOS Return] Invoice marked paid:', invoiceId);
+        // Handle batch invoiceIds (comma-separated)
+        const invoiceIds = String(invoiceId).includes(',') 
+          ? String(invoiceId).split(',').map(id => id.trim())
+          : [String(invoiceId)];
+        
+        for (const id of invoiceIds) {
+          try {
+            await paymentService.markInvoiceAsPaid(id);
+            console.log('[PayOS Return] Invoice marked paid:', id);
+          } catch (err) {
+            console.warn('[PayOS Return] Unable to mark invoice paid:', id, err.message || err);
+          }
+        }
       } catch (err) {
-        console.warn('[PayOS Return] Unable to mark invoice paid:', err.message || err);
+        console.warn('[PayOS Return] Unable to process invoices:', err.message || err);
       }
     }
 

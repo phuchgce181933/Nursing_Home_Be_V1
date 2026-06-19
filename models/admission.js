@@ -73,6 +73,8 @@ const admissionSchema = new Schema(
     // UC-6.25: Contract
     contractStartDate: { type: Date },
     contractEndDate: { type: Date },
+    contractDurationMonths: { type: Number, min: 1 },
+    contractDiscountPercent: { type: Number, min: 0, max: 100 },
     contractTerms: { type: String, trim: true },
 
     // UC-6.26: Check-in

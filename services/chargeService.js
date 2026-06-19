@@ -23,6 +23,26 @@ const createChargeForRecord = async (opts = {}) => {
     console.log('[chargeService] Lookup by category:', opts.category, '→ Found:', !!svc);
   }
 
+  // If no matching ClinicalService found but caller provided a serviceCode, auto-create a ClinicalService
+  if (!svc && opts.serviceCode) {
+    try {
+      console.log('[chargeService] No ClinicalService found for serviceCode, creating new ClinicalService:', opts.serviceCode);
+      const svcData = {
+        serviceCode: opts.serviceCode,
+        serviceName: opts.serviceName || opts.serviceCode,
+        category: opts.category || 'PHYSICAL_EXAM',
+        description: opts.description || '',
+        unitPrice: opts.unitPrice != null ? Number(opts.unitPrice) : 0,
+        active: true,
+      };
+      const created = await ClinicalService.create(svcData);
+      svc = created.toObject ? created.toObject() : created;
+      console.log('[chargeService] Auto-created ClinicalService id:', svc._id);
+    } catch (err) {
+      console.error('[chargeService] Failed to auto-create ClinicalService:', err.message);
+    }
+  }
+
   const unitPrice = opts.unitPrice != null ? Number(opts.unitPrice) : (svc ? svc.unitPrice : 0);
   const serviceId = svc ? svc._id : undefined;
   const serviceName = opts.serviceName || (svc ? svc.serviceName : (opts.serviceCode || 'Clinical Service'));

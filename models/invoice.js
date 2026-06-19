@@ -7,6 +7,8 @@ const invoiceSchema = new Schema(
     invoiceNumber: { type: String, trim: true, index: true },
     periodStart: { type: Date },
     periodEnd: { type: Date },
+    billingPeriodStart: { type: Date },
+    billingPeriodEnd: { type: Date },
     items: [
       {
         chargeId: { type: Types.ObjectId, ref: 'MedicalCharge' },
@@ -20,8 +22,20 @@ const invoiceSchema = new Schema(
     total: { type: Number, default: 0 },
     totalAmount: { type: Number, default: 0 },
     familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
-    status: { type: String, enum: ['DRAFT', 'ISSUED', 'PAID', 'CANCELLED'], default: 'DRAFT', index: true },
+    status: { type: String, enum: ['DRAFT', 'ISSUED', 'PAID', 'CANCELLED', 'PARTIALLY_PAID'], default: 'DRAFT', index: true },
     createdBy: { type: String },
+    
+    // Service fee components
+    roomCost: { type: Number, default: 0 },
+    medicationCost: { type: Number, default: 0 },
+    careServiceCost: { type: Number, default: 0 },
+    otherCost: { type: Number, default: 0 },
+    
+    // Invoice metadata
+    type: { type: String, enum: ['SERVICE', 'MEDICATION', 'OTHER', 'COMBINED'], default: 'COMBINED' },
+    prescriptionId: { type: Types.ObjectId, ref: 'Prescription' },
+    dueDate: { type: Date },
+    
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
   },

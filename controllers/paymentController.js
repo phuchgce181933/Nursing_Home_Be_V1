@@ -115,9 +115,81 @@ const recordPayment = async (req, res, next) => {
   }
 };
 
+const listInvoices = async (req, res, next) => {
+  try {
+    const { residentId } = req.params;
+    const invoices = await paymentService.listInvoicesByResident(residentId);
+    return res.json({ success: true, data: invoices });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const batchPayment = async (req, res, next) => {
+  const { paymentMethod, amount: requestedAmount, note, invoiceIds } = req.body;
+  const walletPayment = paymentMethod === 'wallet';
+  let deductedFromWallet = false;
+
+  try {
+    // Calculate total amount for validation
+    let totalAmount = 0;
+    for (const invoiceId of invoiceIds) {
+      const invoice = await paymentService.findInvoiceById(req.user, invoiceId);
+      totalAmount += invoice.totalAmount || 0;
+    }
+
+    const amount = Number(requestedAmount != null ? requestedAmount : totalAmount) || 0;
+    if (amount <= 0) {
+      throw new ServiceError('Payment amount must be greater than 0', 400);
+    }
+
+    if (walletPayment) {
+      await walletService.deductFromWallet(
+        req.user._id,
+        amount,
+        `Thanh toán hóa đơn theo gói (${invoiceIds.length} hóa đơn)`,
+        invoiceIds[0], // First invoice as reference
+      );
+      deductedFromWallet = true;
+    }
+
+    const result = await paymentService.batchPayment(req.user, req.params.residentId, invoiceIds, {
+      ...req.body,
+      amount,
+    }, req);
+
+    // If PayOS, return checkout URL
+    if (result.checkoutUrl) {
+      return res.status(200).json({ success: true, data: result });
+    }
+
+    // If wallet/other payment, return payment records
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (walletPayment && deductedFromWallet) {
+      try {
+        const refundAmount = Number(requestedAmount != null ? requestedAmount : 0) || 0;
+        if (refundAmount > 0) {
+          await walletService.refundToWallet(
+            req.user._id,
+            refundAmount,
+            `Hoàn tiền do lỗi thanh toán hóa đơn theo gói`,
+            req.body.invoiceIds[0],
+          );
+        }
+      } catch (refundError) {
+        console.error('Failed to refund wallet after batch payment error:', refundError);
+      }
+    }
+    return next(error);
+  }
+};
+
 module.exports = {
   createInvoice,
   getInvoice,
   getPayosCheckoutPage,
   recordPayment,
+  listInvoices,
+  batchPayment,
 };

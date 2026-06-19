@@ -47,6 +47,8 @@ const router = express.Router({ mergeParams: true });
  */
 
 router.post('/', protect, authorize('doctor', 'nurse', 'admin', 'family'), paymentController.createInvoice);
+router.get('/', protect, authorize('doctor', 'nurse', 'admin', 'resident', 'family'), paymentController.listInvoices);
+router.post('/batch-pay', protect, authorize('family', 'admin'), paymentController.batchPayment);
 router.get('/payos/checkout/:invoiceId', optionalProtect, paymentController.getPayosCheckoutPage);
 router.get('/:invoiceId', protect, authorize('doctor', 'nurse', 'admin', 'resident', 'family'), paymentController.getInvoice);
 router.post('/:invoiceId/pay', protect, authorize('doctor', 'nurse', 'admin', 'family'), paymentController.recordPayment);

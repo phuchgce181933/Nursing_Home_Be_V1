@@ -467,11 +467,35 @@ const listPrescriptions = async (req, res) => {
       Prescription.countDocuments(filter),
     ]);
 
-    const data = prescriptions.map((rx) => ({
-      ...rx.toObject(),
-      itemsCount: rx.items.length,
-      activeItemsCount: rx.items.filter((i) => i.isActive).length,
-    }));
+    // Fetch invoice information for each prescription
+    const Invoice = require('../models/invoice');
+    const invoicesByPrescription = {};
+    for (const rx of prescriptions) {
+      const invoices = await Invoice.find({ prescriptionId: rx._id }).select('status');
+      invoicesByPrescription[rx._id] = invoices;
+    }
+
+    const data = prescriptions.map((rx) => {
+      const invoices = invoicesByPrescription[rx._id] || [];
+      let invoiceStatus = 'no_invoice';
+      let paymentStatus = null;
+      if (invoices.length > 0) {
+        const latestInvoice = invoices[0];
+        // Normalize invoice status to lowercase for frontend
+        const status = (latestInvoice.status || 'unpaid').toLowerCase();
+        paymentStatus = status === 'paid' ? 'paid' : 
+                       status === 'partially_paid' ? 'partially_paid' : 'unpaid';
+        invoiceStatus = paymentStatus;
+      }
+      
+      return {
+        ...rx.toObject(),
+        itemsCount: rx.items.length,
+        activeItemsCount: rx.items.filter((i) => i.isActive).length,
+        invoiceStatus,
+        paymentStatus,
+      };
+    });
 
     return res.status(200).json({
       success: true,

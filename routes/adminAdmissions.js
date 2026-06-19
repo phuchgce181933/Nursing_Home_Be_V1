@@ -8,6 +8,7 @@ const {
   assignServicePackage,
   createAdmissionContract,
   checkInResident,
+  extendAdmissionContract,
 } = require('../controllers/admissionController');
 const { protect, authorize } = require('../middleware/auth');
 // Route protection is applied per-route below to support read access for doctors and nurses
@@ -227,6 +228,15 @@ router.patch('/:admissionId/reject', protect, authorize('admin', 'manager'), rej
  *               servicePackageId:
  *                 type: string
  *                 description: ID of the service package to assign
+ *               contractDurationMonths:
+ *                 type: integer
+ *                 minimum: 1
+ *                 description: Contract duration in months
+ *               discountPercent:
+ *                 type: number
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 description: Discount percent for the assigned service package
  *     responses:
  *       200:
  *         description: Service package assigned successfully
@@ -269,6 +279,15 @@ router.patch('/:admissionId/assign-service-package', protect, authorize('admin',
  *               contractEndDate:
  *                 type: string
  *                 format: date
+ *               contractDurationMonths:
+ *                 type: integer
+ *                 minimum: 1
+ *                 description: Contract duration in months
+ *               discountPercent:
+ *                 type: number
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 description: Contract discount percent
  *               contractTerms:
  *                 type: string
  *                 description: Contract terms and conditions
@@ -319,5 +338,43 @@ router.patch('/:admissionId/create-contract', protect, authorize('admin', 'manag
  *         description: Admission, bed, or room not found
  */
 router.patch('/:admissionId/check-in', protect, authorize('admin', 'manager'), checkInResident);
+
+/**
+ * @swagger
+ * /api/admin/admission-requests/{admissionId}/extend-contract:
+ *   patch:
+ *     summary: Extend contract end date (Admin)
+ *     tags: [Admin - Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: admissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Admission ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - contractEndDate
+ *             properties:
+ *               contractEndDate:
+ *                 type: string
+ *                 format: date-time
+ *                 description: New contract end date (ISO 8601 format)
+ *     responses:
+ *       200:
+ *         description: Contract extended successfully
+ *       400:
+ *         description: Invalid data or date validation failed
+ *       404:
+ *         description: Admission not found
+ */
+router.patch('/:admissionId/extend-contract', protect, authorize('admin', 'manager'), extendAdmissionContract);
 
 module.exports = router;

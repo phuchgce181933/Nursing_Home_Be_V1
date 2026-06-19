@@ -54,7 +54,36 @@ const listPrescriptions = async (user, query) => {
     medRepo.findPrescriptions(filter, { skip, limit }),
     medRepo.countPrescriptions(filter),
   ]);
-  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+
+  // Fetch invoice information for each prescription
+  const Invoice = require('../models/invoice');
+  const invoicesByPrescription = {};
+  for (const rx of data) {
+    const invoices = await Invoice.find({ prescriptionId: rx._id }).select('status');
+    invoicesByPrescription[rx._id] = invoices;
+  }
+
+  const enrichedData = data.map((rx) => {
+    const invoices = invoicesByPrescription[rx._id] || [];
+    let invoiceStatus = 'no_invoice';
+    let paymentStatus = null;
+    if (invoices.length > 0) {
+      const latestInvoice = invoices[0];
+      // Normalize invoice status to lowercase for frontend
+      const status = (latestInvoice.status || 'unpaid').toLowerCase();
+      paymentStatus = status === 'paid' ? 'paid' : 
+                     status === 'partially_paid' ? 'partially_paid' : 'unpaid';
+      invoiceStatus = paymentStatus;
+    }
+    
+    return {
+      ...rx,
+      invoiceStatus,
+      paymentStatus,
+    };
+  });
+
+  return { data: enrichedData, total, page, limit, totalPages: Math.ceil(total / limit) };
 };
 
 const getPrescription = async (user, id) => {

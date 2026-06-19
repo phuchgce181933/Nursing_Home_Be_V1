@@ -62,6 +62,8 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
     contractSignedAt: admission.contractSignedAt,
     contractStartDate: admission.contractStartDate,
     contractEndDate: admission.contractEndDate,
+    contractDurationMonths: admission.contractDurationMonths,
+    contractDiscountPercent: admission.contractDiscountPercent,
     contractTerms: admission.contractTerms,
     assignedBedId: admission.assignedBedId?._id || admission.assignedBedId || null,
     assignedBed: admission.assignedBedId?.bedCode
@@ -530,8 +532,17 @@ const adminListAdmissions = async (query, user) => {
     admissionRepo.countAll(filter),
   ]);
 
+  const latestInvoices = await Promise.all(
+    data.map((admission) => getLatestInvoiceForResident(admission.residentId?._id || admission.residentId))
+  );
+
   return {
-    data: data.map((a) => formatAdmission(a, { includeFamily: true })),
+    data: data.map((a, index) => {
+      const formatted = formatAdmission(a, { includeFamily: true });
+      formatted.latestInvoice = latestInvoices[index] || null;
+      formatted.latestInvoiceStatus = formatted.latestInvoice?.status?.toString().toLowerCase?.() || null;
+      return formatted;
+    }),
     total,
     page: pageNum,
     limit: limitNum,
@@ -994,10 +1005,34 @@ const assignServicePackage = async (admin, admissionId, body, req) => {
     throw new ServiceError('Cannot assign an inactive service package', 400);
   }
 
-  const updated = await admissionRepo.updateAdmission(admissionId, {
+  const updateData = {
     servicePackageId: pkg._id,
     assignedServicePackage: pkg.name,
-  });
+  };
+
+  const contractDurationMonths = body?.contractDurationMonths !== undefined && body.contractDurationMonths !== null
+    ? Number(body.contractDurationMonths)
+    : undefined;
+  if (contractDurationMonths !== undefined) {
+    if (!Number.isFinite(contractDurationMonths) || contractDurationMonths < 1) {
+      throw new ServiceError('contractDurationMonths must be a positive number', 400);
+    }
+    updateData.contractDurationMonths = Math.floor(contractDurationMonths);
+  }
+
+  const contractDiscountPercent = body?.contractDiscountPercent !== undefined && body.contractDiscountPercent !== null
+    ? Number(body.contractDiscountPercent)
+    : body?.discountPercent !== undefined && body.discountPercent !== null
+      ? Number(body.discountPercent)
+      : undefined;
+  if (contractDiscountPercent !== undefined) {
+    if (!Number.isFinite(contractDiscountPercent) || contractDiscountPercent < 0 || contractDiscountPercent > 100) {
+      throw new ServiceError('contractDiscountPercent must be a number between 0 and 100', 400);
+    }
+    updateData.contractDiscountPercent = Math.round(contractDiscountPercent * 100) / 100;
+  }
+
+  const updated = await admissionRepo.updateAdmission(admissionId, updateData);
 
   await createAuditLog({
     actorUserId: admin._id,
@@ -1006,8 +1041,20 @@ const assignServicePackage = async (admin, admissionId, body, req) => {
     module: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, servicePackageId: admission.servicePackageId, assignedServicePackage: admission.assignedServicePackage },
-    afterData: { requestCode: updated.requestCode, servicePackageId: pkg._id, assignedServicePackage: pkg.name },
+    beforeData: {
+      requestCode: admission.requestCode,
+      servicePackageId: admission.servicePackageId,
+      assignedServicePackage: admission.assignedServicePackage,
+      contractDurationMonths: admission.contractDurationMonths,
+      contractDiscountPercent: admission.contractDiscountPercent,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      servicePackageId: pkg._id,
+      assignedServicePackage: pkg.name,
+      contractDurationMonths: updated.contractDurationMonths,
+      contractDiscountPercent: updated.contractDiscountPercent,
+    },
     req,
   });
 
@@ -1046,6 +1093,14 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
 
   const contractStartDate = body?.contractStartDate ? new Date(body.contractStartDate) : null;
   const contractEndDate = body?.contractEndDate ? new Date(body.contractEndDate) : null;
+  const contractDurationMonths = body?.contractDurationMonths !== undefined && body.contractDurationMonths !== null
+    ? Number(body.contractDurationMonths)
+    : undefined;
+  const contractDiscountPercent = body?.contractDiscountPercent !== undefined && body.contractDiscountPercent !== null
+    ? Number(body.contractDiscountPercent)
+    : body?.discountPercent !== undefined && body.discountPercent !== null
+      ? Number(body.discountPercent)
+      : undefined;
 
   if (contractStartDate && Number.isNaN(contractStartDate.getTime())) {
     throw new ServiceError('contractStartDate is invalid', 400);
@@ -1056,6 +1111,16 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   if (contractStartDate && contractEndDate && contractEndDate <= contractStartDate) {
     throw new ServiceError('contractEndDate must be after contractStartDate', 400);
   }
+  if (contractDurationMonths !== undefined) {
+    if (!Number.isFinite(contractDurationMonths) || contractDurationMonths < 1) {
+      throw new ServiceError('contractDurationMonths must be a positive number', 400);
+    }
+  }
+  if (contractDiscountPercent !== undefined) {
+    if (!Number.isFinite(contractDiscountPercent) || contractDiscountPercent < 0 || contractDiscountPercent > 100) {
+      throw new ServiceError('contractDiscountPercent must be a number between 0 and 100', 400);
+    }
+  }
 
   const updateData = {
     contractNumber,
@@ -1064,6 +1129,8 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   };
   if (contractStartDate) updateData.contractStartDate = contractStartDate;
   if (contractEndDate) updateData.contractEndDate = contractEndDate;
+  if (contractDurationMonths !== undefined) updateData.contractDurationMonths = Math.floor(contractDurationMonths);
+  if (contractDiscountPercent !== undefined) updateData.contractDiscountPercent = Math.round(contractDiscountPercent * 100) / 100;
   if (body?.contractTerms) updateData.contractTerms = String(body.contractTerms).trim();
   if (body?.notes) updateData.notes = String(body.notes).trim();
 
@@ -1076,8 +1143,19 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
     module: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status },
-    afterData: { requestCode: updated.requestCode, status: updated.status, contractNumber },
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      contractDurationMonths: admission.contractDurationMonths,
+      contractDiscountPercent: admission.contractDiscountPercent,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      contractNumber,
+      contractDurationMonths: updated.contractDurationMonths,
+      contractDiscountPercent: updated.contractDiscountPercent,
+    },
     req,
   });
 
@@ -1210,6 +1288,62 @@ const checkInResident = async (admin, admissionId, body, req) => {
   };
 };
 
+/**
+ * Extend the contract end date for an admission.
+ * @param {object} admin - User making the request
+ * @param {string} admissionId - Admission MongoDB ObjectId
+ * @param {object} body - Request body
+ * @param {string} body.contractEndDate - New contract end date (ISO 8601 format)
+ * @returns {object} { message, admission }
+ */
+const extendAdmissionContract = async (admin, admissionId, body) => {
+  const { contractEndDate } = body;
+
+  // Validate input
+  if (!contractEndDate) {
+    throw { statusCode: 400, message: 'contractEndDate is required' };
+  }
+
+  const newEndDate = new Date(contractEndDate);
+  if (isNaN(newEndDate.getTime())) {
+    throw { statusCode: 400, message: 'Invalid contractEndDate format' };
+  }
+
+  // Find admission
+  const admission = await admissionRepo.findByIdForAdmin(admissionId);
+  if (!admission) {
+    throw { statusCode: 404, message: 'Admission not found' };
+  }
+
+  // Verify current date is before new end date
+  const now = new Date();
+  if (newEndDate <= now) {
+    throw { statusCode: 400, message: 'New contract end date must be in the future' };
+  }
+
+  // Update contract end date
+  const oldEndDate = admission.contractEndDate;
+  admission.contractEndDate = newEndDate;
+  const updated = await admission.save();
+
+  // Log action
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'EXTEND_CONTRACT',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    beforeData: { contractEndDate: oldEndDate?.toISOString?.() },
+    afterData: { contractEndDate: newEndDate.toISOString() },
+  });
+
+  return {
+    message: 'Contract extended successfully',
+    admission: formatAdmission(updated),
+  };
+};
+
 module.exports = {
   submitAdmissionRequest,
   listAdmissionHistory,
@@ -1226,5 +1360,6 @@ module.exports = {
   assignServicePackage,
   createAdmissionContract,
   checkInResident,
+  extendAdmissionContract,
 };
 

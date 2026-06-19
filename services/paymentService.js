@@ -210,8 +210,15 @@ const createPayosPaymentRequest = async ({ invoice, req }) => {
   const orderCode = buildPayosOrderCode(invoice);
   const amount = Math.round(invoice.totalAmount || 0);
   const description = truncatePayosDescription(`Thanh toan hoa don ${invoice.invoiceNumber}`);
-  const cancelUrl = `${publicUrl}/payos/cancel?invoiceId=${encodeURIComponent(resolveObjectIdString(invoice._id))}`;
-  const returnUrl = `${publicUrl}/payos/return?invoiceId=${encodeURIComponent(resolveObjectIdString(invoice._id))}`;
+  
+  // Handle batch invoiceIds
+  let invoiceIdParam = encodeURIComponent(resolveObjectIdString(invoice._id));
+  if (Array.isArray(invoice.invoiceIds) && invoice.invoiceIds.length > 0) {
+    invoiceIdParam = invoice.invoiceIds.map(id => encodeURIComponent(resolveObjectIdString(id))).join(',');
+  }
+  
+  const cancelUrl = `${publicUrl}/payos/cancel?invoiceId=${invoiceIdParam}`;
+  const returnUrl = `${publicUrl}/payos/return?invoiceId=${invoiceIdParam}`;
   const signature = buildPayosPaymentSignature({ amount, cancelUrl, description, orderCode, returnUrl });
 
   const body = {
@@ -442,7 +449,7 @@ const createInvoice = async (user, residentId, body) => {
     return invoice;
   }
 
-  if ((body.careServiceCost === undefined || body.careServiceCost === '' || body.careServiceCost === null) && resident.servicePackage) {
+  if ((body.careServiceCost === undefined || body.careServiceCost === '' || body.careServiceCost === null) && resident.servicePackage && !prescriptionId) {
     const packagePrice = await getResidentServicePackagePrice(resident);
     if (packagePrice) {
       careServiceCost = packagePrice;
@@ -452,22 +459,52 @@ const createInvoice = async (user, residentId, body) => {
   const totalAmount = roomCost + medicationCost + careServiceCost + otherCost;
   const { start, end } = buildDefaultBillingPeriod();
 
-  const invoice = await invoiceRepo.create({
-    invoiceNumber: buildInvoiceNumber(),
-    residentId,
-    familyAccountId,
-    prescriptionId,
-    billingPeriodStart: body.billingPeriodStart ? new Date(body.billingPeriodStart) : start,
-    billingPeriodEnd: body.billingPeriodEnd ? new Date(body.billingPeriodEnd) : end,
-    roomCost,
-    medicationCost,
-    careServiceCost,
-    otherCost,
-    totalAmount,
-    total: totalAmount,
-    status: totalAmount === 0 ? 'PAID' : 'ISSUED',
-    dueDate: body.dueDate ? new Date(body.dueDate) : end,
-  });
+  // Create separate invoices for SERVICE and MEDICATION
+  const createdInvoices = [];
+
+  // Create SERVICE invoice if there's a service cost
+  if (careServiceCost > 0 || roomCost > 0 || (otherCost > 0 && medicationCost === 0)) {
+    const serviceTotal = roomCost + careServiceCost + otherCost;
+    const serviceInvoice = await invoiceRepo.create({
+      invoiceNumber: buildInvoiceNumber(),
+      residentId,
+      familyAccountId,
+      billingPeriodStart: body.billingPeriodStart ? new Date(body.billingPeriodStart) : start,
+      billingPeriodEnd: body.billingPeriodEnd ? new Date(body.billingPeriodEnd) : end,
+      roomCost,
+      medicationCost: 0,
+      careServiceCost,
+      otherCost: medicationCost > 0 ? 0 : otherCost,
+      totalAmount: serviceTotal,
+      total: serviceTotal,
+      type: 'SERVICE',
+      status: serviceTotal === 0 ? 'PAID' : 'ISSUED',
+      dueDate: body.dueDate ? new Date(body.dueDate) : end,
+    });
+    createdInvoices.push(serviceInvoice);
+  }
+
+  // Create MEDICATION invoice if there's medication cost
+  if (medicationCost > 0) {
+    const medicationInvoice = await invoiceRepo.create({
+      invoiceNumber: buildInvoiceNumber(),
+      residentId,
+      familyAccountId,
+      prescriptionId,
+      billingPeriodStart: body.billingPeriodStart ? new Date(body.billingPeriodStart) : start,
+      billingPeriodEnd: body.billingPeriodEnd ? new Date(body.billingPeriodEnd) : end,
+      roomCost: 0,
+      medicationCost,
+      careServiceCost: 0,
+      otherCost: body.otherCost || 0,
+      totalAmount: medicationCost + (body.otherCost || 0),
+      total: medicationCost + (body.otherCost || 0),
+      type: 'MEDICATION',
+      status: 'ISSUED',
+      dueDate: body.dueDate ? new Date(body.dueDate) : end,
+    });
+    createdInvoices.push(medicationInvoice);
+  }
 
   if (body.billingPeriodStart && body.billingPeriodEnd) {
     const startDate = new Date(body.billingPeriodStart);
@@ -488,17 +525,21 @@ const createInvoice = async (user, residentId, body) => {
     }
   }
 
-  await createAuditLog({
-    actorUserId: user._id,
-    actorRole: user.role,
-    action: 'CREATE_INVOICE',
-    module: 'billing',
-    targetEntityType: 'Invoice',
-    targetEntityId: invoice._id,
-    afterData: invoice.toObject(),
-  });
+  // Log audit for all created invoices
+  for (const invoice of createdInvoices) {
+    await createAuditLog({
+      actorUserId: user._id,
+      actorRole: user.role,
+      action: 'CREATE_INVOICE',
+      module: 'billing',
+      targetEntityType: 'Invoice',
+      targetEntityId: invoice._id,
+      afterData: invoice.toObject(),
+    });
+  }
 
-  return invoice;
+  // Return the first (primary) invoice or all invoices based on API contract
+  return createdInvoices.length > 0 ? createdInvoices[0] : null;
 };
 
 const buildPayosCheckoutUrl = (req, invoice) => {
@@ -644,6 +685,12 @@ const adminGetInvoice = async (invoiceId) => {
   return invoice;
 };
 
+const listInvoicesByResident = async (residentId) => {
+  const filter = { residentId: new Types.ObjectId(residentId) };
+  const invoices = await invoiceRepo.findAll(filter, { sort: { createdAt: -1 } });
+  return invoices || [];
+};
+
 const getPayosPaymentStatus = async (orderCode) => {
   const { clientId, apiKey, partnerCode } = getPayosCredentials();
   const apiUrl = new URL(`/v2/payment-requests/${orderCode}`, getPayosApiBaseUrl());
@@ -684,6 +731,104 @@ const getPayosPaymentStatus = async (orderCode) => {
   });
 };
 
+const batchPayment = async (user, residentId, invoiceIds, body, req) => {
+  if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+    throw new ServiceError('No invoices selected for payment', 400);
+  }
+
+  // Fetch all invoices
+  const invoices = await invoiceRepo.findAll({ _id: { $in: invoiceIds }, residentId });
+  
+  if (invoices.length !== invoiceIds.length) {
+    throw new ServiceError('Some invoices not found or do not belong to this resident', 404);
+  }
+
+  // Calculate total amount
+  let totalAmount = 0;
+  invoices.forEach((invoice) => {
+    totalAmount += invoice.totalAmount || 0;
+  });
+
+  const amount = body.amount ? normalizeCost(body.amount) : totalAmount;
+  if (amount <= 0) {
+    throw new ServiceError('Payment amount must be greater than 0', 400);
+  }
+
+  // For PayOS payment, return checkout URL without creating payment records yet
+  if (body.paymentMethod === 'payos') {
+    // Create a combined invoice object for PayOS
+    const combinedInvoice = {
+      _id: invoiceIds[0], // Use first invoice ID for reference
+      invoiceNumber: `BATCH-${invoiceIds.length}-${new Date().getTime()}`,
+      totalAmount: amount,
+      residentId,
+      invoiceIds, // Store all invoice IDs
+    };
+
+    const payosData = await createPayosPaymentRequest({ invoice: combinedInvoice, req });
+    return {
+      totalPaid: amount,
+      invoiceCount: invoices.length,
+      checkoutUrl: payosData.checkoutUrl,
+      paymentType: 'batch_payos',
+      invoiceIds,
+    };
+  }
+
+  // For wallet/other payment methods, create payment records immediately
+  const payments = [];
+  let remainingAmount = amount;
+
+  for (let i = 0; i < invoices.length; i++) {
+    const invoice = invoices[i];
+    const invoiceAmount = Math.min(remainingAmount, invoice.totalAmount);
+
+    if (invoiceAmount > 0) {
+      const payment = await paymentRepo.create({
+        invoiceId: invoice._id,
+        paidByFamilyAccountId: user._id,
+        paymentMethod: body.paymentMethod || 'card',
+        transactionRef: body.transactionRef || `PAY-${Date.now()}-${i}`,
+        amount: invoiceAmount,
+        paymentStatus: 'confirmed',
+        paidAt: new Date(),
+        confirmedAt: new Date(),
+        note: body.note,
+      });
+
+      payments.push(payment);
+      
+      // Update invoice status
+      const status = invoiceAmount >= invoice.totalAmount ? 'PAID' : 'PARTIALLY_PAID';
+      await invoiceRepo.updateById(invoice._id, { status });
+      
+      if (status === 'PAID') {
+        await markInvoiceAsPaid(invoice._id);
+      }
+
+      remainingAmount -= invoiceAmount;
+      
+      // Log audit
+      await createAuditLog({
+        actorUserId: user._id,
+        actorRole: user.role,
+        action: 'BATCH_PAYMENT',
+        module: 'billing',
+        targetEntityType: 'Payment',
+        targetEntityId: payment._id,
+        afterData: payment.toObject(),
+      });
+    }
+  }
+
+  return {
+    totalPaid: amount,
+    invoiceCount: invoices.length,
+    payments,
+    paymentType: 'batch_wallet',
+  };
+};
+
 module.exports = {
   createInvoice,
   estimateMedicationCostForPrescription,
@@ -698,4 +843,6 @@ module.exports = {
   verifyPayosWalletTopupChecksum,
   adminListInvoices,
   adminGetInvoice,
+  listInvoicesByResident,
+  batchPayment,
 };

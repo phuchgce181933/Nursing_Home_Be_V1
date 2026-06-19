@@ -316,6 +316,27 @@ const ensureSinglePrimary = (contacts) => {
   if (primaryCount > 1) throw new ServiceError('Chỉ được đánh dấu tối đa một liên hệ khẩn cấp là chính', 400);
 };
 
+const CANNOT_DELETE_PRIMARY_MSG =
+  'Không thể xóa liên hệ chính. Vui lòng đặt liên hệ khác làm chính trước.';
+
+const matchEmergencyContact = (a, b) => {
+  const aId = a?._id?.toString?.();
+  const bId = b?._id?.toString?.();
+  if (aId && bId && aId === bId) return true;
+  return a?.fullName === b?.fullName && a?.phone === b?.phone;
+};
+
+const assertPrimaryContactNotRemoved = (existingContacts, nextContacts) => {
+  const primaryBefore = (existingContacts || []).find((c) => c.isPrimary);
+  if (!primaryBefore) return;
+
+  const stillPresent = (nextContacts || []).some((c) => matchEmergencyContact(c, primaryBefore));
+  if (stillPresent) return;
+
+  const hasNewPrimary = (nextContacts || []).some((c) => c.isPrimary);
+  if (!hasNewPrimary) throw new ServiceError(CANNOT_DELETE_PRIMARY_MSG, 400);
+};
+
 const mapResidentFamilySummary = (resident) => ({
   _id: resident._id,
   residentCode: resident.residentCode,
@@ -438,6 +459,9 @@ const replaceEmergencyContacts = async (residentId, contactsInput) => {
     }
     return { ...c, isPrimary: false };
   });
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw new ServiceError('Không tìm thấy cư dân', 404);
+  assertPrimaryContactNotRemoved(existing.emergencyContacts, normalized);
   const resident = await residentRepo.replaceEmergencyContacts(residentId, normalized);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return { message: 'Cập nhật liên hệ khẩn cấp thành công', emergencyContacts: resident.emergencyContacts };
@@ -460,12 +484,12 @@ const updateEmergencyContact = async (residentId, contactId, body) => {
 const removeEmergencyContact = async (residentId, contactId) => {
   assertResidentId(residentId);
   assertContactId(contactId);
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw new ServiceError('Không tìm thấy cư dân', 404);
+  const contact = existing.emergencyContacts?.id?.(contactId);
+  if (!contact) throw new ServiceError('Không tìm thấy liên hệ khẩn cấp', 404);
+  if (contact.isPrimary) throw new ServiceError(CANNOT_DELETE_PRIMARY_MSG, 400);
   const resident = await residentRepo.removeEmergencyContact(residentId, contactId);
-  if (!resident) {
-    const exists = await residentRepo.findById(residentId);
-    if (!exists) throw new ServiceError('Không tìm thấy cư dân', 404);
-    throw new ServiceError('Không tìm thấy liên hệ khẩn cấp', 404);
-  }
   return { message: 'Xóa liên hệ khẩn cấp thành công', emergencyContacts: resident.emergencyContacts };
 };
 
@@ -1041,6 +1065,9 @@ const adminUpdateFamilyInfo = async (user, residentId, body, req) => {
   if (Object.keys(update).length === 0) throw new ServiceError('Không có trường thông tin gia đình hợp lệ để cập nhật', 400);
   const before = await residentRepo.findByIdForAdmin(residentId);
   if (!before) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (emergencyContacts !== undefined) {
+    assertPrimaryContactNotRemoved(before.emergencyContacts, emergencyContacts);
+  }
   const updated = await residentRepo.updateById(residentId, update);
   await createAuditLog({
     actorUserId: user._id,

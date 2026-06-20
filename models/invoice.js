@@ -22,7 +22,7 @@ const invoiceSchema = new Schema(
     total: { type: Number, default: 0 },
     totalAmount: { type: Number, default: 0 },
     familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
-    status: { type: String, enum: ['DRAFT', 'ISSUED', 'PAID', 'CANCELLED', 'PARTIALLY_PAID'], default: 'DRAFT', index: true },
+    status: { type: String, enum: ['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'CANCELLED'], default: 'DRAFT', index: true },
     createdBy: { type: String },
     
     // Service fee components

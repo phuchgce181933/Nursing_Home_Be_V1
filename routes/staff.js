@@ -63,7 +63,7 @@ const { uploadAvatar } = require('../middleware/uploadMiddleware');
  *       400:
  *         description: Invalid date format (must be YYYY-MM-DD) or invalid role
  */
-router.get('/availability', protect, authorize('admin', 'manager'), getAvailability);
+router.get('/availability', protect, authorize('admin'), getAvailability);
 
 /**
  * @swagger
@@ -83,7 +83,7 @@ router.get('/availability', protect, authorize('admin', 'manager'), getAvailabil
  *       200:
  *         description: "Coverage status: fullyStaffed / understaffed / noCoverage"
  */
-router.get('/floors/:floorId/coverage', protect, authorize('admin', 'manager'), getAreaCoverageStatus);
+router.get('/floors/:floorId/coverage', protect, authorize('admin'), getAreaCoverageStatus);
 
 /**
  * @swagger
@@ -143,7 +143,7 @@ router.get('/floors/:floorId/coverage', protect, authorize('admin', 'manager'), 
  *       400:
  *         description: Invalid assignmentDate format
  */
-router.get('/', protect, authorize('admin', 'manager'), listStaffProfiles);
+router.get('/', protect, authorize('admin'), listStaffProfiles);
 
 /**
  * @swagger
@@ -165,7 +165,7 @@ router.get('/', protect, authorize('admin', 'manager'), listStaffProfiles);
  *       404:
  *         description: Not found
  */
-router.get('/:id', protect, authorize('admin', 'manager'), getStaffProfile);
+router.get('/:id', protect, authorize('admin'), getStaffProfile);
 
 /**
  * @swagger
@@ -215,7 +215,7 @@ router.get('/:id', protect, authorize('admin', 'manager'), getStaffProfile);
  *       200:
  *         description: Profile updated (security fields not editable here)
  */
-router.put('/:id', protect, authorize('admin', 'manager'), uploadAvatar, updateStaffProfile);
+router.put('/:id', protect, authorize('admin'), uploadAvatar, updateStaffProfile);
 
 /**
  * @swagger
@@ -246,7 +246,7 @@ router.put('/:id', protect, authorize('admin', 'manager'), uploadAvatar, updateS
  *       200:
  *         description: Role updated
  */
-router.put('/:id/role', protect, authorize('admin', 'manager'), updateStaffRole);
+router.put('/:id/role', protect, authorize('admin'), updateStaffRole);
 
 /**
  * @swagger
@@ -276,7 +276,7 @@ router.put('/:id/role', protect, authorize('admin', 'manager'), updateStaffRole)
  *       400:
  *         description: Already banned or self-ban attempt
  */
-router.put('/:id/ban', protect, authorize('admin', 'manager'), banStaff);
+router.put('/:id/ban', protect, authorize('admin'), banStaff);
 
 /**
  * @swagger
@@ -296,7 +296,7 @@ router.put('/:id/ban', protect, authorize('admin', 'manager'), banStaff);
  *       200:
  *         description: Staff account unbanned
  */
-router.put('/:id/unban', protect, authorize('admin', 'manager'), unbanStaff);
+router.put('/:id/unban', protect, authorize('admin'), unbanStaff);
 
 /**
  * @swagger
@@ -339,7 +339,7 @@ router.put('/:id/unban', protect, authorize('admin', 'manager'), unbanStaff);
  *       409:
  *         description: Active care tasks block area change; response includes blockingTasks array
  */
-router.put('/:id/areas', protect, authorize('admin', 'manager'), assignAreas);
+router.put('/:id/areas', protect, authorize('admin'), assignAreas);
 
 /**
  * @swagger
@@ -375,7 +375,7 @@ router.put('/:id/areas', protect, authorize('admin', 'manager'), assignAreas);
 router.get(
   '/:id/residents/available',
   protect,
-  authorize('admin', 'manager'),
+  authorize('admin'),
   listResidentsAvailableForStaff
 );
 
@@ -402,7 +402,7 @@ router.get(
 router.get(
   '/:id/residents/assigned',
   protect,
-  authorize('admin', 'manager'),
+  authorize('admin'),
   listAssignedResidents
 );
 
@@ -443,6 +443,6 @@ router.get(
  *       409:
  *         description: Active care tasks block resident removal; response includes blockingTasks array
  */
-router.put('/:id/residents', protect, authorize('admin', 'manager'), assignResidents);
+router.put('/:id/residents', protect, authorize('admin'), assignResidents);
 
 module.exports = router;

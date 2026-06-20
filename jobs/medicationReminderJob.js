@@ -26,6 +26,7 @@ const buildNotification = (nurseId, title, content, scheduleId) => ({
  */
 const runUpcomingReminders = async () => {
   const now = new Date();
+  const in15 = new Date(now.getTime() + 15 * 60 * 1000);
   const in30 = new Date(now.getTime() + 30 * 60 * 1000);
 
   const upcoming = await MedicationSchedule.find({
@@ -35,11 +36,22 @@ const runUpcomingReminders = async () => {
 
   if (!upcoming.length) return;
 
+  const scheduleIds = upcoming.map((s) => s._id);
+  const existingNotifs = await Notification.find({
+    targetEntityType: 'MedicationSchedule',
+    targetEntityId: { $in: scheduleIds },
+    title: 'Nhắc nhở uống thuốc',
+  }).select('targetEntityId');
+  const alreadyNotified = new Set(existingNotifs.map((n) => n.targetEntityId.toString()));
+
+  const toNotify = upcoming.filter((s) => !alreadyNotified.has(s._id.toString()));
+  if (!toNotify.length) return;
+
   const nurseIds = await getNurseIds();
   if (!nurseIds.length) return;
 
   const notifications = [];
-  for (const schedule of upcoming) {
+  for (const schedule of toNotify) {
     const residentName = schedule.residentId?.fullName || 'Unknown';
     const timeStr = schedule.scheduledTime.toLocaleTimeString('vi-VN', {
       hour: '2-digit',

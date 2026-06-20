@@ -13,7 +13,7 @@ const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 // ── Scope helpers ─────────────────────────────────────────────────────────────
 
 const getResidentScope = async (userId, role) => {
-  if (['admin', 'manager'].includes(role)) return null;
+  if (['admin'].includes(role)) return null;
   const profile = await StaffProfile.findOne({ userId }).select('assignedResidentIds');
   if (!profile) return [];
   return profile.assignedResidentIds.map(String);

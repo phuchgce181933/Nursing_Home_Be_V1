@@ -154,7 +154,7 @@ const createDraft = async (body, actorUserId) => {
   }
   const entriesInput = Array.isArray(body.entries) ? body.entries : [];
   if (!entriesInput.length) throw new ServiceError('entries là bắt buộc và không được để trống', 400);
-  const entries = entriesInput.map(validateEntry);
+  const entries = entriesInput.map((entry, index) => validateEntry(entry, index));
   assertEntryTimesFromNow(entries, workDate);
 
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
@@ -201,7 +201,7 @@ const updateDraft = async (id, body, actorUserId) => {
   if (body.title !== undefined) updatePayload.title = body.title?.trim() || null;
 
   const hasEntries = Array.isArray(body.entries);
-  const normalizedEntries = hasEntries ? body.entries.map(validateEntry) : null;
+  const normalizedEntries = hasEntries ? body.entries.map((entry, index) => validateEntry(entry, index)) : null;
   if (hasEntries && !normalizedEntries.length) throw new ServiceError('entries không được để trống', 400);
 
   const targetWorkDateStr =
@@ -272,7 +272,7 @@ const getPlan = async (id) => {
   return hydratePlan(day);
 };
 
-const deleteDraft = async (id) => {
+const deleteDraft = async (id, _userId) => {
   const day = await specialDietDayRepo.findById(id);
   if (!day) throw new ServiceError('Không tìm thấy special diet plan', 404);
   if (day.status !== 'draft') {

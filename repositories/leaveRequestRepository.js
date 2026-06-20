@@ -52,8 +52,8 @@ const rejectExpiredPending = async (asOf, reviewNote) =>
         status: 'rejected',
         reviewedAt: asOf,
         reviewNote,
+        reviewedBy: 'SYSTEM',
       },
-      $unset: { reviewedBy: '' },
     }
   );
 

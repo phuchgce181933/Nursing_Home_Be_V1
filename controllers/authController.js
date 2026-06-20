@@ -96,7 +96,7 @@ const resetPassword = async (req, res) => {
 // update user by admin
 const updateUserByAdmin = async (req, res) => {
   try {
-    const result = await authService.updateUserByAdmin(req.params.id, req.body);
+    const result = await authService.updateUserByAdmin(req.params.id, req.body, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({

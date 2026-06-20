@@ -24,7 +24,7 @@ const {
 } = require('../controllers/pharmacyController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('pharmacist', 'admin', 'manager'));
+router.use(protect, authorize('pharmacist', 'admin'));
 
 // Medication inventory
 /**

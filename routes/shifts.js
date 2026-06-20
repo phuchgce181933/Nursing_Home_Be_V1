@@ -3,7 +3,7 @@ const router = express.Router();
 const ctrl = require('../controllers/shiftController');
 const { protect, authorize } = require('../middleware/auth');
 //lenhuthao
-const MANAGER = ['admin', 'manager'];
+const MANAGER = ['admin'];
 const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
 
 /**

@@ -4,9 +4,9 @@ const ServiceError = require('./serviceError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const mailService = require('./mailService');
-const STAFF_ROLES = ['doctor', 'nurse', 'manager', 'staff', 'pharmacist'];
-const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', manager: 'MGR', staff: 'STF', pharmacist: 'PHA', admin: 'ADM' };
-const VALID_ROLES = [...STAFF_ROLES, 'admin'];
+const STAFF_ROLES = ['doctor', 'nurse', 'pharmacist', 'caregiver'];
+const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', pharmacist: 'PHA', caregiver: 'CAR', admin: 'ADM' };
+const VALID_ROLES = [...STAFF_ROLES, 'admin', 'system'];
 const crypto = require('crypto');
 const generateStaffCode = (role) => {
   const prefix = STAFF_CODE_PREFIXES[role] || 'STF';
@@ -116,7 +116,7 @@ const createStaffAccount = async ({
   specialty,
   staffCode,
   certifications,
-}) => {
+}, currentUser) => {
   if (!fullName || !email || !password || !role) {
     throw new ServiceError('fullName, email, password and role are required', 400);
   }
@@ -275,8 +275,8 @@ const forgotPassword = async ({ email }) => {
 
   await userRepo.saveUser(user);
 
-  const resetUrl =
-    `http://localhost:5173/reset-password?token=${resetToken}`;
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
   await mailService.sendResetPasswordEmail(
     user.email,
@@ -292,6 +292,13 @@ const resetPassword = async ({
   token,
   newPassword,
 }) => {
+  if (!token) {
+    throw new ServiceError('Token is required', 400);
+  }
+  if (!newPassword || newPassword.length < 6) {
+    throw new ServiceError('New password must be at least 6 characters', 400);
+  }
+
   const hashedToken = crypto
     .createHash('sha256')
     .update(token)
@@ -328,7 +335,8 @@ const resetPassword = async ({
 // update user by admin
 const updateUserByAdmin = async (
   userId,
-  data
+  data,
+  currentUser
 ) => {
   const user = await userRepo.findById(userId);
 
@@ -337,6 +345,12 @@ const updateUserByAdmin = async (
       'User not found',
       404
     );
+  }
+
+  if (currentUser && String(user._id) === String(currentUser._id)) {
+    if (data.isActive === false || data.isBanned === true) {
+      throw new ServiceError('Cannot deactivate or ban your own account', 400);
+    }
   }
 
   const allowedFields = [
@@ -349,6 +363,10 @@ const updateUserByAdmin = async (
     'isBanned',
     'banReason',
   ];
+
+  if (data.role !== undefined && !VALID_ROLES.includes(data.role)) {
+    throw new ServiceError(`role must be one of: ${VALID_ROLES.join(', ')}`, 400);
+  }
 
   allowedFields.forEach((field) => {
     if (data[field] !== undefined) {
@@ -363,5 +381,15 @@ const updateUserByAdmin = async (
     user,
   };
 };
-module.exports = { login, getMe, listStaffAccounts, createStaffAccount, 
-  toggleStaffActive, updateProfile, changePassword, forgotPassword, resetPassword, updateUserByAdmin };
+const createFirebaseCustomToken = async (user) => {
+  const { getAuth } = require('../config/firebaseAdmin');
+  const auth = getAuth();
+  if (!auth) {
+    throw new ServiceError('Firebase is not configured', 503);
+  }
+  const token = await auth.createCustomToken(user._id.toString(), { role: user.role });
+  return { firebaseToken: token };
+};
+
+module.exports = { login, getMe, listStaffAccounts, createStaffAccount,
+  toggleStaffActive, updateProfile, changePassword, forgotPassword, resetPassword, updateUserByAdmin, createFirebaseCustomToken };

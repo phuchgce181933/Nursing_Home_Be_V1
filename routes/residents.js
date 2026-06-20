@@ -24,8 +24,8 @@ const {
 } = require('../controllers/residentController');
 const { protect, authorize } = require('../middleware/auth');
 
-const adminManager = authorize('admin', 'manager');
-const allStaff = authorize('admin', 'manager', 'doctor', 'nurse');
+const adminManager = authorize('admin');
+const allStaff = authorize('admin', 'doctor', 'nurse');
 
 /**
  * @swagger

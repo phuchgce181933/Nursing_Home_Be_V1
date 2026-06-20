@@ -227,6 +227,7 @@ const updateRecord = async (userId, id, body) => {
   if (!record) throw new ServiceError('Không tìm thấy bản ghi hoạt động vệ sinh', 404);
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
+  await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   validatePayload(body, true);
 
   const update = {};
@@ -241,6 +242,7 @@ const deleteRecord = async (userId, id) => {
   if (!record) throw new ServiceError('Không tìm thấy bản ghi hoạt động vệ sinh', 404);
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
+  await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await hygieneActivityRepo.deleteById(id);
   return { message: 'Đã xóa bản ghi hoạt động vệ sinh', deleted: true, id };
 };

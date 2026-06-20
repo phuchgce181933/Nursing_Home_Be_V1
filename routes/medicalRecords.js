@@ -3,8 +3,8 @@ const router = express.Router({ mergeParams: true });
 const { recordVitals, getHistory } = require('../controllers/medicalRecordController');
 const { protect, authorize } = require('../middleware/auth');
 
-const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
-const VIEW_ROLES = ['admin', 'manager', 'doctor', 'nurse', 'family'];
+const STAFF_ROLES = ['admin', 'doctor', 'nurse'];
+const VIEW_ROLES = ['admin', 'doctor', 'nurse', 'family'];
 
 /**
  * @swagger

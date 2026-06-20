@@ -159,12 +159,14 @@ const verifyAndConfirmTopup = async (userId, topupId) => {
 };
 
 // Used by PayOS webhook: find the most-recent pending topup for this amount across all wallets
-const confirmPendingTopupByAmount = async (amount, paymentId) => {
-  const wallet = await FamilyWallet.findOne({
+const confirmPendingTopupByAmount = async (amount, paymentId, userId) => {
+  const walletQuery = {
     transactions: {
       $elemMatch: { type: 'topup', amount, status: 'pending' },
     },
-  }).sort({ updatedAt: -1 });
+  };
+  if (userId) walletQuery.userId = userId;
+  const wallet = await FamilyWallet.findOne(walletQuery).sort({ updatedAt: -1 });
 
   if (!wallet) {
     throw new ServiceError('Không tìm thấy giao dịch nạp tiền chờ xác nhận', 404);

@@ -123,7 +123,7 @@ const listLeaveRequests = async (currentUser, { staffId, status, fromDate, toDat
 
   const filter = {};
 
-  if (!['admin', 'manager'].includes(currentUser.role)) {
+  if (!['admin'].includes(currentUser.role)) {
     filter.staffId = currentUser._id;
   } else if (staffId) {
     filter.staffId = staffId;
@@ -159,7 +159,7 @@ const getLeaveRequest = async (currentUser, id) => {
   const request = await leaveRequestRepo.findById(id);
   if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
 
-  if (!['admin', 'manager'].includes(currentUser.role)) {
+  if (!['admin'].includes(currentUser.role)) {
     if (request.staffId._id.toString() !== currentUser._id.toString()) {
       throw new ServiceError('Bạn không có quyền truy cập', 403);
     }
@@ -228,7 +228,7 @@ const validateCareTasksForReassignment = async (
 };
 
 const getReplacementCandidates = async (currentUser, id) => {
-  if (!['admin', 'manager'].includes(currentUser.role)) {
+  if (!['admin'].includes(currentUser.role)) {
     throw new ServiceError('Bạn không có quyền truy cập', 403);
   }
 

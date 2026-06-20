@@ -3,7 +3,7 @@ const router = express.Router();
 const ctrl = require('../controllers/careScheduleController');
 const { protect, authorize } = require('../middleware/auth');
 
-const MANAGER = ['admin', 'manager'];
+const MANAGER = ['admin'];
 
 /**
  * @swagger

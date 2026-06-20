@@ -459,6 +459,9 @@ const replaceEmergencyContacts = async (residentId, contactsInput) => {
     }
     return { ...c, isPrimary: false };
   });
+  if (!primarySet && normalized.length > 0) {
+    normalized[0].isPrimary = true;
+  }
   const existing = await residentRepo.findById(residentId);
   if (!existing) throw new ServiceError('Không tìm thấy cư dân', 404);
   assertPrimaryContactNotRemoved(existing.emergencyContacts, normalized);

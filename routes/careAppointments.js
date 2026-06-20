@@ -18,7 +18,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { attachStaffProfile } = require('../middleware/attachStaffProfile');
 
-const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
+const STAFF_ROLES = ['admin', 'doctor', 'nurse'];
 
 /**
  * @swagger
@@ -271,7 +271,7 @@ router.get('/weekly', protect, authorize(...STAFF_ROLES), attachStaffProfile, ge
  *       200:
  *         description: Available doctors and nurses list
  */
-router.get('/available-staff', protect, authorize('admin', 'manager'), getAvailableStaff);
+router.get('/available-staff', protect, authorize('admin'), getAvailableStaff);
 
 /**
  * @swagger
@@ -374,7 +374,7 @@ router.put('/:id', protect, authorize(...STAFF_ROLES), updateAppointment);
  *       404:
  *         description: Appointment not found
  */
-router.delete('/:id', protect, authorize('admin', 'manager', 'doctor'), deleteAppointment);
+router.delete('/:id', protect, authorize('admin', 'doctor'), deleteAppointment);
 
 /**
  * @swagger
@@ -452,7 +452,7 @@ router.patch('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
  *       404:
  *         description: Appointment or staff profile not found
  */
-router.put('/:id/assign-doctor', protect, authorize('admin', 'manager'), assignDoctor);
+router.put('/:id/assign-doctor', protect, authorize('admin'), assignDoctor);
 
 /**
  * @swagger
@@ -487,7 +487,7 @@ router.put('/:id/assign-doctor', protect, authorize('admin', 'manager'), assignD
  *       404:
  *         description: Appointment or staff profile not found
  */
-router.put('/:id/assign-nurse', protect, authorize('admin', 'manager'), assignNurse);
+router.put('/:id/assign-nurse', protect, authorize('admin'), assignNurse);
 
 /**
  * @swagger

@@ -39,7 +39,7 @@ const assertAppointmentAccess = (appointment, user, staffProfile) => {
 };
 
 const STATUS_TRANSITIONS = {
-  scheduled:   ['in_progress', 'completed', 'cancelled'],
+  scheduled:   ['in_progress', 'cancelled'],
   in_progress: ['completed', 'cancelled'],
   completed:   [],
   cancelled:   [],

@@ -3,7 +3,7 @@ const router = express.Router();
 const { adminListTours, adminGetTour, approveTour, rejectTour } = require('../controllers/facilityTourController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('admin', 'manager'));
+router.use(protect, authorize('admin'));
 
 /**
  * @swagger

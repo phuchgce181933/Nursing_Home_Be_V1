@@ -120,7 +120,7 @@ router.post('/', protect, authorize('admin'), createActivity);
  *       403:
  *         description: Access forbidden
  */
-router.get('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'family'), listActivities);
+router.get('/', protect, authorize('admin', 'doctor', 'nurse', 'family'), listActivities);
 
 /**
  * @swagger
@@ -157,7 +157,7 @@ router.get('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'famil
  *       403:
  *         description: Access forbidden
  */
-router.get('/statistics', protect, authorize('admin', 'manager'), getActivityStatistics);
+router.get('/statistics', protect, authorize('admin'), getActivityStatistics);
 
 /**
  * @swagger
@@ -179,7 +179,7 @@ router.get('/statistics', protect, authorize('admin', 'manager'), getActivitySta
  *       404:
  *         description: Activity not found
  */
-router.get('/:activityId', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'family'), getActivity);
+router.get('/:activityId', protect, authorize('admin', 'doctor', 'nurse', 'family'), getActivity);
 
 /**
  * @swagger
@@ -201,7 +201,7 @@ router.get('/:activityId', protect, authorize('admin', 'manager', 'doctor', 'nur
  *       404:
  *         description: Activity not found
  */
-router.get('/:activityId/statistics', protect, authorize('admin', 'manager'), getActivityStatisticsById);
+router.get('/:activityId/statistics', protect, authorize('admin'), getActivityStatisticsById);
 
 /**
  * @swagger

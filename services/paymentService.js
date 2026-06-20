@@ -44,12 +44,11 @@ const markInvoiceAsPaid = async (invoiceId) => {
     .map((it) => it.chargeId)
     .filter(Boolean);
 
-  const chargeFilter = [{ invoiceId: invoice._id }];
-  if (chargeIds.length > 0) {
-    chargeFilter.unshift({ _id: { $in: chargeIds } });
-  }
+  const chargeQuery = chargeIds.length > 0
+    ? { $or: [{ invoiceId: invoice._id }, { _id: { $in: chargeIds } }] }
+    : { invoiceId: invoice._id };
 
-  await MedicalCharge.updateMany({ $or: chargeFilter }, { $set: { billingStatus: 'PAID' } });
+  await MedicalCharge.updateMany(chargeQuery, { $set: { billingStatus: 'PAID' } });
   return updatedInvoice;
 };
 
@@ -150,7 +149,7 @@ const buildInvoiceFilter = (query) => {
   if (query.isOverdue === 'true') {
     const now = new Date();
     filter.dueDate = { ...filter.dueDate, $lt: now };
-    filter.status = filter.status || { $ne: 'paid' };
+    filter.status = filter.status || { $ne: 'PAID' };
   }
 
   return filter;
@@ -622,8 +621,19 @@ const findInvoiceForCheckout = async (user, residentId, invoiceId, query = {}) =
 const recordPayment = async (user, invoiceId, body) => {
   const invoice = await findInvoiceById(user, invoiceId);
 
+  if (invoice.status === 'PAID') {
+    throw new ServiceError('Invoice is already fully paid', 400);
+  }
+
   const amount = normalizeCost(body.amount || invoice.totalAmount);
   if (amount <= 0) throw new ServiceError('Payment amount must be greater than 0', 400);
+
+  if (body.transactionRef) {
+    const existingPayment = await paymentRepo.findByTransactionRef(body.transactionRef);
+    if (existingPayment) {
+      throw new ServiceError('Duplicate payment: transactionRef already exists', 409);
+    }
+  }
 
   const payment = await paymentRepo.create({
     invoiceId,
@@ -637,7 +647,7 @@ const recordPayment = async (user, invoiceId, body) => {
     note: body.note,
   });
 
-  const status = amount >= invoice.totalAmount ? 'PAID' : invoice.status || 'ISSUED';
+  const status = amount >= invoice.totalAmount ? 'PAID' : 'PARTIALLY_PAID';
 
   const updatedInvoice = await invoiceRepo.updateById(invoiceId, { status });
   if (status === 'PAID') {

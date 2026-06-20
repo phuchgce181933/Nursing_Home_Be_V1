@@ -14,7 +14,7 @@ const {
 } = require('../controllers/medicationController');
 const { protect, authorize } = require('../middleware/auth');
 
-const CLINICAL_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
+const CLINICAL_ROLES = ['admin', 'doctor', 'nurse'];
 
 // Residents assigned to the calling staff member
 router.get('/my-residents', protect, authorize(...CLINICAL_ROLES), getMyResidents);

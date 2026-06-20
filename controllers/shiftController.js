@@ -33,12 +33,12 @@ const createShift = (req, res) =>
 const checkConflicts = (req, res) => respond(res, svc.previewConflicts(req.query));
 
 const publishShift = (req, res) =>
-  svc.publishShift(req.params.id, req.user._id).then((result) => res.json({ success: true, ...result })).catch((err) => res.status(err.status || 500).json({ success: false, message: err.message, ...(err.conflicts && { conflicts: err.conflicts }) }));
+  svc.publishShift(req.params.id, req.user._id).then((result) => res.json({ success: true, ...result })).catch((err) => res.status(err.status || err.statusCode || 500).json({ success: false, message: err.message, ...(err.conflicts && { conflicts: err.conflicts }) }));
 
 const confirmShift = (req, res) => respond(res, svc.confirmShift(req.params.id, req.user));
 
 const updateShift = (req, res) => {
-  const isAdmin = ['admin', 'manager'].includes(req.user.role);
+  const isAdmin = req.user.role === 'admin';
   svc
     .updateShift(req.params.id, req.body, req.user._id, isAdmin)
     .then((result) => res.json({ success: true, ...result }))

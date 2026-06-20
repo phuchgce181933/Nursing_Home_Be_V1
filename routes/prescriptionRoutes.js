@@ -151,7 +151,7 @@ router.post(
  *       403:
  *         description: Doctor or Nurse role required
  */
-router.get('/', protect, authorize('doctor', 'nurse', 'admin', 'manager'), listPrescriptions);
+router.get('/', protect, authorize('doctor', 'nurse', 'admin'), listPrescriptions);
 
 /**
  * @swagger
@@ -175,9 +175,9 @@ router.get('/', protect, authorize('doctor', 'nurse', 'admin', 'manager'), listP
  *       404:
  *         description: Prescription not found
  */
-router.get('/:id', protect, authorize('doctor', 'nurse', 'admin', 'manager'), getPrescription);
+router.get('/:id', protect, authorize('doctor', 'nurse', 'admin'), getPrescription);
 
-router.get('/:id/estimate-cost', protect, authorize('doctor', 'nurse', 'admin', 'manager'), estimatePrescriptionCost);
+router.get('/:id/estimate-cost', protect, authorize('doctor', 'nurse', 'admin'), estimatePrescriptionCost);
 
 /**
  * @swagger

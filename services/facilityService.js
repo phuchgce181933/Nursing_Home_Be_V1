@@ -496,7 +496,16 @@ const createBed = async (data, user, req) => {
   const room = await Room.findById(roomId);
   if (!room) throw Object.assign(new Error('Không tìm thấy phòng'), { status: 404 });
 
-  const existing = await Bed.findOne({ roomId, bedCode });
+  const currentBedCount = await Bed.countDocuments({ roomId });
+  if (currentBedCount >= room.capacity) {
+    throw Object.assign(new Error(`Số giường trong phòng đã đạt giới hạn sức chứa của phòng (${room.capacity} giường)`), { status: 400 });
+  }
+
+  const escapedBedCode = bedCode.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const existing = await Bed.findOne({
+    roomId,
+    bedCode: { $regex: new RegExp(`^${escapedBedCode}$`, 'i') }
+  });
   if (existing) throw Object.assign(new Error(`Giường mã ${bedCode} đã tồn tại trong phòng này`), { status: 409 });
 
   const { BED_TYPES, BED_CONDITIONS } = require('../models/enums');
@@ -542,7 +551,12 @@ const updateBed = async (bedId, data, user, req) => {
     const nextCode = String(data.bedCode || '').trim();
     if (!nextCode) throw Object.assign(new Error('bedCode không được để trống'), { status: 400 });
     if (nextCode !== bed.bedCode) {
-      const existing = await Bed.findOne({ roomId: bed.roomId, bedCode: nextCode });
+      const escapedNextCode = nextCode.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const existing = await Bed.findOne({
+        roomId: bed.roomId,
+        bedCode: { $regex: new RegExp(`^${escapedNextCode}$`, 'i') },
+        _id: { $ne: bed._id }
+      });
       if (existing) throw Object.assign(new Error(`Giường mã ${nextCode} đã tồn tại trong phòng này`), { status: 409 });
       bed.bedCode = nextCode;
     }

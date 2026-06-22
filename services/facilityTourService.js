@@ -27,6 +27,7 @@ const formatTour = (tour, { includeFamily = true } = {}) => {
     confirmedAt: tour.confirmedAt,
     confirmedTimeSlot: tour.confirmedTimeSlot,
     adminNotes: tour.adminNotes,
+    completedAt: tour.completedAt,
     createdAt: tour.createdAt,
     updatedAt: tour.updatedAt,
   };
@@ -326,6 +327,40 @@ const approveTour = async (admin, tourId, body, req) => {
   return { message: 'Facility tour approved successfully', tour: formatTour(updated) };
 };
 
+const completeTour = async (admin, tourId, body, req) => {
+  const tour = await tourRepo.findByIdForAdmin(tourId);
+  if (!tour) throw new ServiceError('Facility tour request not found', 404);
+
+  if (!tourRepo.COMPLETABLE_STATUSES.includes(tour.status)) {
+    throw new ServiceError(
+      `Cannot complete a tour with status: ${tour.status}. Only ${tourRepo.COMPLETABLE_STATUSES.join(', ')} tours can be marked as completed.`,
+      400
+    );
+  }
+
+  const updateData = {
+    status: 'completed',
+    completedAt: new Date(),
+  };
+  if (body?.adminNotes) updateData.adminNotes = String(body.adminNotes).trim();
+
+  const updated = await tourRepo.updateTour(tourId, updateData);
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'COMPLETE_FACILITY_TOUR',
+    module: 'facilityTour',
+    targetEntityType: 'FacilityTour',
+    targetEntityId: tour._id,
+    beforeData: { status: tour.status },
+    afterData: { status: updated.status, completedAt: updated.completedAt },
+    req,
+  });
+
+  return { message: 'Facility tour marked as completed', tour: formatTour(updated) };
+};
+
 const rejectTour = async (admin, tourId, body, req) => {
   const tour = await tourRepo.findByIdForAdmin(tourId);
   if (!tour) throw new ServiceError('Facility tour request not found', 404);
@@ -372,5 +407,6 @@ module.exports = {
   adminListTours,
   adminGetTour,
   approveTour,
+  completeTour,
   rejectTour,
 };

@@ -45,6 +45,9 @@ const facilityTourSchema = new Schema(
     confirmedAt: { type: Date },
     confirmedTimeSlot: { type: String, trim: true },
     adminNotes: { type: String, trim: true },
+
+    // Hoàn tất tham quan
+    completedAt: { type: Date },
   },
   { timestamps: true }
 );

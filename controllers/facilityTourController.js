@@ -55,6 +55,15 @@ const approveTour = async (req, res) => {
   }
 };
 
+const completeTour = async (req, res) => {
+  try {
+    const result = await facilityTourService.completeTour(req.user, req.params.tourId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const rejectTour = async (req, res) => {
   try {
     const result = await facilityTourService.rejectTour(req.user, req.params.tourId, req.body, req);
@@ -64,4 +73,4 @@ const rejectTour = async (req, res) => {
   }
 };
 
-module.exports = { scheduleTour, listTourHistory, cancelTour, adminListTours, adminGetTour, approveTour, rejectTour };
+module.exports = { scheduleTour, listTourHistory, cancelTour, adminListTours, adminGetTour, approveTour, completeTour, rejectTour };

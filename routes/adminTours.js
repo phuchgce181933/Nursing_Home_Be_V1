@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { adminListTours, adminGetTour, approveTour, rejectTour } = require('../controllers/facilityTourController');
+const { adminListTours, adminGetTour, approveTour, completeTour, rejectTour } = require('../controllers/facilityTourController');
 const { protect, authorize } = require('../middleware/auth');
 
 router.use(protect, authorize('admin'));
@@ -119,6 +119,43 @@ router.get('/:tourId', adminGetTour);
  *         description: Tour not found
  */
 router.patch('/:tourId/approve', approveTour);
+
+/**
+ * @swagger
+ * /api/admin/tours/{tourId}/complete:
+ *   patch:
+ *     summary: Mark a confirmed facility tour as completed (Admin)
+ *     tags: [Admin - Facility Tour]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: tourId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               adminNotes:
+ *                 type: string
+ *                 description: Ghi chú của Admin
+ *     responses:
+ *       200:
+ *         description: Tour marked as completed
+ *       400:
+ *         description: Cannot complete with current status
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Access forbidden
+ *       404:
+ *         description: Tour not found
+ */
+router.patch('/:tourId/complete', completeTour);
 
 /**
  * @swagger

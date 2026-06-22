@@ -11,6 +11,15 @@ const listNotifications = async (req, res) => {
   }
 };
 
+const getCategories = async (req, res) => {
+  try {
+    return res.json({ categories: NOTIFICATION_CATEGORIES });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Failed to load categories' });
+  }
+};
+
 const getSettings = async (req, res) => {
   try {
     const settings = await notificationService.getSettingsForUser(req.user);
@@ -75,6 +84,7 @@ const deleteNotification = async (req, res) => {
 
 module.exports = {
   listNotifications,
+  getCategories,
   getSettings,
   updateSettings,
   markRead,

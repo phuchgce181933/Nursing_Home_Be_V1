@@ -61,7 +61,16 @@ const sendActivityNotifications = async (activity, action, message, extraResiden
   const notifications = recipientUserIds.map((recipientUserId) => ({
     recipientUserId,
     category: 'activity',
-    title: `Activity ${action}: ${activity.title}`,
+    title: (() => {
+      switch (action) {
+        case 'scheduled': return `Hoạt động mới: ${activity.title}`;
+        case 'updated': return `Hoạt động đã được cập nhật: ${activity.title}`;
+        case 'cancelled': return `Hoạt động đã bị hủy: ${activity.title}`;
+        case 'registration': return `Đăng ký hoạt động: ${activity.title}`;
+        case 'completed': return `Hoạt động hoàn thành: ${activity.title}`;
+        default: return `${activity.title}`;
+      }
+    })(),
     content: message,
     targetEntityType: 'Activity',
     targetEntityId: activity._id,
@@ -91,7 +100,7 @@ const createActivity = async (body) => {
   await sendActivityNotifications(
     activity,
     'scheduled',
-    `A new activity has been scheduled for ${activity.scheduledAt.toISOString()}${activity.location ? ` at ${activity.location}` : ''}.`,
+    `Hoạt động mới: ${activity.title} đã được lên lịch vào ${activity.scheduledAt.toLocaleString('vi-VN')}${activity.location ? ` tại ${activity.location}` : ''}.`,
   );
 
   return activity;
@@ -131,7 +140,7 @@ const updateActivity = async (activityId, body) => {
   await sendActivityNotifications(
     updated,
     'updated',
-    `The activity has been updated. Scheduled time: ${updated.scheduledAt.toISOString()}.`,
+    `Hoạt động đã được cập nhật.`,
   );
 
   return updated;
@@ -144,7 +153,7 @@ const deleteActivity = async (activityId) => {
   await sendActivityNotifications(
     activity,
     'cancelled',
-    `The activity has been cancelled.`,
+    `Hoạt động đã bị hủy.`,
   );
 
   await activityRepo.deleteById(activityId);
@@ -163,7 +172,7 @@ const setParticipantList = async (activityId, participantResidentIds) => {
   await sendActivityNotifications(
     activity,
     'updated',
-    `The participant list has been updated for this activity.`,
+    `Danh sách người tham gia hoạt động đã được cập nhật.`,
   );
 
   return activity;
@@ -193,7 +202,7 @@ const registerResident = async (activityId, residentId) => {
   await sendActivityNotifications(
     activity,
     'registration',
-    `A resident has been registered for the activity.`,
+    `Đã thêm cư dân vào hoạt động.`,
     [normalizedResidentId],
   );
 

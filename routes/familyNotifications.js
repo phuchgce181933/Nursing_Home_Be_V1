@@ -42,6 +42,12 @@ router.use(protect, authorize('family'));
 router.get('/', notifCtrl.listNotifications);
 
 /**
+ * GET /api/family/notifications/categories
+ *  return available notification categories
+ */
+router.get('/categories', notifCtrl.getCategories);
+
+/**
  * @swagger
  * /api/family/notifications/settings:
  *   get:

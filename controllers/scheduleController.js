@@ -2,6 +2,7 @@ const { isValidObjectId } = require('mongoose');
 const MedicationSchedule = require('../models/MedicationSchedule');
 const Prescription = require('../models/prescription');
 const Medication = require('../models/medication');
+const MedicationDispense = require('../models/medicationDispense');
 const Resident = require('../models/resident');
 const Room = require('../models/room');
 const StaffProfile = require('../models/staffProfile');
@@ -452,6 +453,11 @@ const markTaken = async (req, res) => {
       });
     }
 
+    // Look up the prescription item to get medicationId for inventory deduction
+    const prescription = await Prescription.findById(schedule.prescriptionId);
+    const prescriptionItem = prescription?.items?.id(schedule.prescriptionItemId);
+    const medicationId = prescriptionItem?.medicationId;
+
     const takenAt = actualTimeTaken ? new Date(actualTimeTaken) : new Date();
     if (isNaN(takenAt.getTime())) {
       return res.status(400).json({ success: false, message: 'actualTimeTaken must be a valid ISO date' });
@@ -465,6 +471,24 @@ const markTaken = async (req, res) => {
     if (notes !== undefined) schedule.notes = notes;
 
     await schedule.save();
+
+    // Auto-create MedicationDispense to deduct inventory (1 dose per administration)
+    if (medicationId) {
+      try {
+        await MedicationDispense.create({
+          medicationId,
+          prescriptionId: schedule.prescriptionId,
+          residentId: schedule.residentId,
+          quantity: 1,
+          dispensedByUserId: req.user._id,
+          dispensedAt: takenAt,
+          notes: `Auto-dispensed: ${schedule.medicationName} (schedule ${schedule._id})`,
+        });
+      } catch (dispenseErr) {
+        console.error('Auto-dispense failed (non-blocking):', dispenseErr.message);
+      }
+    }
+
     await schedule.populate('markedBy', 'fullName role');
 
     return res.status(200).json({ success: true, data: schedule });

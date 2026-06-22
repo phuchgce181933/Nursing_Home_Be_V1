@@ -198,6 +198,17 @@ const buildApplicant = (applicant, relationshipToRequester) => {
   if (applicant.dateOfBirth && Number.isNaN(dateOfBirth?.getTime())) {
     throw new ServiceError('applicant.dateOfBirth is invalid', 400);
   }
+  if (dateOfBirth) {
+    const today = new Date();
+    let age = today.getFullYear() - dateOfBirth.getFullYear();
+    const m = today.getMonth() - dateOfBirth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dateOfBirth.getDate())) {
+      age--;
+    }
+    if (age < 50) {
+      throw new ServiceError('Người được đăng ký nhập viện phải từ 50 tuổi trở lên', 400);
+    }
+  }
 
   return {
     fullName,

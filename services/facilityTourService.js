@@ -76,8 +76,31 @@ const scheduleTour = async (user, body, req) => {
   if (Number.isNaN(parsedDate.getTime())) {
     throw new ServiceError('preferredDate is invalid (use ISO format: YYYY-MM-DD)', 400);
   }
-  if (parsedDate < new Date()) {
-    throw new ServiceError('preferredDate must be in the future', 400);
+  const now = new Date();
+  const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const startOfToday = new Date(Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth(), vnNow.getUTCDate(), 0, 0, 0, 0) - 7 * 60 * 60 * 1000);
+  if (parsedDate < startOfToday) {
+    throw new ServiceError('preferredDate must be today or in the future', 400);
+  }
+
+  const y = vnNow.getUTCFullYear();
+  const m = vnNow.getUTCMonth();
+  const d = vnNow.getUTCDate();
+  const preferredDateStr = parsedDate.toISOString().split('T')[0];
+  const todayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+  if (preferredDateStr === todayStr && preferredTimeSlot) {
+    const [startPart] = preferredTimeSlot.split(' - ');
+    if (startPart) {
+      const [startHour, startMinute] = startPart.split(':').map(Number);
+      if (!Number.isNaN(startHour) && !Number.isNaN(startMinute)) {
+        const curHour = vnNow.getUTCHours();
+        const curMin = vnNow.getUTCMinutes();
+        if (curHour > startHour || (curHour === startHour && curMin >= startMinute)) {
+          throw new ServiceError('The selected time slot for today has already passed', 400);
+        }
+      }
+    }
   }
 
   const visitors = numberOfVisitors ? parseInt(numberOfVisitors, 10) : 1;
@@ -88,12 +111,12 @@ const scheduleTour = async (user, body, req) => {
   // Anti-spam: Check if there is already a pending or confirmed tour request on the same preferredDate for this family
   // We calculate boundaries in Vietnam timezone (+07:00) so it works regardless of different UTC day offsets
   const vnTime = new Date(parsedDate.getTime() + 7 * 60 * 60 * 1000);
-  const y = vnTime.getUTCFullYear();
-  const m = vnTime.getUTCMonth();
-  const d = vnTime.getUTCDate();
+  const targetY = vnTime.getUTCFullYear();
+  const targetM = vnTime.getUTCMonth();
+  const targetD = vnTime.getUTCDate();
   
-  const startOfDate = new Date(Date.UTC(y, m, d, 0, 0, 0, 0) - 7 * 60 * 60 * 1000);
-  const endOfDate = new Date(Date.UTC(y, m, d, 23, 59, 59, 999) - 7 * 60 * 60 * 1000);
+  const startOfDate = new Date(Date.UTC(targetY, targetM, targetD, 0, 0, 0, 0) - 7 * 60 * 60 * 1000);
+  const endOfDate = new Date(Date.UTC(targetY, targetM, targetD, 23, 59, 59, 999) - 7 * 60 * 60 * 1000);
 
   const duplicateTour = await tourRepo.findActiveTourOnDate(user._id, startOfDate, endOfDate);
   if (duplicateTour) {

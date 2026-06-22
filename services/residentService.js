@@ -946,10 +946,23 @@ const adminCreateResident = async (user, body, req) => {
     const existing = await residentRepo.findByResidentCode(residentCode);
     if (existing) throw new ServiceError('residentCode đã tồn tại', 409);
   }
+  const dateOfBirth = parseOptionalDate(body.dateOfBirth, 'dateOfBirth');
+  if (dateOfBirth) {
+    const today = new Date();
+    let age = today.getFullYear() - dateOfBirth.getFullYear();
+    const m = today.getMonth() - dateOfBirth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dateOfBirth.getDate())) {
+      age--;
+    }
+    if (age < 50) {
+      throw new ServiceError('Cư dân phải từ 50 tuổi trở lên', 400);
+    }
+  }
+
   const payload = {
     residentCode: residentCode || (await generateResidentCode()),
     fullName,
-    dateOfBirth: parseOptionalDate(body.dateOfBirth, 'dateOfBirth'),
+    dateOfBirth,
     gender: body.gender || 'unknown',
     citizenId: body.citizenId ? String(body.citizenId).trim() : undefined,
     insuranceNumber: body.insuranceNumber ? String(body.insuranceNumber).trim() : undefined,
@@ -1029,7 +1042,21 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
     if (!fullName) throw new ServiceError('fullName không được để trống', 400);
     update.fullName = fullName;
   }
-  if (body.dateOfBirth !== undefined) update.dateOfBirth = parseOptionalDate(body.dateOfBirth, 'dateOfBirth');
+  if (body.dateOfBirth !== undefined) {
+    const dob = parseOptionalDate(body.dateOfBirth, 'dateOfBirth');
+    if (dob) {
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+        age--;
+      }
+      if (age < 50) {
+        throw new ServiceError('Cư dân phải từ 50 tuổi trở lên', 400);
+      }
+    }
+    update.dateOfBirth = dob;
+  }
   if (body.gender !== undefined) update.gender = body.gender;
   if (body.citizenId !== undefined) update.citizenId = String(body.citizenId || '').trim() || undefined;
   if (body.insuranceNumber !== undefined) update.insuranceNumber = String(body.insuranceNumber || '').trim() || undefined;

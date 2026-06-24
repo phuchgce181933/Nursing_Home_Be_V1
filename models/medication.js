@@ -11,7 +11,7 @@ const medicationSchema = new Schema(
     unit: { type: String, trim: true },
     manufacturer: { type: String, trim: true, index: true },
     description: { type: String, trim: true },
-    minStockLevel: { type: Number, default: 0, min: 0 },
+    minStockLevel: { type: Number, default: 0, min: 10 },
     isActive: { type: Boolean, default: true, index: true },
     createdBy: { type: Types.ObjectId, ref: 'User' },
     updatedBy: { type: Types.ObjectId, ref: 'User' },

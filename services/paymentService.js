@@ -12,6 +12,7 @@ const medicationStockRepo = require('../repositories/medicationStockRepository')
 const MedicalCharge = require('../models/medicalCharge');
 const Admission = require('../models/admission');
 const Prescription = require('../models/prescription');
+const medicationDispenseRepo = require('../repositories/medicationDispenseRepository');
 const { createAuditLog } = require('../utils/auditLog');
 
 const buildInvoiceNumber = () => `INV-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}-${Math.floor(Math.random() * 9000) + 1000}`;
@@ -49,6 +50,52 @@ const markInvoiceAsPaid = async (invoiceId) => {
     : { invoiceId: invoice._id };
 
   await MedicalCharge.updateMany(chargeQuery, { $set: { billingStatus: 'PAID' } });
+  // If this invoice represents medication charges for a prescription, create MedicationDispense
+  try {
+    if (String(invoice.type || '').toUpperCase() === 'MEDICATION' && invoice.prescriptionId) {
+      const prescription = await Prescription.findById(invoice.prescriptionId).lean();
+      if (prescription && Array.isArray(prescription.items) && prescription.items.length > 0) {
+        // aggregate quantities per medicationId
+        const qtyMap = {};
+        prescription.items.forEach((it) => {
+          try {
+            const medId = it.medicationId?._id || it.medicationId;
+            if (!medId) return;
+            const dosage = Number(it.dosage) || 1;
+            const frequency = Number(it.frequency) || 1;
+            const duration = Number(it.duration) || 1;
+            const qty = Math.max(0, Math.round(dosage * frequency * duration));
+            if (qty <= 0) return;
+            const key = String(medId);
+            qtyMap[key] = (qtyMap[key] || 0) + qty;
+          } catch (e) {
+            // ignore per-item parse errors
+          }
+        });
+
+        for (const medKey of Object.keys(qtyMap)) {
+          const medicationId = medKey;
+          const quantity = qtyMap[medKey];
+          try {
+            await medicationDispenseRepo.create({
+              medicationId,
+              prescriptionId: invoice.prescriptionId,
+              residentId: invoice.residentId,
+              quantity,
+              dispensedByUserId: null,
+              dispensedAt: new Date(),
+              notes: `Auto-dispensed on invoice payment: ${invoice._id}`,
+            });
+          } catch (err) {
+            // Log and continue — do not block payment finalization
+            console.error('Auto-dispense on payment failed for medication', medicationId, err.message || err);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error during auto-dispense on invoice payment:', err.message || err);
+  }
   return updatedInvoice;
 };
 

@@ -472,14 +472,24 @@ const markTaken = async (req, res) => {
 
     await schedule.save();
 
-    // Auto-create MedicationDispense to deduct inventory (1 dose per administration)
+    // Auto-create MedicationDispense to deduct inventory — compute quantity from prescription item dosage
     if (medicationId) {
       try {
+        // derive numeric quantity from prescription item dosage string (e.g. "20", "20 mg", "2 tablets")
+        let qty = 1;
+        const rawDosage = prescriptionItem?.dosage || schedule.dosage || '';
+        if (rawDosage) {
+          const m = String(rawDosage).trim().match(/^\s*([0-9]+(?:\.[0-9]+)?)/);
+          if (m) {
+            qty = Number(m[1]) || 1;
+          }
+        }
+
         await MedicationDispense.create({
           medicationId,
           prescriptionId: schedule.prescriptionId,
           residentId: schedule.residentId,
-          quantity: 1,
+          quantity: qty,
           dispensedByUserId: req.user._id,
           dispensedAt: takenAt,
           notes: `Auto-dispensed: ${schedule.medicationName} (schedule ${schedule._id})`,

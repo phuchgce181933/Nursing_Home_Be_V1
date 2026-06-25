@@ -4,6 +4,7 @@ const ctrl = require('../controllers/careTaskController');
 const { protect, authorize } = require('../middleware/auth');
 
 const MANAGER = ['admin'];
+const STAFF = ['admin', 'doctor', 'nurse'];
 
 /**
  * @swagger
@@ -118,7 +119,7 @@ router.get('/by-shift/:shiftId', protect, authorize(...MANAGER), ctrl.getCareTas
  *     responses:
  *       200: { description: Paginated list }
  */
-router.get('/', protect, authorize(...MANAGER), ctrl.listCareTasks);
+router.get('/', protect, authorize(...STAFF), ctrl.listCareTasks);
 
 /**
  * @swagger
@@ -136,7 +137,7 @@ router.get('/', protect, authorize(...MANAGER), ctrl.listCareTasks);
  *       200: { description: Success }
  *       404: { description: Not found }
  */
-router.get('/:id', protect, authorize(...MANAGER), ctrl.getCareTask);
+router.get('/:id', protect, authorize(...STAFF), ctrl.getCareTask);
 
 /**
  * @swagger
@@ -168,7 +169,7 @@ router.get('/:id', protect, authorize(...MANAGER), ctrl.getCareTask);
  *       400: { description: Invalid transition or attempted manual missed }
  *       403: { description: in_progress/completed require the assigned nurse or doctor }
  */
-router.put('/:id/status', protect, authorize(...MANAGER), ctrl.updateCareTaskStatus);
+router.put('/:id/status', protect, authorize(...STAFF), ctrl.updateCareTaskStatus);
 
 /**
  * @swagger

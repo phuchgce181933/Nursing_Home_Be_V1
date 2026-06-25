@@ -214,11 +214,17 @@ const normalizeNutritionalStatus = (value) => {
   };
 };
 
+const mongoose = require('mongoose');
+
 const recordMedicalRecord = async (user, residentId, body, req) => {
   console.log('[recordMedicalRecord] Called with body keys:', Object.keys(body));
   console.log('[recordMedicalRecord] selectedServices:', body.selectedServices);
   console.log('[recordMedicalRecord] consentToPayment:', body.consentToPayment);
-  
+
+  if (!residentId || !mongoose.Types.ObjectId.isValid(residentId)) {
+    throw new ServiceError('Resident ID không hợp lệ', 400);
+  }
+
   const {
     bloodPressureSystolic,
     bloodPressureDiastolic,

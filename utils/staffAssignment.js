@@ -9,9 +9,28 @@ const isAssignableRole = (role) => {
   return !NON_ASSIGNABLE_ROLES.includes(String(role).trim().toLowerCase());
 };
 
-const getAssignableFlags = (role) => {
-  const ok = isAssignableRole(role);
+const isStaffAccountAssignable = (user) => {
+  if (!user) return true;
+  if (user.isBanned) return false;
+  if (user.isActive === false) return false;
+  return true;
+};
+
+const getAssignableFlags = (role, user) => {
+  const roleOk = isAssignableRole(role);
+  const accountOk = isStaffAccountAssignable(user);
+  const ok = roleOk && accountOk;
   return { shift: ok, careTask: ok, areas: ok, residents: ok };
+};
+
+const assertStaffAccountAssignable = (user) => {
+  if (!user) return;
+  if (user.isBanned) {
+    throw new ServiceError('Không thể phân công cho nhân viên có tài khoản bị khóa', 400);
+  }
+  if (user.isActive === false) {
+    throw new ServiceError('Không thể phân công cho tài khoản không hoạt động', 400);
+  }
 };
 
 const assertAssignableRole = (role) => {
@@ -27,6 +46,7 @@ const assertAssignableStaffByUserId = async (userId) => {
   const user = await userRepo.findById(userId);
   if (!user) throw new ServiceError('Staff not found', 404);
   assertAssignableRole(user.role);
+  assertStaffAccountAssignable(user);
   return user;
 };
 
@@ -58,14 +78,17 @@ const assertActorOwnsCareTask = async (task, actorUserId) => {
 const assertAssignableStaffProfile = async (profile) => {
   if (!profile) throw new ServiceError('Staff profile not found', 404);
   let role;
+  let user;
   if (profile.userId && typeof profile.userId === 'object' && profile.userId.role) {
-    role = profile.userId.role;
+    user = profile.userId;
+    role = user.role;
   } else {
-    const user = await userRepo.findById(profile.userId);
+    user = await userRepo.findById(profile.userId);
     if (!user) throw new ServiceError('Staff not found', 404);
     role = user.role;
   }
   assertAssignableRole(role);
+  assertStaffAccountAssignable(user);
   return role;
 };
 
@@ -115,8 +138,10 @@ const residentCoversStaffArea = (resident, profile) => {
 
 module.exports = {
   isAssignableRole,
+  isStaffAccountAssignable,
   getAssignableFlags,
   assertAssignableRole,
+  assertStaffAccountAssignable,
   assertCareTaskAssigneeRole,
   assertActorOwnsCareTask,
   assertAssignableStaffByUserId,

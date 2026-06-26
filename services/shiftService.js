@@ -13,8 +13,14 @@ const {
   getStaffRole,
   isRoleAllowedForShiftType,
   isPastWorkDate,
-  toMinutes,
   validateFlexibleShiftTimes,
+  computeFreeTimeSlots,
+  toMinutes,
+  isSplitShiftRecord,
+  calcOtherDayHours,
+  maxSplitHoursForDay,
+  calcWeeklySplitHours,
+  buildSplitShiftConflicts,
 } = require('../utils/shiftValidation');
 const {
   todayVN,
@@ -24,6 +30,7 @@ const {
   getShiftEndDateTime,
   addDaysToDateStr,
   isPastUnconfirmedCancelDeadline,
+  formatTimeVN,
 } = require('../utils/shiftTime');
 const { isAssignableRole } = require('../utils/staffAssignment');
 const { assertNoActiveCareTasksForShift } = require('../utils/careTaskGuards');
@@ -33,6 +40,22 @@ const MANAGER_ROLES = ['admin'];
 const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
 
 const isShiftManager = (role) => MANAGER_ROLES.includes(role);
+
+const getMinStartMinutesForWorkDate = (workDateStr) => {
+  if (workDateStr !== todayVN()) return 0;
+  return toMinutes(formatTimeVN(nowVN())) ?? 0;
+};
+
+const buildAvailableTimeSlots = (sameDayShifts, workDateStr) => {
+  const otherHours = calcOtherDayHours(sameDayShifts);
+  const maxSplitHours = maxSplitHoursForDay(otherHours);
+  return computeFreeTimeSlots(sameDayShifts, {
+    minStartMinutes: getMinStartMinutesForWorkDate(workDateStr),
+    maxSplitHours,
+  });
+};
+
+const formatShiftTimeRange = (startTime, endTime) => `${startTime}–${endTime}`;
 
 const getAssignedStaffProfileId = (shift) =>
   String(shift.assignedStaffId?._id || shift.assignedStaffId || '');
@@ -203,13 +226,36 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     return conflicts;
   }
 
-  const staffProfile = await StaffProfile.findById(assignedStaffId).populate('userId', 'role fullName');
+  const staffProfile = await StaffProfile.findById(assignedStaffId).populate(
+    'userId',
+    'role fullName isActive isBanned'
+  );
   if (!staffProfile) {
     conflicts.push({
       type: 'ROLE_MISMATCH',
       severity: 'ERROR',
       message: 'Không tìm thấy hồ sơ nhân viên.',
       details: { assignedStaffId },
+    });
+    return conflicts;
+  }
+
+  const staffUser = staffProfile.userId;
+  if (staffUser?.isBanned) {
+    conflicts.push({
+      type: 'STAFF_ACCOUNT_LOCKED',
+      severity: 'ERROR',
+      message: 'Không thể phân ca cho nhân viên có tài khoản bị khóa.',
+      details: { assignedStaffId, isBanned: true },
+    });
+    return conflicts;
+  }
+  if (staffUser && staffUser.isActive === false) {
+    conflicts.push({
+      type: 'STAFF_ACCOUNT_INACTIVE',
+      severity: 'ERROR',
+      message: 'Không thể phân ca cho nhân viên có tài khoản không hoạt động.',
+      details: { assignedStaffId, isActive: false },
     });
     return conflicts;
   }
@@ -226,17 +272,63 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
   }
 
   const sameDayShifts = await shiftRepo.findByStaffAndDate(assignedStaffId, workDate, excludeId);
-  const activeShifts = sameDayShifts.filter((s) => !['completed', 'cancelled'].includes(s.status));
-  const overlapping = activeShifts.filter((s) => intervalsOverlap(startTime, endTime, s.startTime, s.endTime));
+  const { weekStart, weekEnd } = getWeekBounds(workDate);
+  const weekShifts = await shiftRepo.findShiftsInWeek(assignedStaffId, weekStart, weekEnd);
+  const overlapping = sameDayShifts.filter((s) => intervalsOverlap(startTime, endTime, s.startTime, s.endTime));
+
 
   // 2. OVERLAP (ERROR) — newStart < existEnd && newEnd > existStart
   if (overlapping.length) {
+    const isFlexible = Boolean(template?.isFlexibleTime);
+    const availableTimeSlots = isFlexible ? buildAvailableTimeSlots(sameDayShifts, workDateStr) : undefined;
+    const overlapRanges = overlapping
+      .map((s) => formatShiftTimeRange(s.startTime, s.endTime))
+      .join(', ');
+    const slotsHint = availableTimeSlots?.length
+      ? availableTimeSlots.map((s) => `${s.displayStart}–${s.displayEnd}`).join(', ')
+      : '';
+
+    let message;
+    if (isFlexible) {
+      message = slotsHint
+        ? `Ca gãy trùng với ca đã phân trong ngày (${overlapRanges}). Chỉ có thể đặt trong khung giờ trống: ${slotsHint}.`
+        : `Ca gãy trùng với ca đã phân trong ngày (${overlapRanges}). Không còn khung giờ trống trong ngày này.`;
+    } else {
+      message = `Nhân viên đã có ${overlapping.length} ca trùng giờ trong ngày này.`;
+    }
+
     conflicts.push({
       type: 'OVERLAP',
       severity: 'ERROR',
-      message: `Staff already has ${overlapping.length} overlapping shift(s) on this date.`,
-      details: overlapping.map((s) => ({ id: s._id, startTime: s.startTime, endTime: s.endTime })),
+      message,
+      details: {
+        overlappingShifts: overlapping.map((s) => ({
+          id: s._id,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        })),
+        ...(availableTimeSlots ? { availableTimeSlots } : {}),
+      },
     });
+  }
+
+  // Split-shift rules (ERROR) — only when assigning SPLIT template
+  if (template?.isFlexibleTime) {
+    const splitHours = calcShiftDurationHours(startTime, endTime);
+    const existingSplitCount = sameDayShifts.filter((s) => isSplitShiftRecord(s)).length;
+    const otherHours = calcOtherDayHours(sameDayShifts);
+    const weeklySplitHours = calcWeeklySplitHours(weekShifts, {
+      excludeId,
+      additionalSplitHours: splitHours,
+    });
+    conflicts.push(
+      ...buildSplitShiftConflicts({
+        splitHours,
+        otherHours,
+        existingSplitCount,
+        weeklySplitHours,
+      })
+    );
   }
 
   // 3. LEAVE_CONFLICT (ERROR) — approved leave on workDate
@@ -268,32 +360,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     });
   }
 
-  // REST_VIOLATION (WARNING) — less than 8h between consecutive shifts
-  const adjacent = await shiftRepo.findAdjacentShifts(assignedStaffId, workDate);
-  const currentStartMin = toMinutes(startTime);
-  const currentEndMin = toMinutes(endTime) <= currentStartMin ? toMinutes(endTime) + 1440 : toMinutes(endTime);
-
-  for (const s of adjacent) {
-    if (excludeId && String(s._id) === String(excludeId)) continue;
-    const sStart = toMinutes(s.startTime);
-    const sEnd = toMinutes(s.endTime) <= sStart ? toMinutes(s.endTime) + 1440 : toMinutes(s.endTime);
-    const gapBefore = currentStartMin - sEnd;
-    const gapAfter = sStart - currentEndMin;
-
-    if ((gapBefore > 0 && gapBefore < 480) || (gapAfter > 0 && gapAfter < 480)) {
-      conflicts.push({
-        type: 'REST_VIOLATION',
-        severity: 'WARNING',
-        message: `Less than 8 hours rest between this shift and another shift on ${new Date(s.workDate).toDateString()}.`,
-        details: { conflictShiftId: s._id },
-      });
-      break;
-    }
-  }
-
   // OVERTIME (WARNING) — total hours in week > 48
-  const { weekStart, weekEnd } = getWeekBounds(workDate);
-  const weekShifts = await shiftRepo.findShiftsInWeek(assignedStaffId, weekStart, weekEnd);
   let weeklyHours = calcShiftDurationHours(startTime, endTime);
   for (const s of weekShifts) {
     if (excludeId && String(s._id) === String(excludeId)) continue;
@@ -795,11 +862,30 @@ const previewConflicts = async (query) => {
     throw Object.assign(new Error('assignedStaffId, workDate và shiftTemplateId là bắt buộc'), { status: 400 });
   }
 
-  const { startTime: resolvedStart, endTime: resolvedEnd, shiftTemplateId: resolvedTemplateId } =
-    await resolveShiftTemplate(shiftTemplateId, { startTime, endTime });
+  const {
+    startTime: resolvedStart,
+    endTime: resolvedEnd,
+    shiftTemplateId: resolvedTemplateId,
+    template,
+  } = await resolveShiftTemplate(shiftTemplateId, { startTime, endTime });
 
   const parsedDate = parseWorkDateUtc(workDate);
+  const workDateStr =
+    typeof workDate === 'string' && workDate.length >= 10
+      ? workDate.slice(0, 10)
+      : workDateToVNString(parsedDate);
   const resolvedStaffProfileId = await resolveStaffProfileId(assignedStaffId);
+
+  let availableTimeSlots;
+  if (template?.isFlexibleTime) {
+    const sameDayShifts = await shiftRepo.findByStaffAndDate(
+      resolvedStaffProfileId,
+      parsedDate,
+      excludeId
+    );
+    availableTimeSlots = buildAvailableTimeSlots(sameDayShifts, workDateStr);
+  }
+
   const conflicts = await checkConflicts({
     assignedStaffId: resolvedStaffProfileId,
     workDate: parsedDate,
@@ -809,7 +895,11 @@ const previewConflicts = async (query) => {
     shiftTemplateId: resolvedTemplateId,
   });
 
-  return { conflicts, hasErrors: hasErrors(conflicts) };
+  return {
+    conflicts,
+    hasErrors: hasErrors(conflicts),
+    ...(availableTimeSlots ? { availableTimeSlots } : {}),
+  };
 };
 
 module.exports = {

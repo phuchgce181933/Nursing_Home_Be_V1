@@ -4,6 +4,8 @@ const specialDietDayRepo = require('../repositories/specialDietDayRepository');
 const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
 const Resident = require('../models/resident');
+const ServicePackage = require('../models/servicePackage');
+const Admission = require('../models/admission');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 
 const NON_TX_ERROR_PATTERNS = [
@@ -16,6 +18,9 @@ const NON_TX_ERROR_PATTERNS = [
 const DIET_TYPES = ['diabetic', 'low_sodium', 'renal', 'high_protein', 'soft_texture', 'liquid_only', 'custom'];
 const VALID_ENTRY_SOURCES = ['template', 'manual'];
 const DEFAULT_EFFECTIVE_TIME = '07:00';
+const SPECIAL_DIET_ELIGIBLE_TIERS = ['premium', 'vip'];
+const SPECIAL_DIET_INELIGIBLE_MSG =
+  'Chế độ ăn đặc biệt chỉ áp dụng cho cư dân đăng ký gói VIP hoặc Cao cấp';
 
 const SPECIAL_DIET_TEMPLATES = [
   {
@@ -125,6 +130,55 @@ const hydratePlan = async (day) => {
   return { ...day.toObject(), entries };
 };
 
+const getEligiblePackageMeta = async () => {
+  const packages = await ServicePackage.find({ tier: { $in: SPECIAL_DIET_ELIGIBLE_TIERS } })
+    .select('_id name')
+    .lean();
+  return {
+    ids: packages.map((p) => p._id),
+    names: packages.map((p) => p.name),
+  };
+};
+
+const resolveEligibleResidentIds = async (residentIds) => {
+  const ids = [...new Set((residentIds || []).map((id) => String(id)).filter(Boolean))];
+  if (!ids.length) return new Set();
+
+  const objectIds = ids.map((id) => new mongoose.Types.ObjectId(id));
+  const { ids: packageIds, names: packageNames } = await getEligiblePackageMeta();
+  if (!packageIds.length && !packageNames.length) return new Set();
+
+  const [fromAdmission, fromResident] = await Promise.all([
+    packageIds.length
+      ? Admission.distinct('residentId', {
+          residentId: { $in: objectIds },
+          status: 'checked_in',
+          servicePackageId: { $in: packageIds },
+        })
+      : [],
+    packageNames.length
+      ? Resident.distinct('_id', {
+          _id: { $in: objectIds },
+          residencyStatus: 'admitted',
+          servicePackage: { $in: packageNames },
+        })
+      : [],
+  ]);
+
+  return new Set([...fromAdmission, ...fromResident].map(String));
+};
+
+const assertResidentsEligibleForSpecialDiet = async (residentIds) => {
+  const ids = [...new Set((residentIds || []).map((id) => String(id)).filter(Boolean))];
+  if (!ids.length) return;
+
+  const eligible = await resolveEligibleResidentIds(ids);
+  const ineligible = ids.filter((id) => !eligible.has(id));
+  if (ineligible.length) {
+    throw new ServiceError(SPECIAL_DIET_INELIGIBLE_MSG, 400);
+  }
+};
+
 const getTemplates = async () => ({
   metadata: {
     version: 'v1',
@@ -144,7 +198,16 @@ const listResidentsForSpecialDiet = async (params = {}, actorUser) => {
   if (!actorUser?._id) {
     throw new ServiceError('Không xác định được người dùng', 401);
   }
-  return listAssignedAdmittedResidentsForUser(actorUser._id, { search: params.search });
+  const base = await listAssignedAdmittedResidentsForUser(actorUser._id, { search: params.search });
+  if (!base.data.length) return base;
+
+  const eligibleIds = await resolveEligibleResidentIds(base.data.map((r) => r._id));
+  const data = base.data.filter((r) => eligibleIds.has(String(r._id)));
+  const result = { data, total: data.length };
+  if (!data.length && base.total > 0) {
+    result.message = SPECIAL_DIET_INELIGIBLE_MSG;
+  }
+  return result;
 };
 
 const createDraft = async (body, actorUserId) => {
@@ -162,6 +225,7 @@ const createDraft = async (body, actorUserId) => {
     throw new ServiceError('Special diet plan phải có ít nhất 1 cư dân', 400);
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
+  await assertResidentsEligibleForSpecialDiet(residentIds);
   const residentCount = await Resident.countDocuments({ _id: { $in: residentIds } });
   if (residentCount !== residentIds.length) {
     throw new ServiceError('Có cư dân trong danh sách entries không tồn tại', 400);
@@ -235,6 +299,7 @@ const updateDraft = async (id, body, actorUserId) => {
         throw new ServiceError('Special diet plan phải có ít nhất 1 cư dân', 400);
       }
       await assertResidentsAssignedToUser(actorUserId, residentIds);
+      await assertResidentsEligibleForSpecialDiet(residentIds);
       await specialDietEntryRepo.deleteByDayId(id, dbOpts);
       await specialDietEntryRepo.createMany(normalizedEntries.map((e) => ({ ...e, specialDietDayId: id })), dbOpts);
     }
@@ -308,6 +373,7 @@ const publishPlan = async (id, actorUserId) => {
     throw new ServiceError('Special diet plan phải có ít nhất 1 cư dân trước khi publish', 400);
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
+  await assertResidentsEligibleForSpecialDiet(residentIds);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

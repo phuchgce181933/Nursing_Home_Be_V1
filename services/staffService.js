@@ -176,7 +176,7 @@ const listStaffProfiles = async ({
     const item = {
       ...u.toObject(),
       staffProfile: profile,
-      assignable: getAssignableFlags(u.role),
+      assignable: getAssignableFlags(u.role, u),
     };
 
     if (includeShiftSummary) {

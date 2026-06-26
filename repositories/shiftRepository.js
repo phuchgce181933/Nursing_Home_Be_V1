@@ -3,7 +3,7 @@ const Shift = require('../models/shift');
 const STAFF_POPULATE = { path: 'assignedStaffId', select: 'staffCode roleCategory userId', populate: { path: 'userId', select: 'fullName role avatarUrl' } };
 const TEMPLATE_POPULATE = {
   path: 'shiftTemplateId',
-  select: 'name shiftCode shiftType startTime endTime colorLabel totalHours crossesMidnight',
+  select: 'name shiftCode shiftType startTime endTime colorLabel totalHours crossesMidnight isFlexibleTime',
 };
 const FLOOR_POPULATE = { path: 'floorId', select: 'floorNumber name' };
 const ROOM_POPULATE = { path: 'roomId', select: 'roomNumber roomType' };
@@ -37,19 +37,6 @@ const findConflicts = async ({ assignedStaffId, workDate, startTime, endTime, ex
   };
   if (excludeId) query._id = { $ne: excludeId };
   return Shift.find(query).populate(STAFF_POPULATE);
-};
-
-// REST_VIOLATION: find shifts in adjacent days to check < 8h rest
-const findAdjacentShifts = async (assignedStaffId, workDate) => {
-  const dayBefore = new Date(workDate);
-  dayBefore.setDate(dayBefore.getDate() - 1);
-  const dayAfter = new Date(workDate);
-  dayAfter.setDate(dayAfter.getDate() + 1);
-  return Shift.find({
-    assignedStaffId,
-    workDate: { $in: [dayBefore, workDate, dayAfter] },
-    status: { $nin: ['cancelled'] },
-  }).sort({ workDate: 1, startTime: 1 });
 };
 
 // OVERTIME: all shifts in the same Mon-Sun week
@@ -158,7 +145,6 @@ module.exports = {
   findAll,
   countAll,
   findConflicts,
-  findAdjacentShifts,
   findShiftsInWeek,
   countShiftsOnFloorAndDate,
   findFutureShiftsByTemplate,

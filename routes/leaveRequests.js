@@ -46,7 +46,9 @@ const { protect, authorize } = require('../middleware/auth');
  *       409:
  *         description: Overlapping approved leave exists
  */
-router.post('/', protect, authorize('admin', 'doctor', 'nurse', 'caregiver'), submitLeaveRequest);
+
+router.post('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'caregiver', 'staff'), submitLeaveRequest);
+
 
 /**
  * @swagger
@@ -234,6 +236,8 @@ router.put('/:id/reject', protect, authorize('admin'), rejectLeaveRequest);
  *       200:
  *         description: Request cancelled
  */
-router.delete('/:id', protect, authorize('admin', 'doctor', 'nurse', 'caregiver'), cancelLeaveRequest);
+
+router.delete('/:id', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'caregiver', 'staff'), cancelLeaveRequest);
+
 
 module.exports = router;

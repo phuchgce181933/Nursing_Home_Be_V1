@@ -6,6 +6,7 @@ const mealTimeScheduleService = require('./mealTimeScheduleService');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
 const Resident = require('../models/resident');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
+const { assertNoMealPlanConflicts } = require('../utils/mealPlanValidation');
 
 const NON_TX_ERROR_PATTERNS = [
   /retryable writes/i,
@@ -250,6 +251,7 @@ const createDraft = async (body, actorUserId) => {
   if (!entriesInput.length) throw new ServiceError('entries là bắt buộc và không được để trống', 400);
   const entries = await normalizeEntriesWithSchedule(entriesInput, workDate, mealTimeScheduleDayId);
   assertEntryMealTimesFromNow(entries, workDate);
+  await assertNoMealPlanConflicts({ workDate, entries });
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
   if (residentIds.length < 1) {
     throw new ServiceError('Meal plan phải có ít nhất 1 cư dân', 400);
@@ -318,6 +320,11 @@ const updateDraft = async (id, body, actorUserId) => {
   if (hasEntries && !normalizedEntries.length) throw new ServiceError('entries không được để trống', 400);
   if (normalizedEntries) {
     assertEntryMealTimesFromNow(normalizedEntries, targetWorkDateStr);
+    await assertNoMealPlanConflicts({
+      workDate: targetWorkDateStr,
+      entries: normalizedEntries,
+      excludeMealPlanDayId: id,
+    });
   } else if (body.workDate !== undefined || body.mealTimeScheduleDayId !== undefined) {
     const residentIds = (await mealPlanEntryRepo.findByDayId(id)).map((e) =>
       String(e.residentId?._id || e.residentId)
@@ -327,6 +334,19 @@ const updateDraft = async (id, body, actorUserId) => {
       targetWorkDateStr,
       residentIds
     );
+    const existingEntries = await mealPlanEntryRepo.findByDayId(id);
+    if (existingEntries.length) {
+      await assertNoMealPlanConflicts({
+        workDate: targetWorkDateStr,
+        entries: existingEntries.map((e) => ({
+          residentId: e.residentId?._id || e.residentId,
+          mealType: e.mealType,
+          mealTime: e.mealTime,
+          mealName: e.mealName,
+        })),
+        excludeMealPlanDayId: id,
+      });
+    }
   }
 
   await runWithOptionalTransaction(async (session) => {
@@ -427,6 +447,16 @@ const publishPlan = async (id, actorUserId) => {
   }
   await mealTimeScheduleService.assertPublishedScheduleForMealPlan(scheduleDayId, workDate, residentIds);
   await assertResidentsAssignedToUser(actorUserId, residentIds);
+  await assertNoMealPlanConflicts({
+    workDate,
+    entries: entries.map((e) => ({
+      residentId: e.residentId?._id || e.residentId,
+      mealType: e.mealType,
+      mealTime: e.mealTime,
+      mealName: e.mealName,
+    })),
+    excludeMealPlanDayId: id,
+  });
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

@@ -6,7 +6,7 @@ const {
 } = require('../controllers/servicePackageController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('doctor', 'nurse', 'admin', 'manager', 'family'));
+router.use(protect, authorize('doctor', 'nurse', 'admin', 'family'));
 
 /**
  * @swagger

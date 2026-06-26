@@ -11,7 +11,7 @@ const {
 } = require('../controllers/careNoteController');
 const { protect, authorize } = require('../middleware/auth');
 
-const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
+const STAFF_ROLES = ['admin', 'doctor', 'nurse'];
 
 /**
  * @swagger

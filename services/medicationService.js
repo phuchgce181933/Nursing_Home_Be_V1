@@ -6,7 +6,7 @@ const staffProfileRepo = require('../repositories/staffProfileRepository');
 
 // Returns null for admin/manager (unrestricted) or array of ObjectIds for doctor/nurse
 const getResidentScope = async (user) => {
-  if (['admin', 'manager'].includes(user.role)) return null;
+  if (['admin'].includes(user.role)) return null;
   const profile = await staffProfileRepo.findByUserId(user._id);
   if (!profile) throw new ServiceError('Staff profile not found', 404);
   return profile.assignedResidentIds || [];
@@ -55,16 +55,18 @@ const listPrescriptions = async (user, query) => {
     medRepo.countPrescriptions(filter),
   ]);
 
-  // Fetch invoice information for each prescription
   const Invoice = require('../models/invoice');
+  const prescriptionIds = data.map((rx) => rx._id);
+  const allInvoices = await Invoice.find({ prescriptionId: { $in: prescriptionIds } }).select('prescriptionId status');
   const invoicesByPrescription = {};
-  for (const rx of data) {
-    const invoices = await Invoice.find({ prescriptionId: rx._id }).select('status');
-    invoicesByPrescription[rx._id] = invoices;
+  for (const inv of allInvoices) {
+    const key = inv.prescriptionId.toString();
+    if (!invoicesByPrescription[key]) invoicesByPrescription[key] = [];
+    invoicesByPrescription[key].push(inv);
   }
 
   const enrichedData = data.map((rx) => {
-    const invoices = invoicesByPrescription[rx._id] || [];
+    const invoices = invoicesByPrescription[rx._id.toString()] || [];
     let invoiceStatus = 'no_invoice';
     let paymentStatus = null;
     if (invoices.length > 0) {

@@ -12,6 +12,7 @@ const medicationStockRepo = require('../repositories/medicationStockRepository')
 const MedicalCharge = require('../models/medicalCharge');
 const Admission = require('../models/admission');
 const Prescription = require('../models/prescription');
+const medicationDispenseRepo = require('../repositories/medicationDispenseRepository');
 const { createAuditLog } = require('../utils/auditLog');
 
 const buildInvoiceNumber = () => `INV-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}-${Math.floor(Math.random() * 9000) + 1000}`;
@@ -44,12 +45,57 @@ const markInvoiceAsPaid = async (invoiceId) => {
     .map((it) => it.chargeId)
     .filter(Boolean);
 
-  const chargeFilter = [{ invoiceId: invoice._id }];
-  if (chargeIds.length > 0) {
-    chargeFilter.unshift({ _id: { $in: chargeIds } });
-  }
+  const chargeQuery = chargeIds.length > 0
+    ? { $or: [{ invoiceId: invoice._id }, { _id: { $in: chargeIds } }] }
+    : { invoiceId: invoice._id };
 
-  await MedicalCharge.updateMany({ $or: chargeFilter }, { $set: { billingStatus: 'PAID' } });
+  await MedicalCharge.updateMany(chargeQuery, { $set: { billingStatus: 'PAID' } });
+  // If this invoice represents medication charges for a prescription, create MedicationDispense
+  try {
+    if (String(invoice.type || '').toUpperCase() === 'MEDICATION' && invoice.prescriptionId) {
+      const prescription = await Prescription.findById(invoice.prescriptionId).lean();
+      if (prescription && Array.isArray(prescription.items) && prescription.items.length > 0) {
+        // aggregate quantities per medicationId
+        const qtyMap = {};
+        prescription.items.forEach((it) => {
+          try {
+            const medId = it.medicationId?._id || it.medicationId;
+            if (!medId) return;
+            const dosage = Number(it.dosage) || 1;
+            const frequency = Number(it.frequency) || 1;
+            const duration = Number(it.duration) || 1;
+            const qty = Math.max(0, Math.round(dosage * frequency * duration));
+            if (qty <= 0) return;
+            const key = String(medId);
+            qtyMap[key] = (qtyMap[key] || 0) + qty;
+          } catch (e) {
+            // ignore per-item parse errors
+          }
+        });
+
+        for (const medKey of Object.keys(qtyMap)) {
+          const medicationId = medKey;
+          const quantity = qtyMap[medKey];
+          try {
+            await medicationDispenseRepo.create({
+              medicationId,
+              prescriptionId: invoice.prescriptionId,
+              residentId: invoice.residentId,
+              quantity,
+              dispensedByUserId: null,
+              dispensedAt: new Date(),
+              notes: `Auto-dispensed on invoice payment: ${invoice._id}`,
+            });
+          } catch (err) {
+            // Log and continue — do not block payment finalization
+            console.error('Auto-dispense on payment failed for medication', medicationId, err.message || err);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error during auto-dispense on invoice payment:', err.message || err);
+  }
   return updatedInvoice;
 };
 
@@ -150,7 +196,7 @@ const buildInvoiceFilter = (query) => {
   if (query.isOverdue === 'true') {
     const now = new Date();
     filter.dueDate = { ...filter.dueDate, $lt: now };
-    filter.status = filter.status || { $ne: 'paid' };
+    filter.status = filter.status || { $ne: 'PAID' };
   }
 
   return filter;
@@ -622,8 +668,19 @@ const findInvoiceForCheckout = async (user, residentId, invoiceId, query = {}) =
 const recordPayment = async (user, invoiceId, body) => {
   const invoice = await findInvoiceById(user, invoiceId);
 
+  if (invoice.status === 'PAID') {
+    throw new ServiceError('Invoice is already fully paid', 400);
+  }
+
   const amount = normalizeCost(body.amount || invoice.totalAmount);
   if (amount <= 0) throw new ServiceError('Payment amount must be greater than 0', 400);
+
+  if (body.transactionRef) {
+    const existingPayment = await paymentRepo.findByTransactionRef(body.transactionRef);
+    if (existingPayment) {
+      throw new ServiceError('Duplicate payment: transactionRef already exists', 409);
+    }
+  }
 
   const payment = await paymentRepo.create({
     invoiceId,
@@ -637,7 +694,7 @@ const recordPayment = async (user, invoiceId, body) => {
     note: body.note,
   });
 
-  const status = amount >= invoice.totalAmount ? 'PAID' : invoice.status || 'ISSUED';
+  const status = amount >= invoice.totalAmount ? 'PAID' : 'PARTIALLY_PAID';
 
   const updatedInvoice = await invoiceRepo.updateById(invoiceId, { status });
   if (status === 'PAID') {

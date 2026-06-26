@@ -10,7 +10,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 
 const adminOnly = authorize('admin');
-const adminManager = authorize('admin', 'manager');
+const adminManager = authorize('admin');
 
 router.use(protect);
 

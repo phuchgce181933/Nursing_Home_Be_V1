@@ -40,7 +40,7 @@ const { protect, authorize } = require('../middleware/auth');
  *       200:
  *         description: "List of active medications with _id, medicationCode, name, form, strength, unit"
  */
-router.get('/available', protect, authorize('doctor', 'nurse', 'admin', 'manager'), getAvailableMedications);
+router.get('/available', protect, authorize('doctor', 'nurse', 'admin'), getAvailableMedications);
 
 /**
  * @swagger

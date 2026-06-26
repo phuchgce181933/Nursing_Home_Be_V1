@@ -36,7 +36,7 @@ const { isAssignableRole } = require('../utils/staffAssignment');
 const { assertNoActiveCareTasksForShift } = require('../utils/careTaskGuards');
 const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
 
-const MANAGER_ROLES = ['admin', 'manager'];
+const MANAGER_ROLES = ['admin'];
 const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
 
 const isShiftManager = (role) => MANAGER_ROLES.includes(role);
@@ -275,6 +275,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
   const { weekStart, weekEnd } = getWeekBounds(workDate);
   const weekShifts = await shiftRepo.findShiftsInWeek(assignedStaffId, weekStart, weekEnd);
   const overlapping = sameDayShifts.filter((s) => intervalsOverlap(startTime, endTime, s.startTime, s.endTime));
+
 
   // 2. OVERLAP (ERROR) — newStart < existEnd && newEnd > existStart
   if (overlapping.length) {

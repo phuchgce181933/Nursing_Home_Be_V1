@@ -88,7 +88,7 @@ router.get('/me', protect, getMe);
  *       503:
  *         description: Firebase not configured on server
  */
-router.post('/firebase-token', protect, authorize('admin', 'manager'), createFirebaseToken);
+router.post('/firebase-token', protect, authorize('admin'), createFirebaseToken);
 
 /**
  * @swagger
@@ -168,7 +168,7 @@ router.post('/firebase-token', protect, authorize('admin', 'manager'), createFir
  *       409:
  *         description: Email or staffCode already in use
  */
-router.post('/create-staff', protect, authorize('admin', 'manager'), uploadAvatarAndCertifications, createStaffAccount);
+router.post('/create-staff', protect, authorize('admin'), uploadAvatarAndCertifications, createStaffAccount);
 
 /**
  * @swagger
@@ -207,7 +207,7 @@ router.post('/create-staff', protect, authorize('admin', 'manager'), uploadAvata
  *       200:
  *         description: Staff list retrieved
  */
-router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
+router.get('/staff', protect, authorize('admin'), listStaffAccounts);
 
 /**
  * @swagger
@@ -232,7 +232,7 @@ router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
  *       404:
  *         description: User not found
  */
-router.put('/staff/:id/toggle-active', protect, authorize('admin', 'manager'), toggleStaffActive);
+router.put('/staff/:id/toggle-active', protect, authorize('admin'), toggleStaffActive);
 
 // Phuc/update profile
 /**

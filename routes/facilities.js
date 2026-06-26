@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const ctrl = require('../controllers/facilityController');
 const { protect, authorize } = require('../middleware/auth');
-const adminManager = authorize('admin', 'manager');
+const adminManager = authorize('admin');
 
 /**
  * @swagger

@@ -39,6 +39,8 @@ const aggregateUsage = (fromDate, toDate) => {
   ]);
 };
 
+const deleteById = (id) => MedicationDispense.findByIdAndDelete(id);
+
 module.exports = {
   create,
   findAll,
@@ -46,4 +48,5 @@ module.exports = {
   sumQuantitiesByMedicationIds,
   sumQuantityByMedicationId,
   aggregateUsage,
+  deleteById,
 };

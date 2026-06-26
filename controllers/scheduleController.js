@@ -2,6 +2,7 @@ const { isValidObjectId } = require('mongoose');
 const MedicationSchedule = require('../models/MedicationSchedule');
 const Prescription = require('../models/prescription');
 const Medication = require('../models/medication');
+const MedicationDispense = require('../models/medicationDispense');
 const Resident = require('../models/resident');
 const Room = require('../models/room');
 const StaffProfile = require('../models/staffProfile');
@@ -13,7 +14,7 @@ const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 // ── Scope helpers ─────────────────────────────────────────────────────────────
 
 const getResidentScope = async (userId, role) => {
-  if (['admin', 'manager'].includes(role)) return null;
+  if (['admin'].includes(role)) return null;
   const profile = await StaffProfile.findOne({ userId }).select('assignedResidentIds');
   if (!profile) return [];
   return profile.assignedResidentIds.map(String);
@@ -452,6 +453,11 @@ const markTaken = async (req, res) => {
       });
     }
 
+    // Look up the prescription item to get medicationId for inventory deduction
+    const prescription = await Prescription.findById(schedule.prescriptionId);
+    const prescriptionItem = prescription?.items?.id(schedule.prescriptionItemId);
+    const medicationId = prescriptionItem?.medicationId;
+
     const takenAt = actualTimeTaken ? new Date(actualTimeTaken) : new Date();
     if (isNaN(takenAt.getTime())) {
       return res.status(400).json({ success: false, message: 'actualTimeTaken must be a valid ISO date' });
@@ -465,6 +471,34 @@ const markTaken = async (req, res) => {
     if (notes !== undefined) schedule.notes = notes;
 
     await schedule.save();
+
+    // Auto-create MedicationDispense to deduct inventory — compute quantity from prescription item dosage
+    if (medicationId) {
+      try {
+        // derive numeric quantity from prescription item dosage string (e.g. "20", "20 mg", "2 tablets")
+        let qty = 1;
+        const rawDosage = prescriptionItem?.dosage || schedule.dosage || '';
+        if (rawDosage) {
+          const m = String(rawDosage).trim().match(/^\s*([0-9]+(?:\.[0-9]+)?)/);
+          if (m) {
+            qty = Number(m[1]) || 1;
+          }
+        }
+
+        await MedicationDispense.create({
+          medicationId,
+          prescriptionId: schedule.prescriptionId,
+          residentId: schedule.residentId,
+          quantity: qty,
+          dispensedByUserId: req.user._id,
+          dispensedAt: takenAt,
+          notes: `Auto-dispensed: ${schedule.medicationName} (schedule ${schedule._id})`,
+        });
+      } catch (dispenseErr) {
+        console.error('Auto-dispense failed (non-blocking):', dispenseErr.message);
+      }
+    }
+
     await schedule.populate('markedBy', 'fullName role');
 
     return res.status(200).json({ success: true, data: schedule });

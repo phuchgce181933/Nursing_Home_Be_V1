@@ -14,14 +14,19 @@ const findById = async (id) =>
     .populate('reviewedBy', 'fullName email role')
     .populate(REPLACEMENT_POPULATE);
 
-const findAll = async (filter, { skip = 0, limit = 20 } = {}) =>
-  LeaveRequest.find(filter)
+const findAll = async (filter, { skip = 0, limit = 20 } = {}) => {
+  await LeaveRequest.updateMany(
+    { reviewedBy: { $type: 'string' } },
+    { $unset: { reviewedBy: '' } }
+  );
+  return LeaveRequest.find(filter)
     .populate('staffId', 'fullName email role')
     .populate('reviewedBy', 'fullName email role')
     .populate(REPLACEMENT_POPULATE)
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);
+};
 
 const countAll = async (filter) => LeaveRequest.countDocuments(filter);
 

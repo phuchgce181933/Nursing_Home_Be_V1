@@ -244,6 +244,7 @@ const updateIntakeNote = async (userId, id, body) => {
   if (!note) throw new ServiceError('Không tìm thấy bản ghi ghi nhận bữa ăn', 404);
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
+  await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
   validateIntakePayload(body, true);
 
   const update = {};
@@ -274,6 +275,7 @@ const deleteIntakeNote = async (userId, id) => {
   if (!note) throw new ServiceError('Không tìm thấy bản ghi ghi nhận bữa ăn', 404);
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
+  await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
   await mealIntakeNoteRepo.deleteById(id);
   return { message: 'Đã xóa bản ghi ghi nhận bữa ăn', deleted: true, id };
 };

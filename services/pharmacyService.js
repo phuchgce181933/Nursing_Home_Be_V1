@@ -543,8 +543,13 @@ const dispenseMedication = async (user, body, req) => {
 		const prescription = await Prescription.findById(body.prescriptionId);
 		if (!prescription) throw new ServiceError('Prescription not found', 404);
 		if (!prescription.isVerified) throw new ServiceError('Prescription must be verified before dispensing', 400);
-		if (prescription.medicationName && prescription.medicationName.toLowerCase() !== medication.name.toLowerCase()) {
-			throw new ServiceError('Medication does not match prescription', 400);
+		if (prescription.items && prescription.items.length > 0) {
+			const matchingItem = prescription.items.find(
+				(item) => item.medicationName && item.medicationName.toLowerCase() === medication.name.toLowerCase()
+			);
+			if (!matchingItem) {
+				throw new ServiceError('Medication does not match any item in the prescription', 400);
+			}
 		}
 	}
 
@@ -564,6 +569,12 @@ const dispenseMedication = async (user, body, req) => {
 		dispensedAt,
 		notes: body.notes ? String(body.notes).trim() : undefined,
 	});
+
+	const postDispenseAvailable = await getAvailableQuantity(medication._id);
+	if (postDispenseAvailable < 0) {
+		await medicationDispenseRepo.deleteById(dispense._id);
+		throw new ServiceError('Concurrent dispense detected: insufficient stock. Please retry.', 409);
+	}
 
 	await createAuditLog({
 		actorUserId: user._id,

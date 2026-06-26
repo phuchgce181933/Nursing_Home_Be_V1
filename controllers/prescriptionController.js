@@ -23,7 +23,7 @@ const ACK_REQUIRED_CONTRAINDICATION = new Set(['HIGH', 'CRITICAL']);
 
 // Returns null (unrestricted) for admin/manager, or array of resident ID strings for doctor/nurse
 const getResidentScope = async (userId, role) => {
-  if (['admin', 'manager'].includes(role)) return null;
+  if (['admin'].includes(role)) return null;
   const profile = await StaffProfile.findOne({ userId }).select('assignedResidentIds');
   if (!profile) return [];
   return profile.assignedResidentIds.map(String);
@@ -51,9 +51,12 @@ const resolveMedicationsFromDB = async (items) => {
   return new Map(meds.map((m) => [m._id.toString(), m]));
 };
 
-const hasSevereWarning = (contraWarnings, interactionWarnings) =>
+const ACK_REQUIRED_DOSAGE = new Set(['HIGH', 'CRITICAL']);
+
+const hasSevereWarning = (contraWarnings, interactionWarnings, dosageWarnings = []) =>
   interactionWarnings.some((w) => ACK_REQUIRED_INTERACTION.has(w.severity)) ||
-  contraWarnings.some((w) => ACK_REQUIRED_CONTRAINDICATION.has(w.severity));
+  contraWarnings.some((w) => ACK_REQUIRED_CONTRAINDICATION.has(w.severity)) ||
+  dosageWarnings.some((w) => ACK_REQUIRED_DOSAGE.has(w.severity));
 
 // ── POST /api/prescriptions ───────────────────────────────────────────────────
 
@@ -122,7 +125,7 @@ const createPrescription = async (req, res) => {
       ...dosageWarnings.map((w) => ({ type: 'ELDERLY_DOSAGE', ...w })),
     ];
 
-    if (hasSevereWarning(contraWarnings, interactionWarnings) && !acknowledgeWarnings) {
+    if (hasSevereWarning(contraWarnings, interactionWarnings, dosageWarnings) && !acknowledgeWarnings) {
       return res.status(400).json({
         success: false,
         errorCode: 'REQUIRES_ACKNOWLEDGMENT',
@@ -237,7 +240,7 @@ const editPrescription = async (req, res) => {
         }
         if (
           patch.times !== undefined &&
-          (!Array.isArray(patch.times) || patch.times.length !== existing.frequency)
+          (!Array.isArray(patch.times) || !patch.times.length || patch.times.length !== existing.frequency)
         ) {
           return res.status(400).json({
             success: false,
@@ -352,7 +355,7 @@ const editPrescription = async (req, res) => {
         ...dosageWarnings.map((w) => ({ type: 'ELDERLY_DOSAGE', ...w })),
       ];
 
-      if (hasSevereWarning(contraWarnings, interactionWarnings) && !acknowledgeWarnings) {
+      if (hasSevereWarning(contraWarnings, interactionWarnings, dosageWarnings) && !acknowledgeWarnings) {
         return res.status(400).json({
           success: false,
           errorCode: 'REQUIRES_ACKNOWLEDGMENT',
@@ -467,16 +470,18 @@ const listPrescriptions = async (req, res) => {
       Prescription.countDocuments(filter),
     ]);
 
-    // Fetch invoice information for each prescription
     const Invoice = require('../models/invoice');
+    const prescriptionIds = prescriptions.map((rx) => rx._id);
+    const allInvoices = await Invoice.find({ prescriptionId: { $in: prescriptionIds } }).select('prescriptionId status');
     const invoicesByPrescription = {};
-    for (const rx of prescriptions) {
-      const invoices = await Invoice.find({ prescriptionId: rx._id }).select('status');
-      invoicesByPrescription[rx._id] = invoices;
+    for (const inv of allInvoices) {
+      const key = inv.prescriptionId.toString();
+      if (!invoicesByPrescription[key]) invoicesByPrescription[key] = [];
+      invoicesByPrescription[key].push(inv);
     }
 
     const data = prescriptions.map((rx) => {
-      const invoices = invoicesByPrescription[rx._id] || [];
+      const invoices = invoicesByPrescription[rx._id.toString()] || [];
       let invoiceStatus = 'no_invoice';
       let paymentStatus = null;
       if (invoices.length > 0) {
@@ -537,13 +542,14 @@ const getPrescription = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
     }
 
-    const [takenCount, missedCount] = await Promise.all([
-      MedicationSchedule.countDocuments({ prescriptionId: prescription._id, status: { $in: ['TAKEN', 'LATE_TAKEN'] } }),
+    const [takenCount, lateTakenCount, missedCount] = await Promise.all([
+      MedicationSchedule.countDocuments({ prescriptionId: prescription._id, status: 'TAKEN' }),
+      MedicationSchedule.countDocuments({ prescriptionId: prescription._id, status: 'LATE_TAKEN' }),
       MedicationSchedule.countDocuments({ prescriptionId: prescription._id, status: 'MISSED' }),
     ]);
 
-    const denominator = takenCount + missedCount;
-    const complianceRate = denominator > 0 ? Math.round((takenCount / denominator) * 1000) / 10 : null;
+    const denominator = takenCount + lateTakenCount + missedCount;
+    const complianceRate = denominator > 0 ? Math.round(((takenCount + lateTakenCount) / denominator) * 1000) / 10 : null;
 
     return res.status(200).json({
       success: true,

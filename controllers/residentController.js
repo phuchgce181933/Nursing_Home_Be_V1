@@ -284,6 +284,18 @@ const adminUpdateFamilyInfo = async (req, res) => {
   }
 };
 
+const adminUploadAvatar = async (req, res) => {
+  try {
+    const residentId = req.params.residentId;
+    const file = req.file;
+    const result = await residentService.adminUploadAvatar(req.user, residentId, file, req);
+    res.json(result);
+  } catch (err) {
+    console.error('adminUploadAvatar error:', err);
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   listResidents,
   getResidentsAreaSummary,
@@ -310,4 +322,5 @@ module.exports = {
   adminGetResident,
   adminUpdatePersonalInfo,
   adminUpdateFamilyInfo,
+  adminUploadAvatar,
 };

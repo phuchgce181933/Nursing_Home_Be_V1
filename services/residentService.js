@@ -152,6 +152,7 @@ const formatResident = (residentDoc) => {
     insuranceNumber: resident.insuranceNumber,
     bloodType: resident.bloodType,
     personalAddress: resident.personalAddress,
+    avatarUrl: resident.avatarUrl || undefined,
     emergencyContacts: resident.emergencyContacts || [],
     allergies: resident.allergies || [],
     drugAllergies: resident.drugAllergies || [],
@@ -1062,6 +1063,7 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
   if (body.insuranceNumber !== undefined) update.insuranceNumber = String(body.insuranceNumber || '').trim() || undefined;
   if (body.bloodType !== undefined) update.bloodType = body.bloodType;
   if (body.personalAddress !== undefined) update.personalAddress = String(body.personalAddress || '').trim() || undefined;
+  if (body.avatarUrl !== undefined) update.avatarUrl = String(body.avatarUrl || '').trim() || undefined;
   const allergies = normalizeStringArray(body.allergies);
   if (allergies !== undefined) update.allergies = allergies;
   const chronicConditions = normalizeStringArray(body.chronicConditions);
@@ -1113,6 +1115,49 @@ const adminUpdateFamilyInfo = async (user, residentId, body, req) => {
   return { message: 'Cập nhật thông tin gia đình cư dân thành công', resident: formatResident(updated) };
 };
 
+const adminUploadAvatar = async (user, residentId, file, req) => {
+  if (!file || !file.buffer) throw new ServiceError('No file uploaded', 400);
+  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  if (!allowed.includes(file.mimetype)) throw new ServiceError('Unsupported file type', 400);
+  if (file.size > 5 * 1024 * 1024) throw new ServiceError('File too large', 400);
+
+  const cloudinary = require('../config/cloudinaryConfig');
+
+  // upload from base64 data uri
+  const dataUri = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+  const uploadOptions = { folder: 'residents', use_filename: true, unique_filename: false };
+  let uploadResult;
+  try {
+    uploadResult = await cloudinary.uploader.upload(dataUri, uploadOptions);
+  } catch (uploadErr) {
+    console.error('Cloudinary upload error:', uploadErr);
+    throw new ServiceError('Upload failed', 500);
+  }
+  if (!uploadResult || !uploadResult.secure_url) {
+    console.error('Cloudinary upload returned no secure_url:', uploadResult);
+    throw new ServiceError('Upload failed', 500);
+  }
+
+  const before = await residentRepo.findByIdForAdmin(residentId);
+  if (!before) throw new ServiceError('Không tìm thấy cư dân', 404);
+
+  const updated = await residentRepo.updateById(residentId, { avatarUrl: uploadResult.secure_url });
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'UPLOAD_RESIDENT_AVATAR',
+    module: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    beforeData: { avatarUrl: before.avatarUrl },
+    afterData: { avatarUrl: updated.avatarUrl },
+    req,
+  });
+
+  return { resident: formatResident(updated) };
+};
+
 module.exports = {
   listResidentsForAssignment,
   listResidentsForFamilyManagement,
@@ -1136,6 +1181,7 @@ module.exports = {
   getDrugAllergies,
   updateDrugAllergies,
   adminCreateResident,
+  adminUploadAvatar,
   adminListResidents,
   adminGetResident,
   adminUpdatePersonalInfo,

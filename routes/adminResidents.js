@@ -8,6 +8,9 @@ const {
   adminUpdateFamilyInfo,
 } = require('../controllers/residentController');
 const { protect, authorize } = require('../middleware/auth');
+const multer = require('multer');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const adminOnly = authorize('admin');
 const adminManager = authorize('admin');
@@ -229,6 +232,16 @@ router.get('/:residentId', adminManager, adminGetResident);
  *         description: Resident personal info updated
  */
 router.patch('/:residentId/personal-info', adminOnly, adminUpdatePersonalInfo);
+
+/** Upload avatar image (multipart/form-data: field `avatar`) */
+router.post('/:residentId/avatar', adminOnly, upload.single('avatar'), async (req, res, next) => {
+  // delegate to controller method
+  try {
+    await require('../controllers/residentController').adminUploadAvatar(req, res);
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * @swagger

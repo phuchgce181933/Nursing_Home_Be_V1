@@ -41,7 +41,7 @@ const findForAssignment = async ({
   }
 
   return Resident.find(filter)
-    .select('residentCode fullName roomId residencyStatus dateOfBirth gender bloodType')
+    .select('residentCode fullName roomId residencyStatus dateOfBirth gender bloodType avatarUrl')
     .populate({ path: 'roomId', select: 'roomNumber floorId roomType' })
     .sort({ fullName: 1 })
     .limit(Math.min(limit, 500))
@@ -73,7 +73,7 @@ const findForFamilyManagement = async ({
 
   const [data, total] = await Promise.all([
     Resident.find(filter)
-      .select('residentCode fullName roomId residencyStatus emergencyContacts')
+      .select('residentCode fullName roomId residencyStatus emergencyContacts avatarUrl')
       .populate({
         path: 'roomId',
         select: 'roomNumber floorId roomType',
@@ -108,7 +108,7 @@ const createResident = async (data) => Resident.create(data);
 const findAll = async (filter, { sort, skip, limit }) =>
   Resident.find(filter)
     .select(
-      'residentCode fullName dateOfBirth gender bloodType residencyStatus admittedAt roomId bedId familyPortalAccountIds'
+      'residentCode fullName dateOfBirth gender bloodType residencyStatus admittedAt roomId bedId familyPortalAccountIds avatarUrl'
     )
     .sort(sort)
     .skip(skip)

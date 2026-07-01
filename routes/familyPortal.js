@@ -24,6 +24,7 @@ const {
   getCareSchedule,
   downloadReport,
 } = require('../controllers/familyPortalController');
+const { initiateWalletPayment, verifyWalletPayment } = require('../controllers/familyPaymentController');
 const { protect, authorize } = require('../middleware/auth');
 
 // Public checkout endpoints (no auth required - use checksum verification instead)
@@ -255,6 +256,12 @@ router.post('/wallet/topup', generateWalletTopupUrl);
  */
 router.post('/wallet/topup/confirm', confirmWalletTopup);
 router.post('/wallet/topup/verify', verifyWalletTopup);
+
+/**
+ * Wallet payment with OTP
+ */
+router.post('/wallet/payments/initiate', initiateWalletPayment);
+router.post('/wallet/payments/verify', verifyWalletPayment);
 
 /**
  * @swagger

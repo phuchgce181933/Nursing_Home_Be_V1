@@ -4,6 +4,7 @@ const ServiceError = require('./serviceError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const mailService = require('./mailService');
+const otpService = require('./otpService');
 const STAFF_ROLES = ['doctor', 'nurse', 'pharmacist', 'caregiver'];
 const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', pharmacist: 'PHA', caregiver: 'CAR', admin: 'ADM' };
 const VALID_ROLES = [...STAFF_ROLES, 'admin', 'system'];
@@ -203,8 +204,125 @@ const toggleStaffActive = async (id, currentUser) => {
     user: { _id: user._id, fullName: user.fullName, email: user.email, role: user.role, isActive: user.isActive },
   };
 };
+const requestEmailChangeOtp = async (user, { email }) => {
+  if (!email) {
+    throw new ServiceError('Email is required', 400);
+  }
+
+  const normalizedEmail = String(email).toLowerCase().trim();
+  if (normalizedEmail === user.email) {
+    throw new ServiceError('Email is already current', 400);
+  }
+
+  const existingUser = await userRepo.findOne({ email: normalizedEmail });
+  if (existingUser && existingUser._id.toString() !== user._id.toString()) {
+    throw new ServiceError('Email is already in use', 400);
+  }
+
+  const { otpId, maskedRecipient } = await otpService.createOtp({
+    userId: user._id,
+    phone: normalizedEmail,
+    purpose: 'verify_email_change',
+    meta: { newEmail: normalizedEmail },
+  });
+
+  return { otpId, maskedRecipient };
+};
+
+const requestPhoneChangeOtp = async (user, { phone }) => {
+  if (!phone) {
+    throw new ServiceError('Phone is required', 400);
+  }
+
+  const normalizedPhone = String(phone).trim();
+  const currentPhone = String(user?.phone || '').trim();
+
+  if (normalizedPhone === currentPhone) {
+    throw new ServiceError('Phone is already current', 400);
+  }
+
+  const existingUser = await userRepo.findOne({ phone: normalizedPhone });
+  if (existingUser && existingUser._id.toString() !== user._id.toString()) {
+    throw new ServiceError('Phone number is already in use', 400);
+  }
+
+  console.log(`[OTP] requestPhoneChangeOtp -> sending to new phone: ${normalizedPhone}`);
+
+  const { otpId, maskedRecipient } = await otpService.createOtp({
+    userId: user._id,
+    phone: normalizedPhone,
+    purpose: 'verify_phone_change',
+    meta: { newPhone: normalizedPhone },
+  });
+
+  return { otpId, maskedRecipient };
+};
+
+const verifyPhoneChangeOtp = async (user, { otpId, code }) => {
+  if (!otpId || !code) {
+    throw new ServiceError('otpId and code are required', 400);
+  }
+
+  const { meta } = await otpService.verifyOtp({
+    userId: user._id,
+    otpId,
+    code,
+    purpose: 'verify_phone_change',
+  });
+
+  if (!meta?.newPhone) {
+    throw new ServiceError('Invalid OTP metadata', 400);
+  }
+
+  const normalizedPhone = String(meta.newPhone).trim();
+  const existingUser = await userRepo.findOne({ phone: normalizedPhone });
+  if (existingUser && existingUser._id.toString() !== user._id.toString()) {
+    throw new ServiceError('Phone number is already in use', 400);
+  }
+
+  return await userRepo.updateProfile(user._id, { phone: normalizedPhone });
+};
+
+const verifyEmailChangeOtp = async (user, { otpId, code }) => {
+  if (!otpId || !code) {
+    throw new ServiceError('otpId and code are required', 400);
+  }
+
+  const { meta } = await otpService.verifyOtp({
+    userId: user._id,
+    otpId,
+    code,
+    purpose: 'verify_email_change',
+  });
+
+  if (!meta?.newEmail) {
+    throw new ServiceError('Invalid OTP metadata', 400);
+  }
+
+  const normalizedEmail = String(meta.newEmail).toLowerCase().trim();
+  const existingUser = await userRepo.findOne({ email: normalizedEmail });
+  if (existingUser && existingUser._id.toString() !== user._id.toString()) {
+    throw new ServiceError('Email is already in use', 400);
+  }
+
+  return await userRepo.updateProfile(user._id, { email: normalizedEmail });
+};
+
 // update profile
 const updateProfile = async (user, data) => {
+  if (data.email) {
+    throw new ServiceError('Email changes require OTP verification', 400);
+  }
+
+  if (data.phone) {
+    const normalizedPhone = data.phone.trim();
+    const existingUser = await userRepo.findOne({ phone: normalizedPhone });
+    if (existingUser && existingUser._id.toString() !== user._id.toString()) {
+      throw new ServiceError('Phone number is already in use', 400);
+    }
+    data.phone = normalizedPhone;
+  }
+
   return await userRepo.updateProfile(user._id, data);
 };
 
@@ -392,4 +510,14 @@ const createFirebaseCustomToken = async (user) => {
 };
 
 module.exports = { login, getMe, listStaffAccounts, createStaffAccount,
-  toggleStaffActive, updateProfile, changePassword, forgotPassword, resetPassword, updateUserByAdmin, createFirebaseCustomToken };
+  toggleStaffActive,
+  requestEmailChangeOtp,
+  requestPhoneChangeOtp,
+  verifyEmailChangeOtp,
+  verifyPhoneChangeOtp,
+  updateProfile,
+  changePassword,
+  forgotPassword,
+  resetPassword,
+  updateUserByAdmin,
+  createFirebaseCustomToken };

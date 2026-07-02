@@ -8,6 +8,10 @@ const {
   toggleStaffActive,
   createFirebaseToken,
   updateProfile,
+  requestEmailChangeOtp,
+  requestPhoneChangeOtp,
+  verifyEmailChangeOtp,
+  verifyPhoneChangeOtp,
   changePassword,
   forgotPassword,
   resetPassword,
@@ -264,6 +268,10 @@ router.put('/staff/:id/toggle-active', protect, authorize('admin'), toggleStaffA
  *         description: Unauthorized
  */
 router.put('/profile', protect, updateProfile);
+router.post('/profile/email-otp', protect, requestEmailChangeOtp);
+router.post('/profile/phone-otp', protect, requestPhoneChangeOtp);
+router.post('/profile/email-verify', protect, verifyEmailChangeOtp);
+router.post('/profile/phone-verify', protect, verifyPhoneChangeOtp);
 
 // Phuc/change password 
 /**

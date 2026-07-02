@@ -57,6 +57,44 @@ const updateProfile = async (req, res) => {
   }
 };
 
+const requestEmailChangeOtp = async (req, res) => {
+  try {
+    const result = await authService.requestEmailChangeOtp(req.user, req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const requestPhoneChangeOtp = async (req, res) => {
+  try {
+    const result = await authService.requestPhoneChangeOtp(req.user, req.body);
+    res.json(result);
+  } catch (err) {
+    console.error('requestPhoneChangeOtp error', { body: req.body, userId: req.user && req.user._id, err });
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const verifyEmailChangeOtp = async (req, res) => {
+  try {
+    const result = await authService.verifyEmailChangeOtp(req.user, req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const verifyPhoneChangeOtp = async (req, res) => {
+  try {
+    const result = await authService.verifyPhoneChangeOtp(req.user, req.body);
+    res.json(result);
+  } catch (err) {
+    console.error('verifyPhoneChangeOtp error', { body: req.body, userId: req.user && req.user._id, err });
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 // doi pass
 const changePassword = async (req, res) => {
   try {
@@ -121,6 +159,10 @@ module.exports = {
   listStaffAccounts,
   toggleStaffActive,
   updateProfile,
+  requestEmailChangeOtp,
+  requestPhoneChangeOtp,
+  verifyEmailChangeOtp,
+  verifyPhoneChangeOtp,
   changePassword,
   forgotPassword,
   resetPassword,

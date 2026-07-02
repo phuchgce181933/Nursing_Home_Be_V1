@@ -12,19 +12,40 @@ function generateCode() {
 const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {}, expiresMinutes = DEFAULT_EXPIRY_MINUTES }) => {
   const code = generateCode();
   const expiresAt = new Date(Date.now() + expiresMinutes * 60 * 1000);
-
+  
   const otp = await Otp.create({ userId, phone, code, purpose, meta, expiresAt });
-
-  // Send SMS via existing TextBee wrapper
+  
   try {
+    if (phone.includes('@')) {
+      const masked = phone.replace(/(.{2})(.*)(@.*)/, (_, start, middle, domain) => `${start}${'*'.repeat(Math.max(3, middle.length))}${domain}`);
+      await mailService.sendEmailVerificationOtp({ to: phone, code, expiresMinutes });
+      return { otpId: otp._id, maskedRecipient: masked };
+    }
+
     const masked = phone.replace(/.(?=.{4})/g, '*');
+    const isLocalDev = process.env.NODE_ENV === 'local';
+
     const message = `Mã OTP để xác thực giao dịch: ${code}. Hết hạn trong ${expiresMinutes} phút.`;
-    await mailService.sendTextBeeSms({ to: phone, message });
-    return { otpId: otp._id, maskedPhone: masked };
+    if (isLocalDev) {
+      console.log(`Local dev attempting SMS via TextBee to ${phone} with code ${code}`);
+    }
+
+    try {
+      await mailService.sendTextBeeSms({ to: phone, message });
+      return { otpId: otp._id, maskedRecipient: masked };
+    } catch (err) {
+      if (isLocalDev) {
+        console.log(`DEV OTP fallback for ${phone}: ${code} (expires in ${expiresMinutes} minutes)`);
+        return { otpId: otp._id, maskedRecipient: masked };
+      }
+      throw err;
+    }
   } catch (err) {
     // If SMS fails, remove OTP
     await Otp.deleteOne({ _id: otp._id }).catch(() => {});
-    throw new ServiceError('Failed to send OTP SMS', 500);
+    console.error('otpService.createOtp send error:', err);
+    const msg = err?.message || 'Failed to send OTP SMS';
+    throw new ServiceError(msg, 500);
   }
 };
 

@@ -26,6 +26,22 @@ const sendResetPasswordEmail = async (to, resetUrl) => {
   });
 };
 
+const sendEmailVerificationOtp = async ({ to, code, expiresMinutes = 10 }) => {
+  if (!to) return;
+
+  await transporter.sendMail({
+    from: process.env.MAIL_USER,
+    to,
+    subject: 'Xác thực email mới',
+    html: `
+      <h2>Xác thực email mới</h2>
+      <p>Vui lòng nhập mã OTP bên dưới để xác nhận email mới của bạn.</p>
+      <p><strong>Mã OTP:</strong> ${code}</p>
+      <p>Mã sẽ hết hạn sau ${expiresMinutes} phút.</p>
+    `,
+  });
+};
+
 const sendIncidentNotificationEmail = async ({
   to,
   recipientName,
@@ -122,5 +138,6 @@ module.exports = {
   sendResetPasswordEmail,
   sendIncidentNotificationEmail,
   sendStaffAccountCreatedEmail,
+  sendEmailVerificationOtp,
   sendTextBeeSms,
 };

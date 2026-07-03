@@ -1,6 +1,5 @@
 const svc = require('../services/hygieneActivityService');
-
-const statusCode = (err) => err.statusCode || err.status || 500;
+const { sendApiError } = require('../utils/apiErrorResponse');
 
 const listResidents = (req, res) =>
   svc
@@ -10,15 +9,17 @@ const listResidents = (req, res) =>
         success: true,
         data: result.data,
         message: result.message,
+        messageKey: result.messageKey,
+        params: result.params,
       })
     )
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const getContext = (req, res) =>
   svc
     .getActivityContext(req.query.residentId, req.query.workDate, req.query.activityType, req.user._id)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const listRecords = (req, res) =>
   svc
@@ -33,31 +34,31 @@ const listRecords = (req, res) =>
         totalPages: result.totalPages,
       })
     )
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const createRecord = (req, res) =>
   svc
     .createRecord(req.user._id, req.body)
     .then((data) => res.status(201).json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const getRecord = (req, res) =>
   svc
     .getRecord(req.user._id, req.params.id)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const updateRecord = (req, res) =>
   svc
     .updateRecord(req.user._id, req.params.id, req.body)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const deleteRecord = (req, res) =>
   svc
     .deleteRecord(req.user._id, req.params.id)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 module.exports = {
   listResidents,

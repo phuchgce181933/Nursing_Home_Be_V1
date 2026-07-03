@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const ServiceError = require('./serviceError');
+const { apiErr, CODES } = require('../utils/apiError');
 const assignedResidentService = require('./assignedResidentService');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const rehabDayRepo = require('../repositories/rehabilitationScheduleDayRepository');
@@ -11,21 +11,21 @@ const parseWorkDateStrict = (workDate) => {
   try {
     parseWorkDate(str);
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.WORK_DATE_INVALID_FORMAT, { statusCode: 400 });
   }
   return str;
 };
 
 const assertValidObjectId = (value, label) => {
   if (!mongoose.Types.ObjectId.isValid(String(value || ''))) {
-    throw new ServiceError(`${label} không hợp lệ`, 400);
+    throw apiErr(CODES.CAREGIVER_INVALID_OBJECT_ID, { statusCode: 400, params: { label } });
   }
 };
 
 const getCaregiverProfile = async (userId) => {
   const profile = await staffProfileRepo.findByUserId(userId);
   if (!profile) {
-    throw new ServiceError('Không tìm thấy hồ sơ nhân viên. Vui lòng liên hệ quản trị.', 400);
+    throw apiErr(CODES.CAREGIVER_STAFF_PROFILE_NOT_FOUND, { statusCode: 400 });
   }
   return profile;
 };
@@ -33,7 +33,7 @@ const getCaregiverProfile = async (userId) => {
 const assertResidentAssigned = async (profile, residentId) => {
   const assigned = (profile.assignedResidentIds || []).map((r) => String(r._id || r));
   if (!assigned.includes(String(residentId))) {
-    throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+    throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
   }
 };
 
@@ -56,7 +56,7 @@ const listAssignedResidents = async (userId) =>
 
 const listOverview = async (userId, query) => {
   if (!query.workDate) {
-    throw new ServiceError('workDate là bắt buộc (YYYY-MM-DD)', 400);
+    throw apiErr(CODES.WORK_DATE_REQUIRED, { statusCode: 400 });
   }
   const workDate = parseWorkDateStrict(query.workDate);
   const profile = await getCaregiverProfile(userId);
@@ -107,7 +107,7 @@ const listOverview = async (userId, query) => {
 const getResidentSchedule = async (userId, residentId, query) => {
   assertValidObjectId(residentId, 'residentId');
   if (!query.workDate) {
-    throw new ServiceError('workDate là bắt buộc (YYYY-MM-DD)', 400);
+    throw apiErr(CODES.WORK_DATE_REQUIRED, { statusCode: 400 });
   }
   const workDate = parseWorkDateStrict(query.workDate);
   const profile = await getCaregiverProfile(userId);

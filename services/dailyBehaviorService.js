@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const dailyBehaviorRepo = require('../repositories/dailyBehaviorRecordRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const Resident = require('../models/resident');
@@ -17,7 +17,7 @@ const parseWorkDateStrict = (workDate) => {
   try {
     parseWorkDate(str);
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.WORK_DATE_INVALID_FORMAT, { statusCode: 400 });
   }
   return str;
 };
@@ -26,14 +26,14 @@ const workDateToDate = (workDateStr) => new Date(`${workDateStr}T00:00:00.000Z`)
 
 const assertValidObjectId = (value, label) => {
   if (!mongoose.Types.ObjectId.isValid(String(value || ''))) {
-    throw new ServiceError(`${label} không hợp lệ`, 400);
+    throw apiErr(CODES.CAREGIVER_INVALID_OBJECT_ID, { statusCode: 400, params: { label } });
   }
 };
 
 const getCaregiverProfile = async (userId) => {
   const profile = await staffProfileRepo.findByUserId(userId);
   if (!profile) {
-    throw new ServiceError('Không tìm thấy hồ sơ nhân viên. Vui lòng liên hệ quản trị.', 400);
+    throw apiErr(CODES.CAREGIVER_STAFF_PROFILE_NOT_FOUND, { statusCode: 400 });
   }
   return profile;
 };
@@ -41,11 +41,11 @@ const getCaregiverProfile = async (userId) => {
 const assertResidentAssigned = async (profile, residentId) => {
   const assigned = (profile.assignedResidentIds || []).map((r) => String(r._id || r));
   if (!assigned.includes(String(residentId))) {
-    throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+    throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
   }
   const resident = await Resident.findById(residentId).select('_id residencyStatus fullName residentCode');
   if (!resident || resident.residencyStatus !== 'admitted') {
-    throw new ServiceError('Cư dân không tồn tại hoặc không ở trạng thái đang ở viện', 400);
+    throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ADMITTED, { statusCode: 400 });
   }
   return resident;
 };
@@ -54,16 +54,25 @@ const parseObservedAt = (observedAtInput, workDateStr) => {
   if (!observedAtInput) return new Date();
   const d = new Date(observedAtInput);
   if (Number.isNaN(d.getTime())) {
-    throw new ServiceError('observedAt không hợp lệ', 400);
+    throw apiErr(CODES.OBSERVED_AT_INVALID, { statusCode: 400 });
   }
   if (d > new Date()) {
-    throw new ServiceError('Thời điểm quan sát không được ở tương lai', 400);
+    throw apiErr(CODES.OBSERVED_AT_FUTURE, { statusCode: 400 });
   }
   const observedDayVN = d.toLocaleDateString('en-CA', { timeZone: VN_TZ });
   if (observedDayVN !== workDateStr) {
-    throw new ServiceError('Thời điểm quan sát phải nằm trong ngày ghi nhận', 400);
+    throw apiErr(CODES.OBSERVED_AT_OUT_OF_DAY, { statusCode: 400 });
   }
   return d;
+};
+
+const assertFieldOneOf = (field, value, allowed) => {
+  if (!allowed.includes(value)) {
+    throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+      statusCode: 400,
+      params: { field, allowed: allowed.join(', ') },
+    });
+  }
 };
 
 const validatePayload = (body, isUpdate = false) => {
@@ -71,56 +80,44 @@ const validatePayload = (body, isUpdate = false) => {
 
   if (!isUpdate) {
     assertValidObjectId(row.residentId, 'residentId');
-    if (!OBSERVATION_CATEGORIES.includes(row.observationCategory)) {
-      throw new ServiceError(
-        `observationCategory phải thuộc một trong: ${OBSERVATION_CATEGORIES.join(', ')}`,
-        400
-      );
-    }
+    assertFieldOneOf('observationCategory', row.observationCategory, OBSERVATION_CATEGORIES);
     const workDate = parseWorkDateStrict(row.workDate);
     if (workDate > todayVN()) {
-      throw new ServiceError('Không thể ghi nhận cho ngày trong tương lai', 400);
+      throw apiErr(CODES.WORK_DATE_FUTURE_NOT_ALLOWED, { statusCode: 400 });
     }
     const notes = String(row.notes || '').trim();
     if (notes.length < 5) {
-      throw new ServiceError('notes phải có ít nhất 5 ký tự', 400);
+      throw apiErr(CODES.NOTES_TOO_SHORT, { statusCode: 400, params: { min: 5 } });
     }
   }
 
-  if (row.observationCategory !== undefined && !OBSERVATION_CATEGORIES.includes(row.observationCategory)) {
-    throw new ServiceError(
-      `observationCategory phải thuộc một trong: ${OBSERVATION_CATEGORIES.join(', ')}`,
-      400
-    );
+  if (row.observationCategory !== undefined) {
+    assertFieldOneOf('observationCategory', row.observationCategory, OBSERVATION_CATEGORIES);
   }
 
   if (row.moodLevel !== undefined && row.moodLevel !== null && row.moodLevel !== '') {
-    if (!MOOD_LEVELS.includes(row.moodLevel)) {
-      throw new ServiceError(`moodLevel phải thuộc một trong: ${MOOD_LEVELS.join(', ')}`, 400);
-    }
+    assertFieldOneOf('moodLevel', row.moodLevel, MOOD_LEVELS);
   }
 
   if (row.behaviorType !== undefined && row.behaviorType !== null && row.behaviorType !== '') {
-    if (!BEHAVIOR_TYPES.includes(row.behaviorType)) {
-      throw new ServiceError(`behaviorType phải thuộc một trong: ${BEHAVIOR_TYPES.join(', ')}`, 400);
-    }
+    assertFieldOneOf('behaviorType', row.behaviorType, BEHAVIOR_TYPES);
   }
 
-  if (row.severity !== undefined && !SEVERITY_LEVELS.includes(row.severity)) {
-    throw new ServiceError(`severity phải thuộc một trong: ${SEVERITY_LEVELS.join(', ')}`, 400);
+  if (row.severity !== undefined) {
+    assertFieldOneOf('severity', row.severity, SEVERITY_LEVELS);
   }
 
   if (row.notes !== undefined && String(row.notes).trim().length < 5) {
-    throw new ServiceError('notes phải có ít nhất 5 ký tự', 400);
+    throw apiErr(CODES.NOTES_TOO_SHORT, { statusCode: 400, params: { min: 5 } });
   }
 
   const category = row.observationCategory;
   if (!isUpdate && category === 'mood' && !row.moodLevel) {
-    throw new ServiceError('moodLevel là bắt buộc khi loại quan sát là tâm trạng', 400);
+    throw apiErr(CODES.MOOD_LEVEL_REQUIRED, { statusCode: 400 });
   }
 
   if (!isUpdate && category === 'abnormal' && row.severity === 'normal') {
-    throw new ServiceError('Biểu hiện bất thường nên chọn mức độ từ nhẹ trở lên', 400);
+    throw apiErr(CODES.SEVERITY_TOO_LOW_FOR_ABNORMAL, { statusCode: 400 });
   }
 
   return row;
@@ -137,23 +134,16 @@ const listRecords = async (userId, query) => {
   if (query.residentId) {
     assertValidObjectId(query.residentId, 'residentId');
     if (!assignedIds.map(String).includes(String(query.residentId))) {
-      throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+      throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
     }
     filter.residentId = query.residentId;
   }
   if (query.observationCategory) {
-    if (!OBSERVATION_CATEGORIES.includes(query.observationCategory)) {
-      throw new ServiceError(
-        `observationCategory phải thuộc một trong: ${OBSERVATION_CATEGORIES.join(', ')}`,
-        400
-      );
-    }
+    assertFieldOneOf('observationCategory', query.observationCategory, OBSERVATION_CATEGORIES);
     filter.observationCategory = query.observationCategory;
   }
   if (query.severity) {
-    if (!SEVERITY_LEVELS.includes(query.severity)) {
-      throw new ServiceError(`severity phải thuộc một trong: ${SEVERITY_LEVELS.join(', ')}`, 400);
-    }
+    assertFieldOneOf('severity', query.severity, SEVERITY_LEVELS);
     filter.severity = query.severity;
   }
   if (query.workDate) {
@@ -181,7 +171,7 @@ const createRecord = async (userId, body) => {
 
   const category = body.observationCategory;
   if (category === 'mood' && !body.moodLevel) {
-    throw new ServiceError('moodLevel là bắt buộc khi loại quan sát là tâm trạng', 400);
+    throw apiErr(CODES.MOOD_LEVEL_REQUIRED, { statusCode: 400 });
   }
 
   let severity = body.severity || 'normal';
@@ -209,13 +199,13 @@ const createRecord = async (userId, body) => {
 
 const assertAuthor = (record, profile) => {
   if (String(record.recordedByStaffId?._id || record.recordedByStaffId) !== String(profile._id)) {
-    throw new ServiceError('Chỉ người ghi nhận mới được sửa hoặc xóa bản ghi này', 403);
+    throw apiErr(CODES.CAREGIVER_NOT_RECORD_OWNER, { statusCode: 403 });
   }
 };
 
 const getRecord = async (userId, id) => {
   const record = await dailyBehaviorRepo.findById(id);
-  if (!record) throw new ServiceError('Không tìm thấy bản ghi hành vi', 404);
+  if (!record) throw apiErr(CODES.BEHAVIOR_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   return record;
@@ -223,7 +213,7 @@ const getRecord = async (userId, id) => {
 
 const updateRecord = async (userId, id, body) => {
   const record = await dailyBehaviorRepo.findById(id);
-  if (!record) throw new ServiceError('Không tìm thấy bản ghi hành vi', 404);
+  if (!record) throw apiErr(CODES.BEHAVIOR_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
@@ -232,7 +222,7 @@ const updateRecord = async (userId, id, body) => {
   const category = body.observationCategory ?? record.observationCategory;
   const moodLevel = body.moodLevel !== undefined ? body.moodLevel : record.moodLevel;
   if (category === 'mood' && !moodLevel) {
-    throw new ServiceError('moodLevel là bắt buộc khi loại quan sát là tâm trạng', 400);
+    throw apiErr(CODES.MOOD_LEVEL_REQUIRED, { statusCode: 400 });
   }
 
   const update = {};
@@ -255,12 +245,12 @@ const updateRecord = async (userId, id, body) => {
 
 const deleteRecord = async (userId, id) => {
   const record = await dailyBehaviorRepo.findById(id);
-  if (!record) throw new ServiceError('Không tìm thấy bản ghi hành vi', 404);
+  if (!record) throw apiErr(CODES.BEHAVIOR_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await dailyBehaviorRepo.deleteById(id);
-  return { message: 'Đã xóa bản ghi hành vi', deleted: true, id };
+  return { ...apiSuccess(SUCCESS.BEHAVIOR_RECORD_DELETED), deleted: true, id };
 };
 
 module.exports = {

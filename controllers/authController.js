@@ -1,11 +1,12 @@
 const authService = require('../services/authService');
+const { sendApiError } = require('../utils/apiErrorResponse');
 
 const login = async (req, res) => {
   try {
     const result = await authService.login(req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -14,7 +15,7 @@ const getMe = async (req, res) => {
     const result = await authService.getMe(req.user);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -23,7 +24,7 @@ const createStaffAccount = async (req, res) => {
     const result = await authService.createStaffAccount(req.body, req.user);
     res.status(201).json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -32,7 +33,7 @@ const listStaffAccounts = async (req, res) => {
     const result = await authService.listStaffAccounts(req.query);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -41,7 +42,7 @@ const toggleStaffActive = async (req, res) => {
     const result = await authService.toggleStaffActive(req.params.id, req.user);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -51,9 +52,7 @@ const updateProfile = async (req, res) => {
     const result = await authService.updateProfile(req.user, req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({
-      message: err.message,
-    });
+    sendApiError(res, err);
   }
 };
 
@@ -62,7 +61,7 @@ const requestEmailChangeOtp = async (req, res) => {
     const result = await authService.requestEmailChangeOtp(req.user, req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -72,7 +71,7 @@ const requestPhoneChangeOtp = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('requestPhoneChangeOtp error', { body: req.body, userId: req.user && req.user._id, err });
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -81,7 +80,7 @@ const verifyEmailChangeOtp = async (req, res) => {
     const result = await authService.verifyEmailChangeOtp(req.user, req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -91,7 +90,7 @@ const verifyPhoneChangeOtp = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('verifyPhoneChangeOtp error', { body: req.body, userId: req.user && req.user._id, err });
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -101,9 +100,7 @@ const changePassword = async (req, res) => {
     const result = await authService.changePassword(req.user, req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({
-      message: err.message,
-    });
+    sendApiError(res, err);
   }
 };
 
@@ -113,9 +110,7 @@ const forgotPassword = async (req, res) => {
     const result = await authService.forgotPassword(req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({
-      message: err.message,
-    });
+    sendApiError(res, err);
   }
 };
 
@@ -125,9 +120,7 @@ const resetPassword = async (req, res) => {
     const result = await authService.resetPassword(req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({
-      message: err.message,
-    });
+    sendApiError(res, err);
   }
 };
 
@@ -137,9 +130,7 @@ const updateUserByAdmin = async (req, res) => {
     const result = await authService.updateUserByAdmin(req.params.id, req.body, req.user);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({
-      message: err.message,
-    });
+    sendApiError(res, err);
   }
 };
 
@@ -148,7 +139,7 @@ const createFirebaseToken = async (req, res) => {
     const result = await authService.createFirebaseCustomToken(req.user);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 

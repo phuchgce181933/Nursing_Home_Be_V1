@@ -1,5 +1,6 @@
 const shiftTemplateRepo = require('../repositories/shiftTemplateRepository');
 const { calcShiftDurationHours } = require('../utils/shiftValidation');
+const { apiErr, CODES } = require('../utils/apiError');
 
 const formatTemplate = (doc) => {
   const t = doc.toObject ? doc.toObject() : doc;
@@ -23,8 +24,8 @@ const listTemplates = async (filter = {}) => {
 
 const getTemplate = async (id) => {
   const t = await shiftTemplateRepo.findById(id);
-  if (!t || !t.isSystem) throw Object.assign(new Error('Không tìm thấy mẫu ca làm việc'), { status: 404 });
-  if (t.status !== 'active') throw Object.assign(new Error('Mẫu ca làm việc chưa ở trạng thái hoạt động'), { status: 404 });
+  if (!t || !t.isSystem) throw apiErr(CODES.SHIFT_TEMPLATE_NOT_FOUND, { statusCode: 404 });
+  if (t.status !== 'active') throw apiErr(CODES.SHIFT_TEMPLATE_INACTIVE, { statusCode: 404 });
   return formatTemplate(t);
 };
 

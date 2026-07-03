@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const hygieneActivityRepo = require('../repositories/hygieneActivityRecordRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const Resident = require('../models/resident');
@@ -23,15 +23,12 @@ const CATEGORY_BY_TYPE = {
   laundry: 'environment',
 };
 
-const DUPLICATE_MSG =
-  'Đã ghi nhận hoạt động này cho cư dân trong ngày. Vui lòng chỉnh sửa bản ghi hiện có.';
-
 const parseWorkDateStrict = (workDate) => {
   const str = String(workDate || '').trim();
   try {
     parseWorkDate(str);
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.WORK_DATE_INVALID_FORMAT, { statusCode: 400 });
   }
   return str;
 };
@@ -40,14 +37,14 @@ const workDateToDate = (workDateStr) => new Date(`${workDateStr}T00:00:00.000Z`)
 
 const assertValidObjectId = (value, label) => {
   if (!mongoose.Types.ObjectId.isValid(String(value || ''))) {
-    throw new ServiceError(`${label} không hợp lệ`, 400);
+    throw apiErr(CODES.CAREGIVER_INVALID_OBJECT_ID, { statusCode: 400, params: { label } });
   }
 };
 
 const getCaregiverProfile = async (userId) => {
   const profile = await staffProfileRepo.findByUserId(userId);
   if (!profile) {
-    throw new ServiceError('Không tìm thấy hồ sơ nhân viên. Vui lòng liên hệ quản trị.', 400);
+    throw apiErr(CODES.CAREGIVER_STAFF_PROFILE_NOT_FOUND, { statusCode: 400 });
   }
   return profile;
 };
@@ -55,46 +52,41 @@ const getCaregiverProfile = async (userId) => {
 const assertResidentAssigned = async (profile, residentId) => {
   const assigned = (profile.assignedResidentIds || []).map((r) => String(r._id || r));
   if (!assigned.includes(String(residentId))) {
-    throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+    throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
   }
   const resident = await Resident.findById(residentId).select('_id residencyStatus fullName residentCode');
   if (!resident || resident.residencyStatus !== 'admitted') {
-    throw new ServiceError('Cư dân không tồn tại hoặc không ở trạng thái đang ở viện', 400);
+    throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ADMITTED, { statusCode: 400 });
   }
   return resident;
+};
+
+const assertFieldOneOf = (field, value, allowed) => {
+  if (!allowed.includes(value)) {
+    throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+      statusCode: 400,
+      params: { field, allowed: allowed.join(', ') },
+    });
+  }
 };
 
 const validatePayload = (body, isUpdate = false) => {
   const row = body || {};
   if (!isUpdate) {
     assertValidObjectId(row.residentId, 'residentId');
-    if (!HYGIENE_ACTIVITY_TYPES.includes(row.activityType)) {
-      throw new ServiceError(
-        `activityType phải thuộc một trong: ${HYGIENE_ACTIVITY_TYPES.join(', ')}`,
-        400
-      );
-    }
+    assertFieldOneOf('activityType', row.activityType, HYGIENE_ACTIVITY_TYPES);
     const workDate = parseWorkDateStrict(row.workDate);
     if (workDate > todayVN()) {
-      throw new ServiceError('Không thể ghi nhận cho ngày trong tương lai', 400);
+      throw apiErr(CODES.WORK_DATE_FUTURE_NOT_ALLOWED, { statusCode: 400 });
     }
   }
 
-  if (row.activityType !== undefined && !HYGIENE_ACTIVITY_TYPES.includes(row.activityType)) {
-    throw new ServiceError(
-      `activityType phải thuộc một trong: ${HYGIENE_ACTIVITY_TYPES.join(', ')}`,
-      400
-    );
+  if (row.activityType !== undefined) {
+    assertFieldOneOf('activityType', row.activityType, HYGIENE_ACTIVITY_TYPES);
   }
 
-  if (
-    row.completionStatus !== undefined &&
-    !COMPLETION_STATUSES.includes(row.completionStatus)
-  ) {
-    throw new ServiceError(
-      `completionStatus phải thuộc một trong: ${COMPLETION_STATUSES.join(', ')}`,
-      400
-    );
+  if (row.completionStatus !== undefined) {
+    assertFieldOneOf('completionStatus', row.completionStatus, COMPLETION_STATUSES);
   }
 
   return row;
@@ -105,12 +97,7 @@ const listAssignedResidents = async (userId) =>
 
 const getActivityContext = async (residentId, workDateInput, activityType, userId) => {
   assertValidObjectId(residentId, 'residentId');
-  if (!HYGIENE_ACTIVITY_TYPES.includes(activityType)) {
-    throw new ServiceError(
-      `activityType phải thuộc một trong: ${HYGIENE_ACTIVITY_TYPES.join(', ')}`,
-      400
-    );
-  }
+  assertFieldOneOf('activityType', activityType, HYGIENE_ACTIVITY_TYPES);
   const workDate = parseWorkDateStrict(workDateInput);
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, residentId);
@@ -138,26 +125,16 @@ const listRecords = async (userId, query) => {
   if (query.residentId) {
     assertValidObjectId(query.residentId, 'residentId');
     if (!assignedIds.map(String).includes(String(query.residentId))) {
-      throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+      throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
     }
     filter.residentId = query.residentId;
   }
   if (query.activityCategory) {
-    if (!HYGIENE_CATEGORIES.includes(query.activityCategory)) {
-      throw new ServiceError(
-        `activityCategory phải thuộc một trong: ${HYGIENE_CATEGORIES.join(', ')}`,
-        400
-      );
-    }
+    assertFieldOneOf('activityCategory', query.activityCategory, HYGIENE_CATEGORIES);
     filter.activityCategory = query.activityCategory;
   }
   if (query.activityType) {
-    if (!HYGIENE_ACTIVITY_TYPES.includes(query.activityType)) {
-      throw new ServiceError(
-        `activityType phải thuộc một trong: ${HYGIENE_ACTIVITY_TYPES.join(', ')}`,
-        400
-      );
-    }
+    assertFieldOneOf('activityType', query.activityType, HYGIENE_ACTIVITY_TYPES);
     filter.activityType = query.activityType;
   }
   if (query.workDate) {
@@ -190,7 +167,7 @@ const createRecord = async (userId, body) => {
     body.activityType
   );
   if (existing) {
-    throw new ServiceError(DUPLICATE_MSG, 400);
+    throw apiErr(CODES.DUPLICATE_RECORD, { statusCode: 400 });
   }
 
   const activityCategory = CATEGORY_BY_TYPE[body.activityType];
@@ -210,13 +187,13 @@ const createRecord = async (userId, body) => {
 
 const assertAuthor = (record, profile) => {
   if (String(record.recordedByStaffId?._id || record.recordedByStaffId) !== String(profile._id)) {
-    throw new ServiceError('Chỉ người ghi nhận mới được sửa hoặc xóa bản ghi này', 403);
+    throw apiErr(CODES.CAREGIVER_NOT_RECORD_OWNER, { statusCode: 403 });
   }
 };
 
 const getRecord = async (userId, id) => {
   const record = await hygieneActivityRepo.findById(id);
-  if (!record) throw new ServiceError('Không tìm thấy bản ghi hoạt động vệ sinh', 404);
+  if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   return record;
@@ -224,7 +201,7 @@ const getRecord = async (userId, id) => {
 
 const updateRecord = async (userId, id, body) => {
   const record = await hygieneActivityRepo.findById(id);
-  if (!record) throw new ServiceError('Không tìm thấy bản ghi hoạt động vệ sinh', 404);
+  if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
@@ -239,12 +216,12 @@ const updateRecord = async (userId, id, body) => {
 
 const deleteRecord = async (userId, id) => {
   const record = await hygieneActivityRepo.findById(id);
-  if (!record) throw new ServiceError('Không tìm thấy bản ghi hoạt động vệ sinh', 404);
+  if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await hygieneActivityRepo.deleteById(id);
-  return { message: 'Đã xóa bản ghi hoạt động vệ sinh', deleted: true, id };
+  return { ...apiSuccess(SUCCESS.HYGIENE_RECORD_DELETED), deleted: true, id };
 };
 
 module.exports = {

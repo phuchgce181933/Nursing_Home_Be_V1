@@ -35,6 +35,14 @@ const {
 const { isAssignableRole } = require('../utils/staffAssignment');
 const { assertNoActiveCareTasksForShift } = require('../utils/careTaskGuards');
 const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
+const { createAuditLog } = require('../utils/auditLog');
+const { apiErr, CODES } = require('../utils/apiError');
+
+const raiseShiftErr = (code, { statusCode = 400, params, conflicts } = {}) => {
+  const err = apiErr(code, { statusCode, params });
+  if (conflicts) err.conflicts = conflicts;
+  throw err;
+};
 
 const MANAGER_ROLES = ['admin'];
 const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
@@ -66,27 +74,21 @@ const getActorStaffProfile = async (actorUser) => {
     profile = await ensureStaffProfileForUser(actorUser);
   }
   if (!profile) {
-    throw Object.assign(new Error('Không tìm thấy hồ sơ nhân viên'), { status: 404 });
+    throw apiErr(CODES.SHIFT_STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
   }
   return profile;
 };
 
 const assertActorMayConfirmShift = async (shift, actorUser) => {
   if (isShiftManager(actorUser.role)) {
-    throw Object.assign(
-      new Error('Chỉ nhân viên được phân công mới có thể xác nhận ca'),
-      { status: 403 }
-    );
+    throw apiErr(CODES.SHIFT_NO_CONFIRM_PERMISSION, { statusCode: 403 });
   }
   if (!STAFF_SHIFT_ROLES.includes(actorUser.role)) {
-    throw Object.assign(new Error('Không có quyền xác nhận ca'), { status: 403 });
+    throw apiErr(CODES.SHIFT_NO_CONFIRM_PERMISSION, { statusCode: 403 });
   }
   const profile = await getActorStaffProfile(actorUser);
   if (getAssignedStaffProfileId(shift) !== String(profile._id)) {
-    throw Object.assign(
-      new Error('Bạn chỉ có thể xác nhận ca được gán cho mình'),
-      { status: 403 }
-    );
+    throw apiErr(CODES.SHIFT_NO_CONFIRM_PERMISSION, { statusCode: 403 });
   }
 };
 
@@ -94,10 +96,10 @@ const assertActorMayViewShift = async (shift, actorUser) => {
   if (!actorUser || isShiftManager(actorUser.role)) return;
   const profile = await staffProfileRepo.findByUserId(actorUser._id);
   if (!profile || getAssignedStaffProfileId(shift) !== String(profile._id)) {
-    throw Object.assign(new Error('Bạn không có quyền xem ca này'), { status: 403 });
+    throw apiErr(CODES.SHIFT_NO_VIEW_PERMISSION, { statusCode: 403 });
   }
   if (shift.status === 'draft') {
-    throw Object.assign(new Error('Bạn không có quyền xem ca này'), { status: 403 });
+    throw apiErr(CODES.SHIFT_NO_VIEW_PERMISSION, { statusCode: 403 });
   }
 };
 
@@ -116,6 +118,68 @@ const enrichShift = (shift) => {
     doc.totalHours = Math.round(calcShiftDurationHours(doc.startTime, doc.endTime) * 100) / 100;
   }
   return doc;
+};
+
+const getStaffNameFromShift = (shift) => {
+  const staff = shift?.assignedStaffId;
+  if (!staff || typeof staff !== 'object') return undefined;
+  return staff.userId?.fullName || staff.staffCode || undefined;
+};
+
+const snapshotShiftForAudit = (shift) => {
+  if (!shift) return null;
+  const doc = enrichShift(shift);
+  return {
+    _id: doc._id,
+    name: doc.name,
+    workDate: doc.workDate,
+    startTime: doc.startTime,
+    endTime: doc.endTime,
+    status: doc.status,
+    assignedStaffId: doc.assignedStaffId?._id || doc.assignedStaffId,
+    staffName: getStaffNameFromShift(doc),
+    shiftTemplateId: doc.shiftTemplateId?._id || doc.shiftTemplateId,
+  };
+};
+
+const buildShiftTargetName = (shift) => {
+  const snap = snapshotShiftForAudit(shift);
+  if (!snap) return 'Ca làm việc';
+  const dateStr = workDateToVNString(snap.workDate) || String(snap.workDate).slice(0, 10);
+  const staff = snap.staffName || '—';
+  return `${snap.name || 'Ca'} · ${staff} · ${dateStr}`;
+};
+
+const writeShiftAuditLog = async ({
+  actorUser,
+  action,
+  displayAction,
+  shiftBefore,
+  shiftAfter,
+  description,
+  metadata,
+  req,
+}) => {
+  if (!actorUser) return;
+  const targetId = shiftBefore?._id || shiftAfter?._id;
+  await createAuditLog({
+    actorUserId: actorUser._id,
+    actorRole: actorUser.role,
+    action,
+    displayAction,
+    module: 'Shift',
+    businessModule: 'Shift',
+    targetEntityType: 'Shift',
+    targetEntityId: targetId,
+    targetName: buildShiftTargetName(shiftAfter || shiftBefore),
+    description,
+    beforeData: snapshotShiftForAudit(shiftBefore),
+    afterData: snapshotShiftForAudit(shiftAfter),
+    metadata,
+    req,
+    performedBy: actorUser.fullName,
+    performedByRole: actorUser.role,
+  });
 };
 
 const parseWorkDateUtc = (workDate) =>
@@ -145,7 +209,7 @@ const resolveStaffProfileId = async (id) => {
   // Fall back to lookup by userId (frontend passes User._id)
   const byUserId = await staffProfileRepo.findByUserId(id);
   if (byUserId) return byUserId._id;
-  throw Object.assign(new Error('Không tìm thấy hồ sơ nhân viên cho assignedStaffId đã cung cấp'), { status: 404 });
+  throw apiErr(CODES.SHIFT_STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 };
 
 const assertNoApprovedLeaveOnDate = async (staffProfileId, workDate) => {
@@ -158,9 +222,7 @@ const assertNoApprovedLeaveOnDate = async (staffProfileId, workDate) => {
 
   const overlapping = await leaveRequestRepo.findApprovedOverlapping(profile.userId, dayStart, dayEnd);
   if (overlapping.length) {
-    throw Object.assign(new Error('Nhân viên có đơn nghỉ đã duyệt trong ngày này và không thể được phân ca.'), {
-      status: 400,
-    });
+    throw apiErr(CODES.SHIFT_LEAVE_BLOCKS, { statusCode: 400 });
   }
 };
 
@@ -385,10 +447,7 @@ const hasErrors = (conflicts) => conflicts.some((c) => c.severity === 'ERROR');
 
 const assertNoBlockingConflicts = (conflicts) => {
   if (!hasErrors(conflicts)) return;
-  throw Object.assign(new Error('Kiểm tra xung đột ca thất bại. Vui lòng xử lý các lỗi mức ERROR trước.'), {
-    status: 400,
-    conflicts,
-  });
+  raiseShiftErr(CODES.SHIFT_CONFLICT_CHECK_FAILED, { statusCode: 400, conflicts });
 };
 
 const FORBIDDEN_DIRECT_TIME_FIELDS = ['name', 'startTime', 'endTime'];
@@ -397,35 +456,33 @@ const assertNoDirectTimeFields = (body, { isFlexibleTime = false } = {}) => {
   for (const field of FORBIDDEN_DIRECT_TIME_FIELDS) {
     if (field === 'name') {
       if (body[field] !== undefined) {
-        throw Object.assign(
-          new Error(`${field} cannot be set directly. Use shiftTemplateId to select a default shift slot.`),
-          { status: 400 }
-        );
+        throw apiErr(CODES.SHIFT_TEMPLATE_INVALID, {
+          statusCode: 400,
+          params: { field },
+        });
       }
       continue;
     }
     if (!isFlexibleTime && body[field] !== undefined) {
-      throw Object.assign(
-        new Error(`${field} cannot be set directly. Use shiftTemplateId to select a default shift slot.`),
-        { status: 400 }
-      );
+      throw apiErr(CODES.SHIFT_TEMPLATE_INVALID, {
+        statusCode: 400,
+        params: { field },
+      });
     }
   }
 };
 
 const loadSystemShiftTemplate = async (shiftTemplateId) => {
   if (!shiftTemplateId) {
-    throw Object.assign(new Error('shiftTemplateId là bắt buộc'), { status: 400 });
+    throw apiErr(CODES.SHIFT_TEMPLATE_ID_REQUIRED, { statusCode: 400 });
   }
 
   const template = await shiftTemplateRepo.findById(shiftTemplateId);
   if (!template || !template.isSystem) {
-    throw Object.assign(new Error('Mẫu ca không hợp lệ. Phải là một trong các ca mặc định của hệ thống.'), {
-      status: 400,
-    });
+    throw apiErr(CODES.SHIFT_TEMPLATE_INVALID, { statusCode: 400 });
   }
   if (template.status !== 'active') {
-    throw Object.assign(new Error('Mẫu ca chưa ở trạng thái hoạt động'), { status: 400 });
+    throw apiErr(CODES.SHIFT_TEMPLATE_INACTIVE, { statusCode: 400 });
   }
   return template;
 };
@@ -446,10 +503,7 @@ const resolveShiftTemplate = async (shiftTemplateId, { startTime, endTime } = {}
   }
 
   if (startTime !== undefined || endTime !== undefined) {
-    throw Object.assign(
-      new Error('startTime/endTime chỉ được dùng với mẫu ca gãy (SPLIT)'),
-      { status: 400 }
-    );
+    throw apiErr(CODES.SHIFT_TIME_INVALID, { statusCode: 400 });
   }
 
   const totalHours =
@@ -472,7 +526,7 @@ const createShift = async (body, actorUserId) => {
   const { workDate, assignedStaffId, shiftTemplateId, taskDescription, notes, startTime, endTime } = body;
 
   if (!workDate || !assignedStaffId || !shiftTemplateId) {
-    throw Object.assign(new Error('shiftTemplateId, workDate và assignedStaffId là bắt buộc'), { status: 400 });
+    throw apiErr(CODES.SHIFT_REQUIRED_FIELDS, { statusCode: 400 });
   }
 
   const template = await loadSystemShiftTemplate(shiftTemplateId);
@@ -525,9 +579,9 @@ const createShift = async (body, actorUserId) => {
 
 const publishShift = async (id, actorUserId) => {
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
+  if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
   if (shift.status !== 'draft')
-    throw Object.assign(new Error(`Chỉ có thể publish ca ở trạng thái nháp (trạng thái hiện tại: ${shift.status})`), { status: 400 });
+    throw apiErr(CODES.SHIFT_PUBLISH_DRAFT_ONLY, { statusCode: 400, params: { status: shift.status } });
 
   const conflicts = await checkConflicts({
     assignedStaffId: shift.assignedStaffId._id || shift.assignedStaffId,
@@ -539,10 +593,7 @@ const publishShift = async (id, actorUserId) => {
   });
 
   if (hasErrors(conflicts))
-    throw Object.assign(new Error('Không thể publish: còn xung đột chặn. Vui lòng xử lý các lỗi mức ERROR trước.'), {
-      status: 409,
-      conflicts,
-    });
+    raiseShiftErr(CODES.SHIFT_PUBLISH_CONFLICT, { statusCode: 409, conflicts });
 
   const logEntry = { changedBy: actorUserId, fieldsChanged: ['status'], oldValues: { status: 'draft' }, newValues: { status: 'published' }, reason: 'Published' };
   const updated = await shiftRepo.updateById(id, {
@@ -556,9 +607,9 @@ const publishShift = async (id, actorUserId) => {
 
 const confirmShift = async (id, actorUser) => {
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
+  if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
   if (shift.status !== 'published')
-    throw Object.assign(new Error(`Chỉ có thể xác nhận ca ở trạng thái đã đăng (trạng thái hiện tại: ${shift.status})`), { status: 400 });
+    throw apiErr(CODES.SHIFT_CONFIRM_PUBLISHED_ONLY, { statusCode: 400, params: { status: shift.status } });
 
   await assertActorMayConfirmShift(shift, actorUser);
 
@@ -572,12 +623,13 @@ const confirmShift = async (id, actorUser) => {
   return updated;
 };
 
-const updateShift = async (id, body, actorUserId, isAdmin = false) => {
+const updateShift = async (id, body, actorUser, isAdmin = false, req = null) => {
+  const actorUserId = actorUser._id;
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
+  if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
 
   if (['completed', 'confirmed'].includes(shift.status))
-    throw Object.assign(new Error(`Không thể chỉnh sửa ca ở trạng thái '${shift.status}'`), { status: 400 });
+    throw apiErr(CODES.SHIFT_EDIT_STATUS_INVALID, { statusCode: 400, params: { status: shift.status } });
 
   if (!isAdmin) {
     const now = new Date();
@@ -586,7 +638,7 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
     shiftStart.setHours(h, m, 0, 0);
     const diffMs = shiftStart - now;
     if (diffMs < 2 * 60 * 60 * 1000)
-      throw Object.assign(new Error('Không thể chỉnh sửa ca khi còn dưới 2 giờ trước khi bắt đầu'), { status: 400 });
+      throw apiErr(CODES.SHIFT_EDIT_TOO_LATE, { statusCode: 400 });
   }
 
   const reason = body.changeReason?.trim() || null;
@@ -611,7 +663,7 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
     }
   }
 
-  if (!fieldsChanged.length) throw Object.assign(new Error('Không phát hiện thay đổi nào'), { status: 400 });
+  if (!fieldsChanged.length) throw apiErr(CODES.SHIFT_NO_CHANGES, { statusCode: 400 });
 
   const updatedDate = body.workDate ? parseWorkDateUtc(body.workDate) : shift.workDate;
 
@@ -700,6 +752,18 @@ const updateShift = async (id, body, actorUserId, isAdmin = false) => {
   triggerReadinessSyncForWorkDate(shift.workDate);
   if (body.workDate) triggerReadinessSyncForWorkDate(updatedDate);
 
+  const updatedPopulated = await shiftRepo.findById(id);
+  await writeShiftAuditLog({
+    actorUser,
+    action: 'UPDATE_SHIFT',
+    displayAction: 'Cập nhật ca làm việc',
+    shiftBefore: shift,
+    shiftAfter: updatedPopulated,
+    description: `Cập nhật ca ${buildShiftTargetName(shift)}. Trường đổi: ${logEntry.fieldsChanged.join(', ')}`,
+    metadata: { fieldsChanged: logEntry.fieldsChanged, changeReason: reason },
+    req,
+  });
+
   return { shift: enrichShift(updated), conflicts };
 };
 
@@ -759,29 +823,40 @@ const autoCancelUnconfirmedPublishedShifts = async () => {
   return { cancelled, skipped };
 };
 
-const cancelShift = async (id, actorUserId, reason = 'Cancelled') => {
+const cancelShift = async (id, actorUser, reason = 'Cancelled', req = null) => {
+  const actorUserId = actorUser._id;
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
+  if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
   if (!['published', 'confirmed'].includes(shift.status)) {
-    throw Object.assign(
-      new Error('Chỉ được hủy ca ở trạng thái Đã đăng hoặc Đã xác nhận. Ca nháp hãy dùng Xóa.'),
-      { status: 400 }
-    );
+    throw apiErr(CODES.SHIFT_CANCEL_INVALID, { statusCode: 400 });
   }
 
   await assertNoActiveCareTasksForShift(id);
 
   const logEntry = { changedBy: actorUserId, fieldsChanged: ['status'], oldValues: { status: shift.status }, newValues: { status: 'cancelled' }, reason };
-  const cancelled = await shiftRepo.updateById(id, { status: 'cancelled', $push: { changeLog: logEntry } });
+  await shiftRepo.updateById(id, { status: 'cancelled', $push: { changeLog: logEntry } });
+  const cancelled = await shiftRepo.findById(id);
   triggerReadinessSyncForWorkDate(shift.workDate);
+
+  await writeShiftAuditLog({
+    actorUser,
+    action: 'CANCEL_SHIFT',
+    displayAction: 'Hủy ca làm việc',
+    shiftBefore: shift,
+    shiftAfter: cancelled,
+    description: `Hủy ca ${buildShiftTargetName(shift)}. Lý do: ${reason}`,
+    metadata: { reason, previousStatus: shift.status },
+    req,
+  });
+
   return cancelled;
 };
 
 const deleteShift = async (id) => {
   const shift = await shiftRepo.findById(id);
-  if (!shift) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
+  if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
   if (shift.status !== 'draft')
-    throw Object.assign(new Error('Chỉ có thể xóa ca ở trạng thái nháp. Hãy dùng hủy cho các trạng thái khác.'), { status: 400 });
+    throw apiErr(CODES.SHIFT_DELETE_DRAFT_ONLY, { statusCode: 400 });
 
   await assertNoActiveCareTasksForShift(id);
 
@@ -791,7 +866,7 @@ const deleteShift = async (id) => {
 
 const getShift = async (id, actorUser = null) => {
   const s = await shiftRepo.findById(id);
-  if (!s) throw Object.assign(new Error('Không tìm thấy ca làm việc'), { status: 404 });
+  if (!s) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
   await assertActorMayViewShift(s, actorUser);
   return enrichShift(s);
 };
@@ -859,7 +934,7 @@ const previewConflicts = async (query) => {
   const { assignedStaffId, workDate, excludeId, shiftTemplateId, startTime, endTime } = query;
 
   if (!assignedStaffId || !workDate || !shiftTemplateId) {
-    throw Object.assign(new Error('assignedStaffId, workDate và shiftTemplateId là bắt buộc'), { status: 400 });
+    throw apiErr(CODES.SHIFT_REQUIRED_FIELDS, { statusCode: 400 });
   }
 
   const {

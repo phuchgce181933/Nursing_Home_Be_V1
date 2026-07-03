@@ -53,7 +53,7 @@ const assertAssignableStaffByUserId = async (userId) => {
 const assertCareTaskAssigneeRole = (role) => {
   if (!CARE_TASK_ASSIGNEE_ROLES.includes(String(role || '').trim().toLowerCase())) {
     throw new ServiceError(
-      'Chỉ có thể giao nhiệm vụ chăm sóc cho y tá hoặc bác sĩ',
+      'Chỉ có thể giao nhiệm vụ chăm sóc cho y tá, bác sĩ hoặc chăm sóc viên',
       400
     );
   }

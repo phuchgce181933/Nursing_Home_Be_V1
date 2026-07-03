@@ -15,7 +15,7 @@ const {
   getAreaCoverageStatus,
 } = require('../controllers/staffController');
 const { protect, authorize } = require('../middleware/auth');
-const { uploadAvatar } = require('../middleware/uploadMiddleware');
+const { uploadAvatarAndCertifications } = require('../middleware/uploadMiddleware');
 
 /**
  * @swagger
@@ -171,7 +171,7 @@ router.get('/:id', protect, authorize('admin'), getStaffProfile);
  * @swagger
  * /api/staff/{id}:
  *   put:
- *     summary: Update basic staff profile info (STT 1). Upload avatar as multipart/form-data field "avatar".
+ *     summary: Update basic staff profile info (STT 1). Upload avatar or certification images as multipart/form-data.
  *     tags: [Staff]
  *     security:
  *       - BearerAuth: []
@@ -205,17 +205,22 @@ router.get('/:id', protect, authorize('admin'), getStaffProfile);
  *                 type: array
  *                 items:
  *                   type: string
-  *               avatar:
-  *                 type: string
-  *                 format: binary
-  *               password:
-  *                 type: string
-  *                 description: "Min 8 chars, at least 1 letter + 1 digit"
+ *               certificationFiles:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *               removedCertPublicIds:
+ *                 type: string
+ *                 description: JSON array of Cloudinary publicId values for certification images to remove
+ *               avatar:
+ *                 type: string
+ *                 format: binary
  *     responses:
  *       200:
  *         description: Profile updated (security fields not editable here)
  */
-router.put('/:id', protect, authorize('admin'), uploadAvatar, updateStaffProfile);
+router.put('/:id', protect, authorize('admin'), uploadAvatarAndCertifications, updateStaffProfile);
 
 /**
  * @swagger

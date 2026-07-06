@@ -117,6 +117,8 @@ const createMedication = async (user, body, req) => {
 	const name = body.name ? String(body.name).trim() : '';
 	if (!name) throw new ServiceError('name is required', 400);
 
+	if (!/^[A-Za-z]/.test(name)) throw new ServiceError('name must start with a letter', 400);
+
 	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel < 0)) {
 		throw new ServiceError('minStockLevel must be a non-negative number', 400);
 	}

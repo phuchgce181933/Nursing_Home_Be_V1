@@ -1,4 +1,4 @@
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const careTaskRepo = require('../repositories/careTaskRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const userRepo = require('../repositories/userRepository');
@@ -49,7 +49,7 @@ const resolveStaffProfileId = async (staffProfileId, userId) => {
     const byUser = await staffProfileRepo.findByUserId(userId);
     if (byUser) return byUser;
   }
-  throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
+  throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 };
 
 const buildShiftTimeLabel = (shifts) =>
@@ -69,19 +69,19 @@ const isScheduledTimeWithinShift = (scheduledTime, shift) => {
 };
 
 const parseWorkDateStr = (workDateInput) => {
-  if (!workDateInput) throw new ServiceError('workDate là bắt buộc (YYYY-MM-DD)', 400);
+  if (!workDateInput) throw apiErr(CODES.WORK_DATE_REQUIRED, { statusCode: 400 });
   try {
     const workDateStr = String(workDateInput).trim();
     parseWorkDate(workDateStr);
     return workDateStr;
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.WORK_DATE_INVALID_FORMAT, { statusCode: 400 });
   }
 };
 
 const assertWorkDateNotPast = (workDateStr) => {
   if (workDateStr < todayVN()) {
-    throw new ServiceError('Không thể phân công cho ngày trong quá khứ', 400);
+    throw apiErr(CODES.CARE_TASK_PAST_DATE, { statusCode: 400 });
   }
 };
 
@@ -242,15 +242,24 @@ const assignCareTask = async (body, actorUserId) => {
     !shiftId ||
     !scheduledTime
   ) {
-    throw new ServiceError(
-      'staffProfileId (hoặc userId), residentId, shiftId, taskType, careLevel, workDate và scheduledTime là bắt buộc',
-      400
-    );
+    throw apiErr(CODES.FIELD_REQUIRED, {
+      statusCode: 400,
+      params: {
+        field:
+          'staffProfileId (or userId), residentId, shiftId, taskType, careLevel, workDate, scheduledTime',
+      },
+    });
   }
   if (!CARE_TASK_TYPES.includes(taskType))
-    throw new ServiceError(`taskType phải thuộc một trong: ${CARE_TASK_TYPES.join(', ')}`, 400);
+    throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+      statusCode: 400,
+      params: { field: 'taskType', allowed: CARE_TASK_TYPES.join(', ') },
+    });
   if (!CARE_LEVELS.includes(careLevel))
-    throw new ServiceError(`careLevel phải thuộc một trong: ${CARE_LEVELS.join(', ')}`, 400);
+    throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+      statusCode: 400,
+      params: { field: 'careLevel', allowed: CARE_LEVELS.join(', ') },
+    });
 
   const profile = await resolveStaffProfileId(staffProfileIdInput, userId);
   const staffProfileId = profile._id;
@@ -262,7 +271,7 @@ const assignCareTask = async (body, actorUserId) => {
   try {
     parseWorkDate(workDateStr);
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.WORK_DATE_INVALID_FORMAT, { statusCode: 400 });
   }
   assertWorkDateNotPast(workDateStr);
 
@@ -270,54 +279,57 @@ const assignCareTask = async (body, actorUserId) => {
   const staffUserId = profile.userId?._id || profile.userId;
   const onLeave = await leaveRequestRepo.findApprovedOverlapping(staffUserId, workDateObj, workDateObj);
   if (onLeave.length) {
-    throw new ServiceError('Nhân viên đang có đơn nghỉ đã duyệt trong ngày này nên không thể được giao nhiệm vụ', 400);
+    throw apiErr(CODES.CARE_TASK_LEAVE_BLOCKS, { statusCode: 400 });
   }
 
   const shiftsOnDate = await shiftRepo.findActiveShiftsForStaffOnDate(staffProfileId, workDateObj);
   if (!shiftsOnDate.length) {
-    throw new ServiceError(
-      'Nhân viên không có ca đã đăng hoặc đã xác nhận trong ngày này. Hãy phân ca trước khi tạo nhiệm vụ chăm sóc.',
-      400
-    );
+    throw apiErr(CODES.CARE_TASK_SHIFT_STATUS_INVALID, { statusCode: 400 });
   }
 
   const scheduledTimeTrimmed = scheduledTime?.trim();
   if (!scheduledTimeTrimmed || toMinutes(scheduledTimeTrimmed) === null) {
-    throw new ServiceError('scheduledTime phải đúng định dạng HH:mm', 400);
+    throw apiErr(CODES.FIELD_INVALID_FORMAT, {
+      statusCode: 400,
+      params: { field: 'scheduledTime', format: 'HH:mm' },
+    });
   }
 
   const assertShiftEligibleForCareTask = (shift) => {
     if (!['published', 'confirmed'].includes(shift.status)) {
-      throw new ServiceError('Ca phải ở trạng thái đã đăng hoặc đã xác nhận để giao nhiệm vụ chăm sóc', 400);
+      throw apiErr(CODES.CARE_TASK_SHIFT_STATUS_INVALID, { statusCode: 400 });
     }
     const shiftDateStr = workDateToVNString(shift.workDate);
     if (shiftDateStr !== workDateStr) {
-      throw new ServiceError('workDate của ca phải trùng với workDate của nhiệm vụ chăm sóc', 400);
+      throw apiErr(CODES.CARE_TASK_SHIFT_DATE_MISMATCH, { statusCode: 400 });
     }
   };
 
   const shiftMatch = shiftsOnDate.find((s) => s._id.toString() === String(shiftId));
   if (!shiftMatch) {
-    throw new ServiceError('shiftId không thuộc nhân viên này trong workDate đã chọn', 400);
+    throw apiErr(CODES.CARE_TASK_SHIFT_NOT_OWNED, { statusCode: 400 });
   }
   if (!isScheduledTimeWithinShift(scheduledTimeTrimmed, shiftMatch)) {
-    throw new ServiceError('scheduledTime phải nằm trong khung thời gian của ca đã chọn', 400);
+    throw apiErr(CODES.CARE_TASK_TIME_OUTSIDE_SHIFT, { statusCode: 400 });
   }
 
   assertShiftEligibleForCareTask(shiftMatch);
 
   if (isShiftEnded(workDateStr, shiftMatch.startTime, shiftMatch.endTime, nowVN())) {
-    throw new ServiceError('Không thể phân công nhiệm vụ cho ca đã kết thúc', 400);
+    throw apiErr(CODES.CARE_TASK_SHIFT_ENDED, { statusCode: 400 });
   }
 
   let effectiveAt;
   try {
     effectiveAt = buildTaskDateTime(workDateStr, scheduledTimeTrimmed);
   } catch {
-    throw new ServiceError('scheduledTime phải đúng định dạng HH:mm', 400);
+    throw apiErr(CODES.FIELD_INVALID_FORMAT, {
+      statusCode: 400,
+      params: { field: 'scheduledTime', format: 'HH:mm' },
+    });
   }
   if (effectiveAt < nowVN()) {
-    throw new ServiceError('Thời gian nhiệm vụ phải từ thời điểm hiện tại trở đi', 400);
+    throw apiErr(CODES.CARE_TASK_TIME_PAST, { statusCode: 400 });
   }
 
   const resolvedShiftId = shiftMatch._id;
@@ -326,7 +338,7 @@ const assignCareTask = async (body, actorUserId) => {
     path: 'roomId',
     select: 'roomNumber floorId',
   });
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
 
   const profileWithAreas = await StaffProfile.findById(staffProfileId)
     .populate('responsibleAreaIds')
@@ -334,17 +346,11 @@ const assignCareTask = async (body, actorUserId) => {
 
   const assignedIds = (profileWithAreas?.assignedResidentIds || []).map((r) => String(r._id || r));
   if (!assignedIds.includes(String(residentId))) {
-    throw new ServiceError(
-      'Cư dân phải được gán cho nhân viên này ở tab Cư dân trước khi tạo nhiệm vụ chăm sóc',
-      400
-    );
+    throw apiErr(CODES.STAFF_RESIDENTS_OUTSIDE_AREA, { statusCode: 400 });
   }
 
   if (!residentCoversStaffArea(resident, profileWithAreas)) {
-    throw new ServiceError(
-      'Cư dân không thuộc tầng/phòng phụ trách của nhân viên. Hãy cập nhật khu vực hoặc phân công cư dân trước.',
-      400
-    );
+    throw apiErr(CODES.CARE_TASK_RESIDENT_OUTSIDE_AREA, { statusCode: 400 });
   }
 
   const created = await careTaskRepo.create({
@@ -363,19 +369,19 @@ const assignCareTask = async (body, actorUserId) => {
   triggerReadinessSyncForWorkDate(workDateStr);
 
   const task = await careTaskRepo.findById(created._id);
-  return { message: 'Giao nhiệm vụ chăm sóc thành công', task };
+  return { ...apiSuccess(SUCCESS.CARE_TASK_ASSIGNED), task };
 };
 
 const assertValidObjectId = (value, label) => {
   const mongoose = require('mongoose');
   if (!mongoose.Types.ObjectId.isValid(String(value))) {
-    throw new ServiceError(`${label} không hợp lệ`, 400);
+    throw apiErr(CODES.CAREGIVER_INVALID_OBJECT_ID, { statusCode: 400, params: { label } });
   }
 };
 
 const listCareTasks = async (filter = {}, options = {}) => {
   if (!filter.workDate || String(filter.workDate).trim() === '') {
-    throw new ServiceError('workDate là bắt buộc (YYYY-MM-DD)', 400);
+    throw apiErr(CODES.WORK_DATE_REQUIRED, { statusCode: 400 });
   }
 
   await autoSkipTasksPastShiftEnd();
@@ -395,12 +401,18 @@ const listCareTasks = async (filter = {}, options = {}) => {
   }
   if (filter.status) {
     if (!CARE_TASK_STATUSES.includes(filter.status))
-      throw new ServiceError(`status phải thuộc một trong: ${CARE_TASK_STATUSES.join(', ')}`, 400);
+      throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+        statusCode: 400,
+        params: { field: 'status', allowed: CARE_TASK_STATUSES.join(', ') },
+      });
     query.status = filter.status;
   }
   if (filter.taskType) {
     if (!CARE_TASK_TYPES.includes(filter.taskType))
-      throw new ServiceError(`taskType phải thuộc một trong: ${CARE_TASK_TYPES.join(', ')}`, 400);
+      throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+        statusCode: 400,
+        params: { field: 'taskType', allowed: CARE_TASK_TYPES.join(', ') },
+      });
     query.taskType = filter.taskType;
   }
 
@@ -408,7 +420,7 @@ const listCareTasks = async (filter = {}, options = {}) => {
   try {
     checkDate = parseWorkDate(String(filter.workDate).trim());
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.WORK_DATE_INVALID_FORMAT, { statusCode: 400 });
   }
   const start = new Date(checkDate);
   const end = new Date(checkDate.getTime() + 24 * 60 * 60 * 1000 - 1);
@@ -429,7 +441,7 @@ const listCareTasks = async (filter = {}, options = {}) => {
 const getCareTask = async (id) => {
   await autoSkipTasksPastShiftEnd();
   const task = await careTaskRepo.findById(id);
-  if (!task) throw new ServiceError('Không tìm thấy nhiệm vụ chăm sóc', 404);
+  if (!task) throw apiErr(CODES.CARE_TASK_NOT_FOUND, { statusCode: 404 });
   return task;
 };
 
@@ -437,13 +449,13 @@ const ASSIGNEE_ONLY_STATUSES = ['in_progress', 'completed'];
 
 const updateCareTaskStatus = async (id, status, notes, actorUser) => {
   const task = await careTaskRepo.findById(id);
-  if (!task) throw new ServiceError('Không tìm thấy nhiệm vụ chăm sóc', 404);
+  if (!task) throw apiErr(CODES.CARE_TASK_NOT_FOUND, { statusCode: 404 });
 
   if (!MANUAL_STATUS_UPDATES.includes(status)) {
-    throw new ServiceError(
-      'Chỉ có thể cập nhật thủ công sang in_progress, completed hoặc skipped (bỏ qua). Trạng thái missed (bỏ lỡ) do hệ thống tự gán khi hết ca.',
-      400
-    );
+    throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+      statusCode: 400,
+      params: { field: 'status', allowed: MANUAL_STATUS_UPDATES.join(', ') },
+    });
   }
 
   if (ASSIGNEE_ONLY_STATUSES.includes(status)) {
@@ -453,7 +465,10 @@ const updateCareTaskStatus = async (id, status, notes, actorUser) => {
 
   const allowed = VALID_TRANSITIONS[task.status];
   if (!allowed.includes(status))
-    throw new ServiceError(`Không thể chuyển trạng thái từ '${task.status}' sang '${status}'`, 400);
+    throw apiErr(CODES.CARE_TASK_STATUS_TRANSITION_INVALID, {
+      statusCode: 400,
+      params: { from: task.status, to: status },
+    });
 
   const update = { status };
   if (notes) update.notes = notes.trim();
@@ -471,11 +486,11 @@ const getCareTasksByShift = async (shiftId) => {
 
 const deleteCareTask = async (id) => {
   const task = await careTaskRepo.findById(id);
-  if (!task) throw new ServiceError('Không tìm thấy nhiệm vụ chăm sóc', 404);
+  if (!task) throw apiErr(CODES.CARE_TASK_NOT_FOUND, { statusCode: 404 });
   if (task.status !== 'pending')
-    throw new ServiceError('Chỉ có thể xóa nhiệm vụ ở trạng thái chờ', 400);
+    throw apiErr(CODES.CARE_TASK_DELETE_PENDING_ONLY, { statusCode: 400 });
   await careTaskRepo.deleteById(id);
-  return { deleted: true };
+  return { ...apiSuccess(SUCCESS.CARE_TASK_DELETED), deleted: true };
 };
 
 module.exports = {

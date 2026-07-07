@@ -6,6 +6,8 @@ const {
   getActivity,
   updateActivity,
   deleteActivity,
+  bulkDeleteActivities,
+  bulkUpdateActivityStatus,
   updateActivityStatus,
   setParticipantList,
   registerResident,
@@ -179,6 +181,9 @@ router.get('/statistics', protect, authorize('admin'), getActivityStatistics);
  *       404:
  *         description: Activity not found
  */
+router.delete('/bulk', protect, authorize('admin'), bulkDeleteActivities);
+router.patch('/bulk/status', protect, authorize('admin'), bulkUpdateActivityStatus);
+
 router.get('/:activityId', protect, authorize('admin', 'doctor', 'nurse', 'family'), getActivity);
 
 /**
@@ -416,6 +421,6 @@ router.post('/:activityId/register', protect, authorize('admin', 'family'), regi
  *       404:
  *         description: Activity not found
  */
-router.post('/:activityId/record-result', protect, authorize('admin'), recordParticipationResult);
+router.post('/:activityId/record-result', protect, authorize('admin', 'nurse'), recordParticipationResult);
 
 module.exports = router;

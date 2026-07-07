@@ -11,7 +11,16 @@ const createActivity = async (req, res) => {
 
 const listActivities = async (req, res) => {
   try {
-    const result = await activityService.listActivities(req.query);
+    const query = { ...req.query };
+    // Nurses can only see activities where they are assigned as organizers
+    if (req.user) {
+      const userRole = String(req.user.role || '').toLowerCase();
+      const isNurse = userRole.includes('nurse') || userRole.includes('y tá') || userRole.includes('điều dưỡng');
+      if (isNurse) {
+        query.organizerStaffId = req.user._id.toString();
+      }
+    }
+    const result = await activityService.listActivities(query);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -39,6 +48,24 @@ const updateActivity = async (req, res) => {
 const deleteActivity = async (req, res) => {
   try {
     const result = await activityService.deleteActivity(req.params.activityId);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const bulkDeleteActivities = async (req, res) => {
+  try {
+    const result = await activityService.bulkDeleteActivities(req.query);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const bulkUpdateActivityStatus = async (req, res) => {
+  try {
+    const result = await activityService.bulkUpdateActivityStatus(req.query, req.body?.status);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -105,6 +132,8 @@ module.exports = {
   getActivity,
   updateActivity,
   deleteActivity,
+  bulkDeleteActivities,
+  bulkUpdateActivityStatus,
   updateActivityStatus,
   setParticipantList,
   registerResident,

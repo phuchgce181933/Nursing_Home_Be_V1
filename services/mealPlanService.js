@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiError');
 const mealPlanDayRepo = require('../repositories/mealPlanDayRepository');
 const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
@@ -105,24 +105,24 @@ const parseWorkDateStrict = (workDate) => {
   try {
     parseWorkDate(str);
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.MEAL_WORK_DATE_INVALID, { statusCode: 400 });
   }
   return str;
 };
 
 const assertValidObjectId = (value, label) => {
   if (!mongoose.Types.ObjectId.isValid(String(value || ''))) {
-    throw new ServiceError(`${label} không hợp lệ`, 400);
+    throw apiErr(CODES.MEAL_OBJECT_ID_INVALID, { statusCode: 400, params: { label } });
   }
 };
 
 const resolveMealTimeFromSchedule = (residentId, mealType, scheduleCache) => {
   const times = scheduleCache?.byResident?.[String(residentId)];
   if (!times?.[mealType]) {
-    throw new ServiceError(
-      `Cư dân không có giờ ${mealType} trong lịch giờ ăn đã chọn`,
-      400
-    );
+    throw apiErr(CODES.MEAL_RESIDENT_NO_MEAL_TIME_IN_SCHEDULE, {
+      statusCode: 400,
+      params: { mealType },
+    });
   }
   return times[mealType];
 };
@@ -131,13 +131,19 @@ const validateEntry = (entry, index, mealTimeOverride) => {
   const row = entry || {};
   assertValidObjectId(row.residentId, `entries[${index}].residentId`);
   if (!MEAL_TYPES.includes(row.mealType)) {
-    throw new ServiceError(`entries[${index}].mealType phải thuộc một trong: ${MEAL_TYPES.join(', ')}`, 400);
+    throw apiErr(CODES.MEAL_ENTRY_TYPE_INVALID, {
+      statusCode: 400,
+      params: { index, allowed: MEAL_TYPES.join(', ') },
+    });
   }
   if (!row.mealName || !String(row.mealName).trim()) {
-    throw new ServiceError(`entries[${index}].mealName là bắt buộc`, 400);
+    throw apiErr(CODES.MEAL_ENTRY_NAME_REQUIRED, { statusCode: 400, params: { index } });
   }
   if (row.source && !VALID_ENTRY_SOURCES.includes(row.source)) {
-    throw new ServiceError(`entries[${index}].source phải thuộc một trong: ${VALID_ENTRY_SOURCES.join(', ')}`, 400);
+    throw apiErr(CODES.MEAL_ENTRY_SOURCE_INVALID, {
+      statusCode: 400,
+      params: { index, allowed: VALID_ENTRY_SOURCES.join(', ') },
+    });
   }
   return {
     residentId: String(row.residentId),
@@ -177,7 +183,7 @@ const resolveMealTimeScheduleDayId = (body, existingDay) => {
   if (fromBody) return String(fromBody).trim();
   const fromDay = existingDay?.mealTimeScheduleDayId?._id || existingDay?.mealTimeScheduleDayId;
   if (fromDay) return String(fromDay);
-  throw new ServiceError('mealTimeScheduleDayId là bắt buộc — hãy chọn lịch giờ ăn đã đăng', 400);
+  throw apiErr(CODES.MEAL_TIME_SCHEDULE_REQUIRED, { statusCode: 400 });
 };
 
 const assertEntryMealTimesFromNow = (entries, workDateStr) => {
@@ -185,16 +191,16 @@ const assertEntryMealTimesFromNow = (entries, workDateStr) => {
   const now = nowVN();
   for (const [index, entry] of entries.entries()) {
     if (toMinutes(entry.mealTime) === null) {
-      throw new ServiceError(`entries[${index}].mealTime phải đúng định dạng HH:mm`, 400);
+      throw apiErr(CODES.MEAL_ENTRY_TIME_INVALID, { statusCode: 400, params: { index } });
     }
     try {
       const mealAt = buildTaskDateTime(workDateStr, entry.mealTime);
       if (mealAt < now) {
-        throw new ServiceError(`entries[${index}].mealTime phải từ thời điểm hiện tại trở đi cho ngày hôm nay`, 400);
+        throw apiErr(CODES.MEAL_ENTRY_TIME_PAST_TODAY, { statusCode: 400, params: { index } });
       }
     } catch (err) {
-      if (err instanceof ServiceError) throw err;
-      throw new ServiceError(`entries[${index}].mealTime phải đúng định dạng HH:mm`, 400);
+      if (err instanceof ApiError) throw err;
+      throw apiErr(CODES.MEAL_ENTRY_TIME_INVALID, { statusCode: 400, params: { index } });
     }
   }
 };
@@ -232,7 +238,7 @@ const getTemplates = async () => ({
 
 const listResidentsForMealPlan = async (params = {}, actorUser) => {
   if (!actorUser?._id) {
-    throw new ServiceError('Không xác định được người dùng', 401);
+    throw apiErr(CODES.MEAL_USER_NOT_IDENTIFIED, { statusCode: 401 });
   }
   return listAssignedAdmittedResidentsForUser(actorUser._id, { search: params.search });
 };
@@ -240,26 +246,29 @@ const listResidentsForMealPlan = async (params = {}, actorUser) => {
 const createDraft = async (body, actorUserId) => {
   const workDate = parseWorkDateStrict(body.workDate);
   if (workDate < todayVN()) {
-    throw new ServiceError('Không thể tạo meal plan cho ngày trong quá khứ', 400);
+    throw apiErr(CODES.MEAL_PAST_DATE_NOT_ALLOWED, { statusCode: 400 });
   }
   const mealTimeScheduleDayId = resolveMealTimeScheduleDayId(body);
   const careStage = String(body.careStage || '').trim();
   if (!MEAL_STAGES.includes(careStage)) {
-    throw new ServiceError(`careStage phải thuộc một trong: ${MEAL_STAGES.join(', ')}`, 400);
+    throw apiErr(CODES.MEAL_CARE_STAGE_INVALID, {
+      statusCode: 400,
+      params: { allowed: MEAL_STAGES.join(', ') },
+    });
   }
   const entriesInput = Array.isArray(body.entries) ? body.entries : [];
-  if (!entriesInput.length) throw new ServiceError('entries là bắt buộc và không được để trống', 400);
+  if (!entriesInput.length) throw apiErr(CODES.MEAL_ENTRIES_REQUIRED, { statusCode: 400 });
   const entries = await normalizeEntriesWithSchedule(entriesInput, workDate, mealTimeScheduleDayId);
   assertEntryMealTimesFromNow(entries, workDate);
   await assertNoMealPlanConflicts({ workDate, entries });
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
   if (residentIds.length < 1) {
-    throw new ServiceError('Meal plan phải có ít nhất 1 cư dân', 400);
+    throw apiErr(CODES.MEAL_NO_RESIDENTS, { statusCode: 400 });
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
   const residentCount = await Resident.countDocuments({ _id: { $in: residentIds } });
   if (residentCount !== residentIds.length) {
-    throw new ServiceError('Có cư dân trong danh sách entries không tồn tại', 400);
+    throw apiErr(CODES.MEAL_RESIDENTS_NOT_FOUND, { statusCode: 400 });
   }
 
   let createdId;
@@ -281,24 +290,27 @@ const createDraft = async (body, actorUserId) => {
     await mealPlanEntryRepo.createMany(entries.map((e) => ({ ...e, mealPlanDayId: day._id })), dbOpts);
   });
   const saved = await mealPlanDayRepo.findById(createdId);
-  return { message: 'Tạo meal plan nháp thành công', plan: await hydratePlan(saved) };
+  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_CREATED), plan: await hydratePlan(saved) };
 };
 
 const updateDraft = async (id, body, actorUserId) => {
   const day = await mealPlanDayRepo.findById(id);
-  if (!day) throw new ServiceError('Không tìm thấy meal plan', 404);
-  if (day.status !== 'draft') throw new ServiceError('Chỉ có thể cập nhật meal plan ở trạng thái nháp', 400);
+  if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
+  if (day.status !== 'draft') throw apiErr(CODES.MEAL_PLAN_DRAFT_ONLY_EDIT, { statusCode: 400 });
 
   const updatePayload = {};
   if (body.workDate !== undefined) {
     const workDate = parseWorkDateStrict(body.workDate);
-    if (workDate < todayVN()) throw new ServiceError('Không thể cập nhật meal plan về ngày quá khứ', 400);
+    if (workDate < todayVN()) throw apiErr(CODES.MEAL_PAST_DATE_NOT_ALLOWED, { statusCode: 400 });
     updatePayload.workDate = new Date(workDate);
   }
   if (body.careStage !== undefined) {
     const careStage = String(body.careStage || '').trim();
     if (!MEAL_STAGES.includes(careStage)) {
-      throw new ServiceError(`careStage phải thuộc một trong: ${MEAL_STAGES.join(', ')}`, 400);
+      throw apiErr(CODES.MEAL_CARE_STAGE_INVALID, {
+        statusCode: 400,
+        params: { allowed: MEAL_STAGES.join(', ') },
+      });
     }
     updatePayload.careStage = careStage;
   }
@@ -317,7 +329,7 @@ const updateDraft = async (id, body, actorUserId) => {
   const normalizedEntries = hasEntries
     ? await normalizeEntriesWithSchedule(body.entries, targetWorkDateStr, mealTimeScheduleDayId)
     : null;
-  if (hasEntries && !normalizedEntries.length) throw new ServiceError('entries không được để trống', 400);
+  if (hasEntries && !normalizedEntries.length) throw apiErr(CODES.MEAL_ENTRIES_EMPTY, { statusCode: 400 });
   if (normalizedEntries) {
     assertEntryMealTimesFromNow(normalizedEntries, targetWorkDateStr);
     await assertNoMealPlanConflicts({
@@ -368,7 +380,7 @@ const updateDraft = async (id, body, actorUserId) => {
     if (hasEntries) {
       const residentIds = [...new Set(normalizedEntries.map((e) => e.residentId))];
       if (residentIds.length < 1) {
-        throw new ServiceError('Meal plan phải có ít nhất 1 cư dân', 400);
+        throw apiErr(CODES.MEAL_NO_RESIDENTS, { statusCode: 400 });
       }
       await assertResidentsAssignedToUser(actorUserId, residentIds);
       await mealPlanEntryRepo.deleteByDayId(id, dbOpts);
@@ -376,7 +388,7 @@ const updateDraft = async (id, body, actorUserId) => {
     }
   });
   const saved = await mealPlanDayRepo.findById(id);
-  return { message: 'Cập nhật meal plan nháp thành công', plan: await hydratePlan(saved) };
+  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_UPDATED), plan: await hydratePlan(saved) };
 };
 
 const listPlans = async (filter = {}, options = {}) => {
@@ -404,15 +416,15 @@ const listPlans = async (filter = {}, options = {}) => {
 
 const getPlan = async (id) => {
   const day = await mealPlanDayRepo.findById(id);
-  if (!day) throw new ServiceError('Không tìm thấy meal plan', 404);
+  if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   return hydratePlan(day);
 };
 
 const deleteDraft = async (id) => {
   const day = await mealPlanDayRepo.findById(id);
-  if (!day) throw new ServiceError('Không tìm thấy meal plan', 404);
+  if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') {
-    throw new ServiceError('Chỉ có thể xóa meal plan ở trạng thái nháp', 400);
+    throw apiErr(CODES.MEAL_PLAN_DRAFT_ONLY_DELETE, { statusCode: 400 });
   }
 
   await runWithOptionalTransaction(async (session) => {
@@ -421,29 +433,39 @@ const deleteDraft = async (id) => {
     await mealPlanDayRepo.deleteById(id, dbOpts);
   });
 
-  return { message: 'Xóa meal plan nháp thành công', deleted: true, id };
+  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_DELETED), deleted: true, id };
 };
 
 const publishPlan = async (id, actorUserId) => {
   const day = await mealPlanDayRepo.findById(id);
-  if (!day) throw new ServiceError('Không tìm thấy meal plan', 404);
+  if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   if (day.status === 'published') {
-    return { message: 'Meal plan đã publish trước đó', idempotent: true, plan: await hydratePlan(day), createdExecutionRows: 0 };
+    return {
+      ...apiSuccess(SUCCESS.MEAL_PLAN_PUBLISHED),
+      idempotent: true,
+      plan: await hydratePlan(day),
+      createdExecutionRows: 0,
+    };
   }
-  if (day.status !== 'draft') throw new ServiceError(`Không thể publish meal plan ở trạng thái ${day.status}`, 400);
+  if (day.status !== 'draft') {
+    throw apiErr(CODES.MEAL_PLAN_PUBLISH_STATUS_INVALID, {
+      statusCode: 400,
+      params: { status: day.status },
+    });
+  }
   const workDate = workDateToVNString(day.workDate);
-  if (workDate < todayVN()) throw new ServiceError('Không thể publish meal plan cho ngày trong quá khứ', 400);
+  if (workDate < todayVN()) throw apiErr(CODES.MEAL_PLAN_PUBLISH_PAST_DATE, { statusCode: 400 });
 
   const entries = await mealPlanEntryRepo.findByDayId(id);
-  if (!entries.length) throw new ServiceError('Không thể publish meal plan rỗng', 400);
+  if (!entries.length) throw apiErr(CODES.MEAL_PLAN_PUBLISH_EMPTY, { statusCode: 400 });
   assertEntryMealTimesFromNow(entries, workDate);
   const residentIds = [...new Set(entries.map((e) => String(e.residentId?._id || e.residentId)))];
   if (residentIds.length < 1) {
-    throw new ServiceError('Meal plan phải có ít nhất 1 cư dân trước khi publish', 400);
+    throw apiErr(CODES.MEAL_PLAN_PUBLISH_NO_RESIDENTS, { statusCode: 400 });
   }
   const scheduleDayId = day.mealTimeScheduleDayId?._id || day.mealTimeScheduleDayId;
   if (!scheduleDayId) {
-    throw new ServiceError('Meal plan phải gắn với lịch giờ ăn đã đăng trước khi publish', 400);
+    throw apiErr(CODES.MEAL_TIME_SCHEDULE_REQUIRED, { statusCode: 400 });
   }
   await mealTimeScheduleService.assertPublishedScheduleForMealPlan(scheduleDayId, workDate, residentIds);
   await assertResidentsAssignedToUser(actorUserId, residentIds);
@@ -474,7 +496,7 @@ const publishPlan = async (id, actorUserId) => {
 
   const saved = await mealPlanDayRepo.findById(id);
   return {
-    message: 'Publish meal plan thành công',
+    ...apiSuccess(SUCCESS.MEAL_PLAN_PUBLISHED),
     plan: await hydratePlan(saved),
     createdExecutionRows: entries.length,
   };
@@ -490,4 +512,3 @@ module.exports = {
   deleteDraft,
   publishPlan,
 };
-

@@ -12,7 +12,11 @@ const findById = async (id) => Activity.findById(id);
 const findByIdAndUpdate = async (id, update) =>
   Activity.findByIdAndUpdate(id, update, { new: true, runValidators: true });
 
+const updateMany = async (filter, update) => Activity.updateMany(filter, update);
+
 const deleteById = async (id) => Activity.findByIdAndDelete(id);
+
+const deleteMany = async (filter) => Activity.deleteMany(filter);
 
 const aggregate = async (pipeline) => Activity.aggregate(pipeline);
 
@@ -22,6 +26,8 @@ module.exports = {
   count,
   findById,
   findByIdAndUpdate,
+  updateMany,
   deleteById,
+  deleteMany,
   aggregate,
 };

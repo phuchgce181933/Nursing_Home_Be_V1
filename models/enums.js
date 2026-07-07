@@ -1,7 +1,7 @@
 const ROLES = ['admin', 'doctor', 'nurse', 'caregiver', 'pharmacist', 'family', 'system'];
 const NON_ASSIGNABLE_ROLES = ['admin'];
 const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'caregiver'];
-const CARE_TASK_ASSIGNEE_ROLES = ['nurse', 'doctor'];
+const CARE_TASK_ASSIGNEE_ROLES = ['nurse', 'doctor', 'caregiver'];
 const GENDERS = ['male', 'female', 'other', 'unknown'];
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'unknown'];
 

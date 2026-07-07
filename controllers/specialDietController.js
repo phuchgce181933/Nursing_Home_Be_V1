@@ -1,30 +1,29 @@
 const svc = require('../services/specialDietService');
-
-const statusCode = (err) => err.statusCode || err.status || 500;
+const { sendApiError } = require('../utils/apiErrorResponse');
 
 const getTemplates = (req, res) =>
   svc
     .getTemplates()
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const listResidents = (req, res) =>
   svc
     .listResidentsForSpecialDiet(req.query, req.user)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const createDraft = (req, res) =>
   svc
     .createDraft(req.body, req.user._id)
     .then((data) => res.status(201).json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const updateDraft = (req, res) =>
   svc
     .updateDraft(req.params.id, req.body, req.user._id)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const listPlans = (req, res) =>
   svc
@@ -39,25 +38,25 @@ const listPlans = (req, res) =>
         totalPages: result.totalPages,
       })
     )
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const getPlan = (req, res) =>
   svc
     .getPlan(req.params.id)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const deleteDraft = (req, res) =>
   svc
     .deleteDraft(req.params.id, req.user._id)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const publishPlan = (req, res) =>
   svc
     .publishPlan(req.params.id, req.user._id)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 module.exports = {
   getTemplates,

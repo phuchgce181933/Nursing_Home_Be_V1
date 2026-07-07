@@ -1,12 +1,11 @@
 const svc = require('../services/nutritionReportService');
-
-const statusCode = (err) => err.statusCode || err.status || 500;
+const { sendApiError } = require('../utils/apiErrorResponse');
 
 const getSummary = (req, res) =>
   svc
     .getSummary(req.query, req.user)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const listResidents = (req, res) =>
   svc
@@ -22,13 +21,13 @@ const listResidents = (req, res) =>
         period: result.period,
       })
     )
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const getResidentReport = (req, res) =>
   svc
     .getResidentReport(req.params.residentId, req.query, req.user)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 module.exports = {
   getSummary,

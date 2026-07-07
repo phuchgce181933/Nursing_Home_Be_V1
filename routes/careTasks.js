@@ -18,7 +18,7 @@ const STAFF = ['admin', 'doctor', 'nurse'];
  * /api/care-tasks:
  *   post:
  *     tags: [CareTasks]
- *     summary: Assign a care task to nurse or doctor only (VN rules; auto-missed when shift ends without completion)
+ *     summary: Assign a care task to nurse, doctor, or caregiver (VN rules; auto-missed when shift ends without completion)
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
@@ -43,7 +43,7 @@ const STAFF = ['admin', 'doctor', 'nurse'];
  *               notes: { type: string }
  *     responses:
  *       201: { description: Task created with shiftId }
- *       400: { description: Validation error, assignee not nurse/doctor, past datetime, or ended shift }
+ *       400: { description: Validation error, assignee not nurse/doctor/caregiver, past datetime, or ended shift }
  */
 router.post('/', protect, authorize(...MANAGER), ctrl.assignCareTask);
 
@@ -167,7 +167,7 @@ router.get('/:id', protect, authorize(...STAFF), ctrl.getCareTask);
  *     responses:
  *       200: { description: Status updated }
  *       400: { description: Invalid transition or attempted manual missed }
- *       403: { description: in_progress/completed require the assigned nurse or doctor }
+ *       403: { description: in_progress/completed require the assigned nurse, doctor, or caregiver }
  */
 router.put('/:id/status', protect, authorize(...STAFF), ctrl.updateCareTaskStatus);
 

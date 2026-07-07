@@ -1,7 +1,6 @@
 const residentService = require('../services/residentService');
 const { createAuditLog } = require('../utils/auditLog');
-
-const statusCode = (err) => err.statusCode || err.status || 500;
+const { sendApiError } = require('../utils/apiErrorResponse');
 
 const listResidents = async (req, res) => {
   try {
@@ -25,7 +24,7 @@ const listResidents = async (req, res) => {
     }, req.user);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -34,7 +33,7 @@ const getResidentFamilyInfo = async (req, res) => {
     const result = await residentService.getResidentFamilyInfo(req.params.residentId);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -43,7 +42,7 @@ const addEmergencyContact = async (req, res) => {
     const result = await residentService.addEmergencyContact(req.params.residentId, req.body);
     res.status(201).json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -56,7 +55,7 @@ const replaceEmergencyContacts = async (req, res) => {
     const result = await residentService.replaceEmergencyContacts(req.params.residentId, contacts);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -69,7 +68,7 @@ const updateEmergencyContact = async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -81,7 +80,7 @@ const removeEmergencyContact = async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -90,7 +89,7 @@ const getResidentsAreaSummary = async (req, res) => {
     const result = await residentService.getResidentsAreaSummary(req.query);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -99,7 +98,7 @@ const listResidentsByArea = async (req, res) => {
     const result = await residentService.listResidentsByArea(req.query);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -108,7 +107,7 @@ const getResidentDetail = async (req, res) => {
     const result = await residentService.getResidentDetail(req.params.residentId);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -117,7 +116,7 @@ const getTransferTargets = async (req, res) => {
     const result = await residentService.getTransferTargets(req.params.residentId, req.query);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -144,7 +143,7 @@ const transferResidentToRoom = async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -153,7 +152,7 @@ const listResidentsForInitialHealth = async (req, res) => {
     const result = await residentService.listResidentsForInitialHealth(req.query);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -162,7 +161,7 @@ const listResidentsForPreExisting = async (req, res) => {
     const result = await residentService.listResidentsForPreExisting(req.query);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -171,7 +170,7 @@ const listResidentsForDrugAllergies = async (req, res) => {
     const result = await residentService.listResidentsForDrugAllergies(req.query);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -180,7 +179,7 @@ const getInitialHealth = async (req, res) => {
     const result = await residentService.getInitialHealth(req.params.residentId);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -189,7 +188,7 @@ const recordInitialHealth = async (req, res) => {
     const result = await residentService.recordInitialHealth(req.params.residentId, req.body);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -198,7 +197,7 @@ const getPreExistingConditions = async (req, res) => {
     const result = await residentService.getPreExistingConditions(req.params.residentId);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -207,7 +206,7 @@ const updatePreExistingConditions = async (req, res) => {
     const result = await residentService.updatePreExistingConditions(req.params.residentId, req.body);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -216,7 +215,7 @@ const getDrugAllergies = async (req, res) => {
     const result = await residentService.getDrugAllergies(req.params.residentId);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -225,7 +224,7 @@ const updateDrugAllergies = async (req, res) => {
     const result = await residentService.updateDrugAllergies(req.params.residentId, req.body);
     res.json(result);
   } catch (err) {
-    res.status(statusCode(err)).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -234,7 +233,7 @@ const adminCreateResident = async (req, res) => {
     const result = await residentService.adminCreateResident(req.user, req.body, req);
     res.status(201).json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -243,7 +242,7 @@ const adminListResidents = async (req, res) => {
     const result = await residentService.adminListResidents(req.query);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -252,7 +251,7 @@ const adminGetResident = async (req, res) => {
     const result = await residentService.adminGetResident(req.params.residentId);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -266,7 +265,7 @@ const adminUpdatePersonalInfo = async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -280,7 +279,7 @@ const adminUpdateFamilyInfo = async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 
@@ -292,7 +291,7 @@ const adminUploadAvatar = async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('adminUploadAvatar error:', err);
-    res.status(err.statusCode || 500).json({ message: err.message });
+    sendApiError(res, err);
   }
 };
 

@@ -1,5 +1,5 @@
 /**
- * Smoke test: care task assignee roles (nurse/doctor only) + status ownership
+ * Smoke test: care task assignee roles (nurse/doctor/caregiver) + status ownership
  * Run: node scripts/smoke-care-task-roles.js
  */
 require('dotenv').config({ path: '.env.local' });
@@ -133,14 +133,37 @@ async function main() {
   }
   console.log('OK: manager assigns care task to doctor');
 
+  const caregiverShift = await ensurePublishedShift(managerToken, caregiver.staffProfile._id, workDate);
+  const caregiverScheduledTime = caregiverShift.startTime || '09:00';
+  const caregiverResidentsRes = await api('GET', `/staff/${caregiver._id}/residents/assigned`, managerToken);
+  const caregiverResidents = unwrapList(caregiverResidentsRes.body);
+  if (!caregiverResidents.length) throw new Error('Caregiver has no assigned residents');
+  const caregiverResidentId = caregiverResidents[0]._id;
+
   const createCaregiver = await api('POST', '/staff/care-tasks', managerToken, {
-    ...assignPayload,
     staffProfileId: caregiver.staffProfile._id,
+    residentId: caregiverResidentId,
+    shiftId: caregiverShift._id,
+    taskType: 'meal_assistance',
+    careLevel: 'low',
+    workDate,
+    scheduledTime: caregiverScheduledTime,
   });
-  if (createCaregiver.status !== 400) {
-    throw new Error(`Assign to caregiver should be 400, got ${createCaregiver.status}`);
+  if (createCaregiver.status !== 201) {
+    throw new Error(`Assign to caregiver should be 201, got ${createCaregiver.status} ${createCaregiver.body.message}`);
   }
-  console.log('OK: caregiver assignee rejected');
+  console.log('OK: manager assigns care task to caregiver');
+
+  const caregiverTaskId = createCaregiver.body.data?.task?._id || createCaregiver.body.data?._id;
+  if (!caregiverTaskId) throw new Error('No caregiver task id from create response');
+
+  const caregiverInProgress = await api('PUT', `/caregiver/care-tasks/${caregiverTaskId}/status`, caregiverToken, {
+    status: 'in_progress',
+  });
+  if (caregiverInProgress.status !== 200) {
+    throw new Error(`Caregiver in_progress should be 200, got ${caregiverInProgress.status} ${caregiverInProgress.body.message}`);
+  }
+  console.log('OK: caregiver can set in_progress');
 
   const taskId = createDoctor.body.data?.task?._id || createDoctor.body.data?._id;
   if (!taskId) throw new Error('No task id from create response');

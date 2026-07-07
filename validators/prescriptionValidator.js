@@ -3,6 +3,13 @@ const { body, validationResult } = require('express-validator');
 const VALID_ROUTES = ['oral', 'injection', 'topical', 'inhaled'];
 const MAX_DAYS = 30;
 
+// Date-only (UTC) comparison — ignores time-of-day so "today" is always valid.
+const isDateStrInPast = (value) => {
+  const startStr = new Date(value).toISOString().slice(0, 10);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return startStr < todayStr;
+};
+
 const createPrescriptionRules = [
   body('residentId')
     .notEmpty().withMessage('residentId is required')
@@ -37,7 +44,19 @@ const createPrescriptionRules = [
 
   body('items.*.dosage')
     .notEmpty().withMessage('items[*].dosage is required')
-    .isFloat({ gt: 0 }).withMessage('items[*].dosage must be a positive number'),
+    .custom((value) => {
+      const num = Number(value);
+      if (Number.isNaN(num)) {
+        throw new Error('items[*].dosage must be a number');
+      }
+      if (num < 0) {
+        throw new Error('items[*].dosage cannot be negative');
+      }
+      if (num === 0) {
+        throw new Error('items[*].dosage must be greater than 0');
+      }
+      return true;
+    }),
 
   body('items.*.frequency')
     .notEmpty().withMessage('items[*].frequency is required')
@@ -52,15 +71,21 @@ const createPrescriptionRules = [
     .isIn(VALID_ROUTES).withMessage(`items[*].route must be one of: ${VALID_ROUTES.join(', ')}`),
 
   body('items.*.startDate')
-    .optional({ nullable: true })
-    .isISO8601().withMessage('items[*].startDate must be a valid ISO date'),
+    .notEmpty().withMessage('items[*].startDate is required')
+    .isISO8601().withMessage('items[*].startDate must be a valid ISO date')
+    .custom((value) => {
+      if (isDateStrInPast(value)) {
+        throw new Error('items[*].startDate cannot be in the past');
+      }
+      return true;
+    }),
 
   body('items.*.endDate')
     .optional({ nullable: true })
     .isISO8601().withMessage('items[*].endDate must be a valid ISO date'),
 
   // Cross-field: times.length == frequency, date ordering, endDate vs duration
-  body('items').custom((items) => {
+  body('items').custom((items, { req }) => {
     if (!Array.isArray(items)) return true;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -68,6 +93,13 @@ const createPrescriptionRules = [
         const freq = parseInt(item.frequency, 10);
         if (item.times.length !== freq) {
           throw new Error(`items[${i}].times must have exactly ${freq} entries (matching frequency)`);
+        }
+      }
+      if (item.startDate && req.body.validUntil) {
+        const start = new Date(item.startDate);
+        const validUntil = new Date(req.body.validUntil);
+        if (start > validUntil) {
+          throw new Error(`items[${i}].startDate cannot be after validUntil`);
         }
       }
       if (item.startDate && item.endDate) {
@@ -126,9 +158,22 @@ const editPrescriptionRules = [
     .optional()
     .isMongoId().withMessage('items[*].medicationId must be a valid ObjectId'),
 
+  // Soft-delete patches ({_id, isActive:false}) carry no dosage — only validate when present.
   body('items.*.dosage')
     .optional()
-    .isFloat({ gt: 0 }).withMessage('items[*].dosage must be a positive number'),
+    .custom((value) => {
+      const num = Number(value);
+      if (Number.isNaN(num)) {
+        throw new Error('items[*].dosage must be a number');
+      }
+      if (num < 0) {
+        throw new Error('items[*].dosage cannot be negative');
+      }
+      if (num === 0) {
+        throw new Error('items[*].dosage must be greater than 0');
+      }
+      return true;
+    }),
 
   body('items.*.frequency')
     .optional()
@@ -142,9 +187,19 @@ const editPrescriptionRules = [
     .optional()
     .isIn(VALID_ROUTES).withMessage(`items[*].route must be one of: ${VALID_ROUTES.join(', ')}`),
 
+  body('items.*.isActive')
+    .optional()
+    .isBoolean().withMessage('items[*].isActive must be a boolean'),
+
   body('items.*.startDate')
     .optional({ nullable: true })
-    .isISO8601().withMessage('items[*].startDate must be a valid ISO date'),
+    .isISO8601().withMessage('items[*].startDate must be a valid ISO date')
+    .custom((value) => {
+      if (isDateStrInPast(value)) {
+        throw new Error('items[*].startDate cannot be in the past');
+      }
+      return true;
+    }),
 
   body('items.*.endDate')
     .optional({ nullable: true })
@@ -154,6 +209,10 @@ const editPrescriptionRules = [
     if (!Array.isArray(items)) return true;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
+      // Doctor adding/replacing a full item (has medicationId, not a soft-delete) must set startDate.
+      if (item.medicationId && item.isActive !== false && !item.startDate) {
+        throw new Error(`items[${i}].startDate is required when adding or replacing a medication`);
+      }
       if (Array.isArray(item.times) && item.frequency !== undefined) {
         const freq = parseInt(item.frequency, 10);
         if (item.times.length !== freq) {

@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const careAppointmentRepo = require('../repositories/careAppointmentRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
@@ -28,11 +29,14 @@ const applyOwnershipFilter = (filter, user, staffProfile) => {
   else if (user.role === 'nurse') filter.nurseStaffId = staffProfile._id;
 };
 
+// Handles both populated (staffProfile doc) and unpopulated (raw ObjectId) refs.
+const idOf = (ref) => (ref && ref._id ? ref._id.toString() : ref ? ref.toString() : null);
+
 const assertAppointmentAccess = (appointment, user, staffProfile) => {
   if (!RESTRICTED_ROLES.includes(user.role)) return;
   const myId = staffProfile._id.toString();
-  const doctorMatch = user.role === 'doctor' && appointment.doctorStaffId?._id?.toString() === myId;
-  const nurseMatch = user.role === 'nurse' && appointment.nurseStaffId?._id?.toString() === myId;
+  const doctorMatch = user.role === 'doctor' && idOf(appointment.doctorStaffId) === myId;
+  const nurseMatch = user.role === 'nurse' && idOf(appointment.nurseStaffId) === myId;
   if (!doctorMatch && !nurseMatch) {
     throw new ServiceError('Access denied: this appointment is not assigned to you', 403);
   }
@@ -52,9 +56,43 @@ const parsePagination = (query) => {
   return { pageNum, limitNum, skip };
 };
 
+// Rejects a staff assignment if the linked user account is deactivated or banned —
+// keeps assign/create/edit in sync with what getAvailableStaffForAppointment already filters for.
+const assertStaffActive = (staffProfile, roleLabel) => {
+  const u = staffProfile.userId;
+  if (!u || u.isActive === false || u.isBanned === true) {
+    throw new ServiceError(`${roleLabel} này hiện không hoạt động hoặc đã bị khóa tài khoản`, 400);
+  }
+};
+
+const assertValidObjectId = (id, fieldName) => {
+  if (id !== undefined && !mongoose.Types.ObjectId.isValid(id)) {
+    throw new ServiceError(`Invalid ${fieldName}`, 400);
+  }
+};
+
 const validateAppointmentWindow = (start, end) => {
   if (isNaN(start) || isNaN(end)) throw new ServiceError('Invalid date format', 400);
   if (start >= end) throw new ServiceError('scheduledEndAt must be after scheduledStartAt', 400);
+};
+
+// Parses `from`/`to` query filters, validating format and ordering.
+const parseDateRange = (query) => {
+  const range = {};
+  if (query.from) {
+    const from = new Date(query.from);
+    if (isNaN(from)) throw new ServiceError('Invalid "from" date format', 400);
+    range.$gte = from;
+  }
+  if (query.to) {
+    const to = new Date(query.to);
+    if (isNaN(to)) throw new ServiceError('Invalid "to" date format', 400);
+    range.$lte = to;
+  }
+  if (range.$gte && range.$lte && range.$gte > range.$lte) {
+    throw new ServiceError('"from" date must be before or equal to "to" date', 400);
+  }
+  return range;
 };
 
 const validateStaffAvailability = async (staffProfileId, roleCategory, startAt, endAt, appointmentId = null) => {
@@ -120,18 +158,21 @@ const createAppointment = async (user, body, req) => {
   const start = new Date(scheduledStartAt);
   const end = new Date(scheduledEndAt);
   validateAppointmentWindow(start, end);
+  if (start < new Date()) throw new ServiceError('scheduledStartAt cannot be in the past', 400);
 
   if (doctorStaffId) {
-    const doc = await staffProfileRepo.findById(doctorStaffId);
+    const doc = await staffProfileRepo.findByIdWithUser(doctorStaffId);
     if (!doc) throw new ServiceError('Doctor staff profile not found', 404);
     if (doc.roleCategory !== 'doctor') throw new ServiceError('Assigned staff is not a doctor', 400);
+    assertStaffActive(doc, 'Bác sĩ');
     await validateStaffAvailability(doctorStaffId, 'doctor', start, end);
   }
 
   if (nurseStaffId) {
-    const nur = await staffProfileRepo.findById(nurseStaffId);
+    const nur = await staffProfileRepo.findByIdWithUser(nurseStaffId);
     if (!nur) throw new ServiceError('Nurse staff profile not found', 404);
     if (nur.roleCategory !== 'nurse') throw new ServiceError('Assigned staff is not a nurse', 400);
+    assertStaffActive(nur, 'Y tá');
     await validateStaffAvailability(nurseStaffId, 'nurse', start, end);
   }
 
@@ -168,7 +209,10 @@ const listAppointments = async (user, staffProfile, query) => {
   const filter = {};
   applyOwnershipFilter(filter, user, staffProfile);
 
-  if (query.residentId) filter.residentId = query.residentId;
+  if (query.residentId) {
+    assertValidObjectId(query.residentId, 'residentId');
+    filter.residentId = query.residentId;
+  }
   if (query.status) filter.status = query.status;
   if (query.appointmentType) filter.appointmentType = query.appointmentType;
   if (!RESTRICTED_ROLES.includes(user.role)) {
@@ -176,9 +220,7 @@ const listAppointments = async (user, staffProfile, query) => {
     if (query.nurseStaffId) filter.nurseStaffId = query.nurseStaffId;
   }
   if (query.from || query.to) {
-    filter.scheduledStartAt = {};
-    if (query.from) filter.scheduledStartAt.$gte = new Date(query.from);
-    if (query.to) filter.scheduledStartAt.$lte = new Date(query.to);
+    filter.scheduledStartAt = parseDateRange(query);
   }
 
   const { pageNum, limitNum, skip } = parsePagination(query);
@@ -199,9 +241,7 @@ const getMyAppointments = async (user, query) => {
 
   if (query.status) filter.status = query.status;
   if (query.from || query.to) {
-    filter.scheduledStartAt = {};
-    if (query.from) filter.scheduledStartAt.$gte = new Date(query.from);
-    if (query.to) filter.scheduledStartAt.$lte = new Date(query.to);
+    filter.scheduledStartAt = parseDateRange(query);
   }
 
   const { pageNum, limitNum, skip } = parsePagination(query);
@@ -222,7 +262,10 @@ const getDailySchedule = async (user, staffProfile, query) => {
 
   const filter = { scheduledStartAt: { $gte: start, $lte: end } };
   applyOwnershipFilter(filter, user, staffProfile);
-  if (query.residentId) filter.residentId = query.residentId;
+  if (query.residentId) {
+    assertValidObjectId(query.residentId, 'residentId');
+    filter.residentId = query.residentId;
+  }
 
   const appointments = await careAppointmentRepo.findAppointmentsWithPopulate(filter, { sort: { scheduledStartAt: 1 } });
   return { date: start, appointments };
@@ -242,7 +285,10 @@ const getWeeklySchedule = async (user, staffProfile, query) => {
 
   const filter = { scheduledStartAt: { $gte: weekStart, $lte: weekEnd } };
   applyOwnershipFilter(filter, user, staffProfile);
-  if (query.residentId) filter.residentId = query.residentId;
+  if (query.residentId) {
+    assertValidObjectId(query.residentId, 'residentId');
+    filter.residentId = query.residentId;
+  }
 
   const appointments = await careAppointmentRepo.findAppointmentsWithPopulate(filter, { sort: { scheduledStartAt: 1 } });
   return { weekStart, weekEnd, appointments };
@@ -255,9 +301,10 @@ const getAppointment = async (user, staffProfile, id) => {
   return appointment;
 };
 
-const updateAppointment = async (user, id, body, req) => {
+const updateAppointment = async (user, staffProfile, id, body, req) => {
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
+  assertAppointmentAccess(appointment, user, staffProfile);
 
   if (['completed', 'cancelled'].includes(appointment.status)) {
     throw new ServiceError(`Cannot edit appointment with status '${appointment.status}'`, 400);
@@ -266,6 +313,11 @@ const updateAppointment = async (user, id, body, req) => {
   const start = body.scheduledStartAt ? new Date(body.scheduledStartAt) : appointment.scheduledStartAt;
   const end = body.scheduledEndAt ? new Date(body.scheduledEndAt) : appointment.scheduledEndAt;
   validateAppointmentWindow(start, end);
+  // Only block when the start time is actually being moved into the past —
+  // resaving an unchanged (already-past) time (e.g. editing notes only) is allowed.
+  if (start.getTime() !== appointment.scheduledStartAt.getTime() && start < new Date()) {
+    throw new ServiceError('scheduledStartAt cannot be in the past', 400);
+  }
 
   const conflict = await careAppointmentRepo.findOneConflict(appointment.residentId, start, end, appointment._id);
   if (conflict) throw new ServiceError('Schedule conflict detected', 409);
@@ -273,9 +325,10 @@ const updateAppointment = async (user, id, body, req) => {
   let docId = appointment.doctorStaffId;
   if (body.doctorStaffId !== undefined) {
     if (body.doctorStaffId) {
-      const doctor = await staffProfileRepo.findById(body.doctorStaffId);
+      const doctor = await staffProfileRepo.findByIdWithUser(body.doctorStaffId);
       if (!doctor) throw new ServiceError('Doctor staff profile not found', 404);
       if (doctor.roleCategory !== 'doctor') throw new ServiceError('Assigned staff is not a doctor', 400);
+      assertStaffActive(doctor, 'Bác sĩ');
     }
     docId = body.doctorStaffId || null;
   }
@@ -287,9 +340,10 @@ const updateAppointment = async (user, id, body, req) => {
   let nurId = appointment.nurseStaffId;
   if (body.nurseStaffId !== undefined) {
     if (body.nurseStaffId) {
-      const nurse = await staffProfileRepo.findById(body.nurseStaffId);
+      const nurse = await staffProfileRepo.findByIdWithUser(body.nurseStaffId);
       if (!nurse) throw new ServiceError('Nurse staff profile not found', 404);
       if (nurse.roleCategory !== 'nurse') throw new ServiceError('Assigned staff is not a nurse', 400);
+      assertStaffActive(nurse, 'Y tá');
     }
     nurId = body.nurseStaffId || null;
   }
@@ -320,12 +374,13 @@ const updateAppointment = async (user, id, body, req) => {
   return careAppointmentRepo.findByIdWithPopulate(appointment._id);
 };
 
-const deleteAppointment = async (user, id, req) => {
+const deleteAppointment = async (user, staffProfile, id, req) => {
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
+  assertAppointmentAccess(appointment, user, staffProfile);
 
-  if (appointment.status === 'in_progress') {
-    throw new ServiceError('Cannot delete an appointment that is in progress', 400);
+  if (['in_progress', 'completed'].includes(appointment.status)) {
+    throw new ServiceError(`Cannot delete an appointment with status '${appointment.status}'`, 400);
   }
 
   const before = appointment.toObject();
@@ -345,7 +400,7 @@ const deleteAppointment = async (user, id, req) => {
   return { message: 'Appointment deleted successfully' };
 };
 
-const updateStatus = async (user, id, body, req) => {
+const updateStatus = async (user, staffProfile, id, body, req) => {
   const { status } = body;
   if (!status || !VALID_STATUSES.includes(status)) {
     throw new ServiceError(`status must be one of: ${VALID_STATUSES.join(', ')}`, 400);
@@ -353,6 +408,7 @@ const updateStatus = async (user, id, body, req) => {
 
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
+  assertAppointmentAccess(appointment, user, staffProfile);
 
   const allowedNext = STATUS_TRANSITIONS[appointment.status];
   if (!allowedNext.includes(status)) {
@@ -384,11 +440,6 @@ const updateStatus = async (user, id, body, req) => {
 
 const assignDoctor = async (user, id, body, req) => {
   const { doctorStaffId } = body;
-  if (doctorStaffId) {
-    const staff = await staffProfileRepo.findById(doctorStaffId);
-    if (!staff) throw new ServiceError('Doctor staff profile not found', 404);
-    if (staff.roleCategory !== 'doctor') throw new ServiceError('Assigned staff is not a doctor', 400);
-  }
 
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
@@ -398,6 +449,10 @@ const assignDoctor = async (user, id, body, req) => {
   }
 
   if (doctorStaffId) {
+    const staff = await staffProfileRepo.findByIdWithUser(doctorStaffId);
+    if (!staff) throw new ServiceError('Doctor staff profile not found', 404);
+    if (staff.roleCategory !== 'doctor') throw new ServiceError('Assigned staff is not a doctor', 400);
+    assertStaffActive(staff, 'Bác sĩ');
     await validateStaffAvailability(doctorStaffId, 'doctor', appointment.scheduledStartAt, appointment.scheduledEndAt, appointment._id);
   }
 
@@ -422,11 +477,6 @@ const assignDoctor = async (user, id, body, req) => {
 
 const assignNurse = async (user, id, body, req) => {
   const { nurseStaffId } = body;
-  if (nurseStaffId) {
-    const staff = await staffProfileRepo.findById(nurseStaffId);
-    if (!staff) throw new ServiceError('Nurse staff profile not found', 404);
-    if (staff.roleCategory !== 'nurse') throw new ServiceError('Assigned staff is not a nurse', 400);
-  }
 
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
@@ -436,6 +486,10 @@ const assignNurse = async (user, id, body, req) => {
   }
 
   if (nurseStaffId) {
+    const staff = await staffProfileRepo.findByIdWithUser(nurseStaffId);
+    if (!staff) throw new ServiceError('Nurse staff profile not found', 404);
+    if (staff.roleCategory !== 'nurse') throw new ServiceError('Assigned staff is not a nurse', 400);
+    assertStaffActive(staff, 'Y tá');
     await validateStaffAvailability(nurseStaffId, 'nurse', appointment.scheduledStartAt, appointment.scheduledEndAt, appointment._id);
   }
 

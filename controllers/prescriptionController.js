@@ -37,7 +37,21 @@ const isInScope = (residentId, scope) =>
 // Validates that every medicationId in items[] exists and is active in the pharmacy DB.
 // Returns a Map<id_string → Medication doc> on success, throws on any missing.
 const resolveMedicationsFromDB = async (items) => {
-  const ids = [...new Set(items.map((i) => String(i.medicationId)))];
+  const allIds = items.map((i) => String(i.medicationId));
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const id of allIds) {
+    if (seen.has(id)) duplicates.add(id);
+    seen.add(id);
+  }
+  if (duplicates.size) {
+    throw Object.assign(
+      new Error(`Duplicate medication(s) in items: a medication can only appear once per prescription (medicationId: ${[...duplicates].join(', ')})`),
+      { statusCode: 400 }
+    );
+  }
+
+  const ids = [...seen];
   const meds = await Medication.find({ _id: { $in: ids }, isActive: true })
     .select('_id name genericName form strength unit');
   if (meds.length !== ids.length) {
@@ -106,7 +120,7 @@ const createPrescription = async (req, res) => {
       medicationName: medMap.get(String(i.medicationId)).name,
       dosage: Number(i.dosage),
       frequency: Number(i.frequency),
-      unit: i.unit || medMap.get(String(i.medicationId)).unit,
+      unit: medMap.get(String(i.medicationId)).unit,
     }));
 
     const [contraResult, interactResult, dosageResult] = await Promise.all([
@@ -163,7 +177,7 @@ const createPrescription = async (req, res) => {
           medicationName: med.name,
           genericName: item.genericName || med.genericName || null,
           dosage: String(item.dosage),
-          unit: item.unit || med.unit || null,
+          unit: med.unit || null,
           frequency: Number(item.frequency),
           times: Array.isArray(item.times) ? item.times : [],
           route: item.route || 'oral',
@@ -201,7 +215,7 @@ const editPrescription = async (req, res) => {
     }
 
     const role = req.user.role;
-    const { diagnosisNote, validUntil, items, acknowledgeWarnings } = req.body;
+    const { diagnosisNote, validUntil, items, acknowledgeWarnings, status } = req.body;
 
     const prescription = await Prescription.findById(id);
     if (!prescription) {
@@ -302,52 +316,108 @@ const editPrescription = async (req, res) => {
       }
     }
 
-    if (Array.isArray(items) && items.length) {
-      // All items must have medicationId from pharmacy DB
-      const missingMedId = items.find((i) => !i.medicationId);
-      if (missingMedId) {
+    if (status !== undefined && status !== prescription.status) {
+      const ALLOWED_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];
+      if (!ALLOWED_STATUSES.includes(status)) {
         return res.status(400).json({
           success: false,
-          message: 'Each item must include medicationId from the pharmacy database',
+          message: `status must be one of: ${ALLOWED_STATUSES.join(', ')}`,
         });
       }
+      changeLog.push(`Changed status from ${prescription.status} to ${status}`);
+      prescription.status = status;
+    }
 
-      let medMap;
-      try {
-        medMap = await resolveMedicationsFromDB(items);
-      } catch (e) {
-        return res.status(e.statusCode || 400).json({ success: false, message: e.message });
+    if (Array.isArray(items) && items.length) {
+      // Split the request into soft-delete patches ({_id, isActive:false} — discontinue
+      // an existing item without erasing it), lightweight patches (only _id + times/
+      // instructions on an existing item — no medication change), and active entries
+      // (new or full replacement of an existing item, which must reference a pharmacy
+      // medicationId).
+      const softDeletePatches = [];
+      const lightweightPatches = [];
+      const activeEntries = [];
+
+      for (const entry of items) {
+        let existing = null;
+        if (entry._id) {
+          existing = prescription.items.id(entry._id);
+          if (!existing) {
+            return res.status(400).json({
+              success: false,
+              message: `Item _id ${entry._id} not found in this prescription`,
+            });
+          }
+        }
+        if (entry.isActive === false) {
+          if (!existing) {
+            return res.status(400).json({
+              success: false,
+              message: 'Soft-deleting an item requires its _id',
+            });
+          }
+          softDeletePatches.push(existing);
+          continue;
+        }
+        if (!entry.medicationId) {
+          if (!existing) {
+            return res.status(400).json({
+              success: false,
+              message: 'Each item must include medicationId from the pharmacy database (unless soft-deleting with isActive:false)',
+            });
+          }
+          // No medicationId + an existing _id: treat as a lightweight patch
+          // (times/instructions only) rather than a full medication replacement.
+          lightweightPatches.push({ existing, entry });
+          continue;
+        }
+        activeEntries.push(entry);
       }
 
-      const drugNames = items.map((i) => medMap.get(String(i.medicationId)).name);
+      let medMap = new Map();
+      if (activeEntries.length) {
+        try {
+          medMap = await resolveMedicationsFromDB(activeEntries);
+        } catch (e) {
+          return res.status(e.statusCode || 400).json({ success: false, message: e.message });
+        }
+      }
+
+      const drugNames = activeEntries.map((i) => medMap.get(String(i.medicationId)).name);
 
       // Allergy hard block
-      const { allergies: allergyHits } = await checkAllergies(prescription.residentId, drugNames);
-      if (allergyHits.length) {
-        return res.status(400).json({
-          success: false,
-          errorCode: 'ALLERGY',
-          detail: allergyHits,
-          requiresAcknowledgment: false,
-        });
+      if (drugNames.length) {
+        const { allergies: allergyHits } = await checkAllergies(prescription.residentId, drugNames);
+        if (allergyHits.length) {
+          return res.status(400).json({
+            success: false,
+            errorCode: 'ALLERGY',
+            detail: allergyHits,
+            requiresAcknowledgment: false,
+          });
+        }
       }
 
-      const dosageItems = items.map((i) => ({
+      const dosageItems = activeEntries.map((i) => ({
         medicationName: medMap.get(String(i.medicationId)).name,
         dosage: Number(i.dosage),
         frequency: Number(i.frequency),
-        unit: i.unit || medMap.get(String(i.medicationId)).unit,
+        unit: medMap.get(String(i.medicationId)).unit,
       }));
 
-      const [contraResult, interactResult, dosageResult] = await Promise.all([
-        checkContraindications(prescription.residentId, drugNames),
-        checkDrugInteractions(prescription.residentId, drugNames, prescription._id),
-        checkElderlyDosage(prescription.residentId, dosageItems),
-      ]);
-
-      const contraWarnings = contraResult.violations;
-      const interactionWarnings = interactResult.interactions;
-      const dosageWarnings = dosageResult.warnings;
+      let contraWarnings = [];
+      let interactionWarnings = [];
+      let dosageWarnings = [];
+      if (drugNames.length) {
+        const [contraResult, interactResult, dosageResult] = await Promise.all([
+          checkContraindications(prescription.residentId, drugNames),
+          checkDrugInteractions(prescription.residentId, drugNames, prescription._id),
+          checkElderlyDosage(prescription.residentId, dosageItems),
+        ]);
+        contraWarnings = contraResult.violations;
+        interactionWarnings = interactResult.interactions;
+        dosageWarnings = dosageResult.warnings;
+      }
 
       allWarnings = [
         ...contraWarnings.map((w) => ({ type: 'CONTRAINDICATION', ...w })),
@@ -375,7 +445,7 @@ const editPrescription = async (req, res) => {
         }
       }
 
-      // Drop future pending schedules before replacing items
+      // Drop all future pending schedules — regenerated below from the merged items[]
       await MedicationSchedule.deleteMany({
         prescriptionId: prescription._id,
         status: 'PENDING',
@@ -384,27 +454,61 @@ const editPrescription = async (req, res) => {
 
       const overdosedDrugs = new Set(dosageWarnings.map((w) => w.medicationName));
 
-      prescription.items = items.map((item) => {
-        const med = medMap.get(String(item.medicationId));
-        return {
+      // Soft-delete: keep the item (audit trail intact), just mark it inactive.
+      for (const existing of softDeletePatches) {
+        if (existing.isActive) {
+          changeLog.push(`Discontinued ${existing.medicationName}`);
+        }
+        existing.isActive = false;
+      }
+
+      // Lightweight patches: only times/instructions change, no medication/dosage change.
+      for (const { existing, entry } of lightweightPatches) {
+        if (entry.times !== undefined) {
+          const timesChanged =
+            JSON.stringify((existing.times || []).slice().sort()) !==
+            JSON.stringify(entry.times.slice().sort());
+          if (timesChanged) {
+            existing.times = entry.times;
+            changeLog.push(`Rescheduled ${existing.medicationName} times to [${entry.times.join(', ')}]`);
+          }
+        }
+        if (entry.instructions !== undefined && entry.instructions !== existing.instructions) {
+          changeLog.push(`Updated ${existing.medicationName} instructions: "${entry.instructions}"`);
+          existing.instructions = entry.instructions;
+        }
+      }
+
+      // Active entries: update the matching existing item in place, or append a new one.
+      // Items not mentioned in the request are left untouched (no more hard-delete by omission).
+      for (const entry of activeEntries) {
+        const med = medMap.get(String(entry.medicationId));
+        const built = {
           medicationId: med._id,
           medicationName: med.name,
-          genericName: item.genericName || med.genericName || null,
-          dosage: String(item.dosage),
-          unit: item.unit || med.unit || null,
-          frequency: Number(item.frequency),
-          times: Array.isArray(item.times) ? item.times : [],
-          route: item.route || 'oral',
-          duration: item.duration,
-          startDate: item.startDate ? new Date(item.startDate) : undefined,
-          endDate: item.endDate ? new Date(item.endDate) : undefined,
-          instructions: item.instructions,
+          genericName: entry.genericName || med.genericName || null,
+          dosage: String(entry.dosage),
+          unit: med.unit || null,
+          frequency: Number(entry.frequency),
+          times: Array.isArray(entry.times) ? entry.times : [],
+          route: entry.route || 'oral',
+          duration: entry.duration,
+          startDate: entry.startDate ? new Date(entry.startDate) : undefined,
+          endDate: entry.endDate ? new Date(entry.endDate) : undefined,
+          instructions: entry.instructions,
           elderlyDosageAdjusted: overdosedDrugs.has(med.name),
           isActive: true,
         };
-      });
 
-      changeLog.push(`Replaced items (${items.length} medication(s))`);
+        if (entry._id) {
+          const existing = prescription.items.id(entry._id);
+          Object.assign(existing, built);
+          changeLog.push(`Updated ${med.name}`);
+        } else {
+          prescription.items.push(built);
+          changeLog.push(`Added ${med.name}`);
+        }
+      }
     }
 
     if (!changeLog.length) {
@@ -441,21 +545,31 @@ const listPrescriptions = async (req, res) => {
   try {
     const { residentId, status, page = 1, limit = 10 } = req.query;
 
-    if (!residentId) {
-      return res.status(400).json({ success: false, message: 'residentId query parameter is required' });
-    }
-    if (!isValidObjectId(residentId)) {
-      return res.status(400).json({ success: false, message: 'Invalid residentId' });
-    }
-
-    // Scope check
     const scope = await getResidentScope(req.user._id, req.user.role);
-    if (!isInScope(residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
-    }
 
-    const filter = { residentId };
-    if (status) filter.status = status;
+    const filter = {};
+    if (residentId) {
+      if (!isValidObjectId(residentId)) {
+        return res.status(400).json({ success: false, message: 'Invalid residentId' });
+      }
+      if (!isInScope(residentId, scope)) {
+        return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      }
+      filter.residentId = residentId;
+    } else if (scope !== null) {
+      // No residentId given — doctor/nurse: list across all their assigned residents.
+      if (!scope.length) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          pagination: { total: 0, page: Number(page), limit: Number(limit), totalPages: 0 },
+        });
+      }
+      filter.residentId = { $in: scope };
+    }
+    // else: admin (scope === null) with no residentId — list across all residents
+
+    if (status && status.toUpperCase() !== 'ALL') filter.status = status;
 
     const skip = (Number(page) - 1) * Number(limit);
 

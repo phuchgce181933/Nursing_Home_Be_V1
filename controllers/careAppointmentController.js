@@ -56,7 +56,7 @@ const getAppointment = async (req, res) => {
 
 const updateAppointment = async (req, res) => {
   try {
-    const result = await careAppointmentService.updateAppointment(req.user, req.params.id, req.body, req);
+    const result = await careAppointmentService.updateAppointment(req.user, req.staffProfile, req.params.id, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -65,7 +65,7 @@ const updateAppointment = async (req, res) => {
 
 const deleteAppointment = async (req, res) => {
   try {
-    const result = await careAppointmentService.deleteAppointment(req.user, req.params.id, req);
+    const result = await careAppointmentService.deleteAppointment(req.user, req.staffProfile, req.params.id, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -74,7 +74,7 @@ const deleteAppointment = async (req, res) => {
 
 const updateStatus = async (req, res) => {
   try {
-    const result = await careAppointmentService.updateStatus(req.user, req.params.id, req.body, req);
+    const result = await careAppointmentService.updateStatus(req.user, req.staffProfile, req.params.id, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });

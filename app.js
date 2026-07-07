@@ -104,14 +104,10 @@ app.use('/api/clinical/services', require('./routes/clinicalServices'));
 app.use('/api/clinical/charges', require('./routes/medicalCharges'));
 app.use('/api/clinical/invoices', require('./routes/invoices'));
 
-//app.use('/api/pharmacist', require('./routes/pharmacist'));
 // connect DB and create collections
 const initDB = async () => {
   try {
     await connectDB();
-
-    const { runAutoSeedIfNeeded } = require('./services/autoSeedService');
-    await runAutoSeedIfNeeded();
 
     const { ensureStaffProfilesForAssignableUsers } = require('./services/staffProfileBootstrap');
     const profileBootstrap = await ensureStaffProfilesForAssignableUsers();

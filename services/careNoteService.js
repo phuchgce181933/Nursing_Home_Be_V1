@@ -3,6 +3,7 @@ const ServiceError = require('./serviceError');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const Resident = require('../models/resident');
+const AuditLog = require('../models/auditLog');
 const { CARE_NOTE_TYPES } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
 
@@ -58,8 +59,19 @@ const buildNoteAtFilter = (query) => {
   }
   if (query.from || query.to) {
     const filter = {};
-    if (query.from) filter.$gte = new Date(query.from);
-    if (query.to) filter.$lte = new Date(query.to);
+    if (query.from) {
+      const from = new Date(query.from);
+      if (isNaN(from)) throw new ServiceError('Invalid "from" date format', 400);
+      filter.$gte = from;
+    }
+    if (query.to) {
+      const to = new Date(query.to);
+      if (isNaN(to)) throw new ServiceError('Invalid "to" date format', 400);
+      filter.$lte = to;
+    }
+    if (filter.$gte && filter.$lte && filter.$gte > filter.$lte) {
+      throw new ServiceError('"from" date must be before or equal to "to" date', 400);
+    }
     return filter;
   }
   return null;
@@ -154,7 +166,7 @@ const createNote = async (user, body, req) => {
   const { residentId, noteType, content, noteAt, metadata } = body;
   if (!residentId) throw new ServiceError('residentId is required', 400);
   if (!isValidId(residentId)) throw new ServiceError('residentId is not a valid ID', 400);
-  if (!content || content.trim().length < 5) {
+  if (!content || typeof content !== 'string' || content.trim().length < 5) {
     throw new ServiceError('content is required and must be at least 5 characters', 400);
   }
   if (noteType && !CARE_NOTE_TYPES.includes(noteType)) {
@@ -220,8 +232,9 @@ const listNotes = async (query) => {
   if (noteAtFilter) filter.noteAt = noteAtFilter;
 
   const { pageNum, limitNum, skip } = parsePagination(query);
+  const sortDir = query.sortOrder === 'asc' ? 1 : -1;
   const [data, total] = await Promise.all([
-    careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: -1 }, skip, limit: limitNum }),
+    careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: sortDir }, skip, limit: limitNum }),
     careNoteRepo.countDocuments(filter),
   ]);
 
@@ -259,6 +272,28 @@ const getNote = async (id) => {
   return note;
 };
 
+// Edit history (audit trail) of a single care note — every CREATE/UPDATE ever
+// recorded against it, oldest first, with the actor and the before/after snapshot.
+const getNoteAuditHistory = async (id) => {
+  if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
+  const note = await careNoteRepo.findById(id);
+  if (!note) throw new ServiceError('Care note not found', 404);
+
+  const logs = await AuditLog.find({ targetEntityType: 'CareNote', targetEntityId: id })
+    .sort({ createdAt: 1 })
+    .populate('actorUserId', 'fullName role');
+
+  return logs.map((log) => ({
+    _id: log._id,
+    action: log.action,
+    actor: log.actorUserId ? { fullName: log.actorUserId.fullName, role: log.actorUserId.role } : null,
+    actorRole: log.actorRole,
+    createdAt: log.createdAt,
+    beforeData: log.beforeData,
+    afterData: log.afterData,
+  }));
+};
+
 // Nurses can only update their own notes; doctor/admin can update any note.
 const updateNote = async (user, id, body, req) => {
   if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
@@ -277,7 +312,7 @@ const updateNote = async (user, id, body, req) => {
     }
   }
 
-  if (body.content !== undefined && body.content.trim().length < 5) {
+  if (body.content !== undefined && (typeof body.content !== 'string' || body.content.trim().length < 5)) {
     throw new ServiceError('content must be at least 5 characters', 400);
   }
   if (body.noteType && !CARE_NOTE_TYPES.includes(body.noteType)) {
@@ -352,4 +387,4 @@ const getMyNotes = async (user, query) => {
   return listNotes({ ...query, authorStaffId: staffProfile._id.toString() });
 };
 
-module.exports = { createNote, listNotes, getNoteHistory, getNote, updateNote, deleteNote, getMyNotes };
+module.exports = { createNote, listNotes, getNoteHistory, getNote, getNoteAuditHistory, updateNote, deleteNote, getMyNotes };

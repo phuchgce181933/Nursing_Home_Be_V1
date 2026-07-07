@@ -190,9 +190,12 @@ const updateMedication = async (user, medicationId, body, req) => {
 
 const listMedications = async (query) => {
 	const filter = {};
-	if (query.isActive !== undefined) {
-		filter.isActive = query.isActive === 'true' || query.isActive === true;
+	if (query.isActive === 'true' || query.isActive === true) {
+		filter.isActive = true;
+	} else if (query.isActive === 'false' || query.isActive === false) {
+		filter.isActive = false;
 	}
+	// any other value (e.g. "all", undefined) means no filter — all statuses
 
 	if (query.search) {
 		const term = String(query.search).trim();
@@ -371,9 +374,12 @@ const deleteSupplier = async (user, supplierId, req) => {
 
 const listSuppliers = async (query) => {
 	const filter = {};
-	if (query.isActive !== undefined) {
-		filter.isActive = query.isActive === 'true' || query.isActive === true;
+	if (query.isActive === 'true' || query.isActive === true) {
+		filter.isActive = true;
+	} else if (query.isActive === 'false' || query.isActive === false) {
+		filter.isActive = false;
 	}
+	// any other value (e.g. "all", undefined) means no filter — all statuses
 	if (query.search) {
 		const term = String(query.search).trim();
 		filter.$or = [

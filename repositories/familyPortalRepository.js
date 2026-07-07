@@ -64,6 +64,13 @@ const findMedicationSchedules = async (filter, { sort = { scheduledTime: -1 }, s
 
 const countMedicationSchedules = async (filter) => MedicationSchedule.countDocuments(filter);
 
+// Unpaged variant for history/compliance stats and daily-schedule views, where every
+// matching record within the (bounded) date range must be aggregated, not just a page.
+const findMedicationSchedulesUnpaged = async (filter, { sort = { scheduledTime: 1 } } = {}) =>
+  MedicationSchedule.find(filter)
+    .populate('markedBy', 'fullName role')
+    .sort(sort);
+
 // doctorId in new Prescription refs User directly (not StaffProfile)
 const findPrescriptions = async (filter, { sort = { prescriptionDate: -1 }, skip = 0, limit = 100 } = {}) =>
   Prescription.find(filter)
@@ -135,6 +142,7 @@ module.exports = {
   countCareNotes,
   findMedicationSchedules,
   countMedicationSchedules,
+  findMedicationSchedulesUnpaged,
   findPrescriptions,
   findActivities,
   findCareAppointments,

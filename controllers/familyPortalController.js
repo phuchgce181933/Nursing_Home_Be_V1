@@ -101,6 +101,24 @@ const getPrescriptions = async (req, res) => {
   }
 };
 
+const getMedicationHistory = async (req, res) => {
+  try {
+    const result = await familyPortalService.getMedicationHistory(req.user, req.params.residentId, req.query);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const getDailyMedicationSchedule = async (req, res) => {
+  try {
+    const result = await familyPortalService.getDailyMedicationSchedule(req.user, req.params.residentId, req.query);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const getActivities = async (req, res) => {
   try {
     const result = await familyPortalService.getActivities(req.user, req.params.residentId, req.query);
@@ -324,6 +342,8 @@ module.exports = {
   getCareNotes,
   getMedications,
   getPrescriptions,
+  getMedicationHistory,
+  getDailyMedicationSchedule,
   getActivities,
   getCareAppointments,
   getHealthReport,

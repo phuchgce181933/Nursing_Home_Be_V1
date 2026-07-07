@@ -144,8 +144,24 @@ const getGuestMessages = async (req, res) => {
     if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
     if (!conversation.isGuest) return res.status(403).json({ message: 'Not a guest conversation' });
 
-    // Read guest messages from in-memory store (temporary)
-    const all = guestMessageStore.getMessages(conversationId) || [];
+    // Merge messages persisted by staff (DB) with guest in-memory messages,
+    // so staff replies are visible to the guest (mirrors getMessages below).
+    const dbMsgs = await Message.find({ conversationId })
+      .populate('senderUserId', 'fullName email role')
+      .lean();
+    const guestMsgs = guestMessageStore.getMessages(conversationId) || [];
+
+    const normalize = (m) => ({
+      _id: m._id,
+      content: m.content,
+      attachments: m.attachments || [],
+      senderUserId: m.senderUserId || null,
+      guestName: m.guestName,
+      guestEmail: m.guestEmail,
+      sentAt: m.sentAt || m.createdAt,
+    });
+
+    const all = [...dbMsgs.map(normalize), ...guestMsgs.map(normalize)];
     // sort by sentAt ascending (oldest first)
     all.sort((a, b) => new Date(a.sentAt) - new Date(b.sentAt));
     // simple pagination

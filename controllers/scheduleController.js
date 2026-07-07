@@ -23,6 +23,40 @@ const getResidentScope = async (userId, role) => {
 const isInScope = (residentId, scope) =>
   scope === null || scope.includes(String(residentId));
 
+// When a medication item has no more PENDING/OVERDUE doses left (the last dose was
+// just taken/missed), mark it done. If every item on the prescription is done, the
+// whole prescription auto-completes.
+const maybeCompletePrescriptionItem = async (prescription, prescriptionItemId, userId) => {
+  if (!prescription) return;
+  const item = prescription.items.id(prescriptionItemId);
+  if (!item || !item.isActive) return;
+
+  const remaining = await MedicationSchedule.countDocuments({
+    prescriptionId: prescription._id,
+    prescriptionItemId,
+    status: { $in: ['PENDING', 'OVERDUE'] },
+  });
+  if (remaining > 0) return;
+
+  item.isActive = false;
+  prescription.editHistory.push({
+    editedBy: userId,
+    editedAt: new Date(),
+    changes: `Auto-completed ${item.medicationName}: last dose recorded`,
+  });
+
+  if (prescription.status === 'ACTIVE' && prescription.items.every((i) => !i.isActive)) {
+    prescription.status = 'COMPLETED';
+    prescription.editHistory.push({
+      editedBy: userId,
+      editedAt: new Date(),
+      changes: 'Auto-completed prescription: all medication items finished',
+    });
+  }
+
+  await prescription.save();
+};
+
 // ── Validators ────────────────────────────────────────────────────────────────
 
 const isValidDateStr = (str) =>
@@ -312,7 +346,7 @@ const getDailySchedule = async (req, res) => {
     const scope = await getResidentScope(req.user._id, req.user.role);
     const { start, end } = getDayBounds(date);
     const scheduleFilter = { scheduledTime: { $gte: start, $lte: end } };
-    if (status) scheduleFilter.status = status;
+    if (status && status.toUpperCase() !== 'ALL') scheduleFilter.status = status;
 
     if (residentId) {
       if (!isValidObjectId(residentId)) {
@@ -409,7 +443,7 @@ const getSchedules = async (req, res) => {
     }
 
     const filter = { residentId };
-    if (status) filter.status = status;
+    if (status && status.toUpperCase() !== 'ALL') filter.status = status;
     if (date) {
       const { start, end } = getDayBounds(date);
       filter.scheduledTime = { $gte: start, $lte: end };
@@ -499,6 +533,8 @@ const markTaken = async (req, res) => {
       }
     }
 
+    await maybeCompletePrescriptionItem(prescription, schedule.prescriptionItemId, req.user._id);
+
     await schedule.populate('markedBy', 'fullName role');
 
     return res.status(200).json({ success: true, data: schedule });
@@ -549,6 +585,10 @@ const markMissed = async (req, res) => {
     if (notes !== undefined) schedule.notes = notes;
 
     await schedule.save();
+
+    const prescription = await Prescription.findById(schedule.prescriptionId);
+    await maybeCompletePrescriptionItem(prescription, schedule.prescriptionItemId, req.user._id);
+
     await schedule.populate('markedBy', 'fullName role');
 
     return res.status(200).json({ success: true, data: schedule });
@@ -561,13 +601,16 @@ const markMissed = async (req, res) => {
 
 const getHistory = async (req, res) => {
   try {
-    const { residentId, from, to, medicationName } = req.query;
+    const { residentId, from, to, medicationName, prescriptionId } = req.query;
 
     if (!residentId) {
       return res.status(400).json({ success: false, message: 'residentId query parameter is required' });
     }
     if (!isValidObjectId(residentId)) {
       return res.status(400).json({ success: false, message: 'residentId must be a valid ObjectId' });
+    }
+    if (prescriptionId && !isValidObjectId(prescriptionId)) {
+      return res.status(400).json({ success: false, message: 'prescriptionId must be a valid ObjectId' });
     }
     if (from && !isValidDateStr(from)) {
       return res.status(400).json({ success: false, message: 'from must be YYYY-MM-DD' });
@@ -588,6 +631,7 @@ const getHistory = async (req, res) => {
     }
 
     const filter = { residentId };
+    if (prescriptionId) filter.prescriptionId = prescriptionId;
     if (from || to) {
       filter.scheduledTime = {};
       if (from) filter.scheduledTime.$gte = new Date(`${from}T00:00:00+07:00`);

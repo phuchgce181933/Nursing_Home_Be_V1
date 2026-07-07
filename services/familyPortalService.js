@@ -2,6 +2,7 @@ const ServiceError = require('./serviceError');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 const paymentService = require('./paymentService');
+const { CARE_NOTE_TYPES } = require('../models/enums');
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -165,8 +166,6 @@ const getHealthChart = async (user, residentId, query) => {
   });
 };
 
-const VALID_NOTE_TYPES = ['meal', 'activity', 'health', 'general'];
-
 const getCareNotes = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Access denied: not your relative', 403);
@@ -174,8 +173,8 @@ const getCareNotes = async (user, residentId, query) => {
 
   const filter = { residentId };
   if (query.noteType) {
-    if (!VALID_NOTE_TYPES.includes(query.noteType)) {
-      throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+    if (!CARE_NOTE_TYPES.includes(query.noteType)) {
+      throw new ServiceError(`noteType must be one of: ${CARE_NOTE_TYPES.join(', ')}`, 400);
     }
     filter.noteType = query.noteType;
   }
@@ -239,6 +238,122 @@ const getPrescriptions = async (user, residentId, query) => {
     filter.status = query.status;
   }
   return familyPortalRepo.findPrescriptions(filter, { sort: { prescriptionDate: -1 } });
+};
+
+// ISO week key in local time: "YYYY-Www" (mirrors scheduleController's isoWeekKey)
+const isoWeekKey = (date) => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const year = d.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return `${year}-W${String(week).padStart(2, '0')}`;
+};
+
+// Medication administration history with compliance stats — same shape as the
+// doctor/nurse ScheduleController.getHistory, scoped to the family's own relative.
+const getMedicationHistory = async (user, residentId, query) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+  const resident = await familyPortalRepo.getResidentById(residentId);
+  if (!resident) throw new ServiceError('Resident not found', 404);
+
+  const filter = { residentId };
+  if (query.prescriptionId) filter.prescriptionId = query.prescriptionId;
+  if (query.from || query.to) {
+    filter.scheduledTime = {};
+    if (query.from) filter.scheduledTime.$gte = new Date(query.from);
+    if (query.to) filter.scheduledTime.$lte = new Date(query.to);
+  }
+  if (query.medicationName) filter.medicationName = { $regex: query.medicationName, $options: 'i' };
+
+  const records = await familyPortalRepo.findMedicationSchedulesUnpaged(filter, { sort: { scheduledTime: 1 } });
+
+  let taken = 0, lateTaken = 0, missed = 0, skipped = 0;
+  for (const r of records) {
+    if (r.status === 'TAKEN') taken++;
+    else if (r.status === 'LATE_TAKEN') lateTaken++;
+    else if (r.status === 'MISSED') missed++;
+    else if (r.status === 'SKIPPED') skipped++;
+  }
+  const denominator = taken + lateTaken + missed;
+  const complianceRate = denominator > 0 ? Math.round(((taken + lateTaken) / denominator) * 1000) / 10 : null;
+
+  const weeklyMap = new Map();
+  for (const r of records) {
+    const week = isoWeekKey(new Date(r.scheduledTime));
+    if (!weeklyMap.has(week)) weeklyMap.set(week, { taken: 0, missed: 0 });
+    const entry = weeklyMap.get(week);
+    if (r.status === 'TAKEN' || r.status === 'LATE_TAKEN') entry.taken++;
+    else if (r.status === 'MISSED') entry.missed++;
+  }
+  const weeklyCompliance = [...weeklyMap.entries()].map(([week, { taken: t, missed: m }]) => {
+    const denom = t + m;
+    return { week, rate: denom > 0 ? Math.round((t / denom) * 1000) / 10 : null };
+  });
+
+  return {
+    residentId,
+    residentName: resident.fullName,
+    summary: { total: records.length, taken, lateTaken, missed, skipped, complianceRate },
+    lowCompliance: complianceRate !== null && complianceRate < 80,
+    records: records.map((r) => ({
+      _id: r._id,
+      date: new Date(r.scheduledTime).toISOString().slice(0, 10),
+      medicationName: r.medicationName,
+      dosage: r.dosage,
+      route: r.route,
+      scheduledTime: r.scheduledTime,
+      actualTimeTaken: r.actualTimeTaken || null,
+      status: r.status,
+      markedBy: r.markedBy || null,
+      markedAt: r.markedAt || null,
+      notes: r.notes || null,
+      missedReason: r.missedReason || null,
+    })),
+    weeklyCompliance,
+  };
+};
+
+// Today's (or a chosen day's) medication doses for the family's own relative.
+const getDailyMedicationSchedule = async (user, residentId, query) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+
+  let dateFilter = buildWorkDateFilter(query);
+  if (Object.keys(dateFilter).length === 0) {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    dateFilter = { $gte: todayStart, $lte: todayEnd };
+  }
+
+  const filter = { residentId, scheduledTime: dateFilter };
+  if (query.status) filter.status = query.status;
+
+  const schedules = await familyPortalRepo.findMedicationSchedulesUnpaged(filter, { sort: { scheduledTime: 1 } });
+
+  return {
+    date: query.date || null,
+    residentId,
+    schedules: schedules.map((s) => ({
+      id: s._id,
+      prescriptionId: s.prescriptionId,
+      medicationName: s.medicationName,
+      dosage: s.dosage,
+      route: s.route,
+      scheduledTime: s.scheduledTime,
+      status: s.status,
+      markedBy: s.markedBy || null,
+      markedAt: s.markedAt || null,
+      actualTimeTaken: s.actualTimeTaken || null,
+      notes: s.notes || null,
+    })),
+  };
 };
 
 const getActivities = async (user, residentId, query) => {
@@ -540,6 +655,8 @@ module.exports = {
   getCareNotes,
   getMedications,
   getPrescriptions,
+  getMedicationHistory,
+  getDailyMedicationSchedule,
   getActivities,
   getCareAppointments,
   getHealthReport,

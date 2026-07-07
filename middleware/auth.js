@@ -58,7 +58,28 @@ const optionalProtect = async (req, res, next) => {
 };
 
 const authorize = (...roles) => (req, res, next) => {
-  if (!req.user || !roles.includes(req.user.role)) {
+  if (!req.user) {
+    return res.status(403).json({ message: 'Access forbidden: insufficient role' });
+  }
+  
+  // Normalize user role to lowercase for comparison
+  const userRole = String(req.user.role || '').toLowerCase();
+  
+  // Check if user's role matches any of the required roles
+  // Support both English and Vietnamese role names
+  const normalizedRoles = roles.map(r => r.toLowerCase());
+  const isAuthorized = normalizedRoles.some(role => {
+    if (role === userRole) return true;
+    // Support Vietnamese role names
+    if (role === 'nurse' && (userRole.includes('nurse') || userRole.includes('y tá') || userRole.includes('điều dưỡng'))) return true;
+    if (role === 'doctor' && (userRole.includes('doctor') || userRole.includes('bác sĩ'))) return true;
+    if (role === 'admin' && (userRole.includes('admin') || userRole.includes('quản trị'))) return true;
+    if (role === 'family' && (userRole.includes('family') || userRole.includes('gia đình'))) return true;
+    if (role === 'manager' && (userRole.includes('manager') || userRole.includes('quản lý'))) return true;
+    return false;
+  });
+  
+  if (!isAuthorized) {
     return res.status(403).json({ message: 'Access forbidden: insufficient role' });
   }
   next();

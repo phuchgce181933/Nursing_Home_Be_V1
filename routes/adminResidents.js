@@ -13,7 +13,7 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 
 const adminOnly = authorize('admin');
-const adminManager = authorize('admin');
+const adminManager = authorize('admin', 'nurse', 'doctor');
 
 router.use(protect);
 

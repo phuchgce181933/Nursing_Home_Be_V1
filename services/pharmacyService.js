@@ -416,6 +416,7 @@ const createStock = async (user, body, req) => {
 	if (!body.medicationId) throw new ServiceError('medicationId is required', 400);
 	const medication = await medicationRepo.findById(body.medicationId);
 	if (!medication) throw new ServiceError('Medication not found', 404);
+	if (medication.isActive === false) throw new ServiceError('Medication is inactive', 400);
 
 	if (typeof body.quantity !== 'number' || body.quantity <= 0) {
 		throw new ServiceError('quantity must be a positive number', 400);
@@ -424,7 +425,7 @@ const createStock = async (user, body, req) => {
 	let supplierId;
 	if (body.supplierId) {
 		const supplier = await supplierRepo.findById(body.supplierId);
-		if (!supplier || !supplier.isActive) throw new ServiceError('Supplier not found', 404);
+		if (!supplier || !supplier.isActive) throw new ServiceError('Supplier is inactive', 400);
 		supplierId = supplier._id;
 	}
 
@@ -473,6 +474,11 @@ const updateStock = async (user, stockId, body, req) => {
 	}
 
 	const updateData = {};
+	if (body.medicationId) {
+		const medication = await medicationRepo.findById(body.medicationId);
+		if (!medication) throw new ServiceError('Medication not found', 404);
+		updateData.medicationId = medication._id;
+	}
 	if (body.quantity != null) updateData.quantity = body.quantity;
 	if (body.unit !== undefined) updateData.unit = String(body.unit || '').trim();
 	if (body.lotNumber !== undefined) updateData.lotNumber = String(body.lotNumber || '').trim();
@@ -672,7 +678,25 @@ const getUsageStats = async (query) => {
 		dispenseCount: row.count,
 	}));
 
-	return { from: fromDate, to: toDate, data };
+	const detailedRecords = await medicationDispenseRepo.findDetailedRecords(fromDate, toDate);
+	const dispensingDetails = detailedRecords.map((record) => ({
+		medicationName: record.medicationId?.name || 'N/A',
+		medication: record.medicationId,
+		medicationUnit: record.medicationId?.unit || 'N/A',
+		patientName: record.residentId?.fullName || 'N/A',
+		patient: record.residentId,
+		quantity: record.quantity,
+		dispensedTime: record.dispensedAt,
+		dispensedBy: record.dispensedByUserId?.fullName || 'N/A',
+		notes: record.notes || '',
+	}));
+
+	return { 
+		from: fromDate, 
+		to: toDate, 
+		data,
+		dispensingDetails,
+	};
 };
 
 const getReportSummary = async (query) => {

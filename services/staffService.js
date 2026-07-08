@@ -23,7 +23,7 @@ const cloudinary = require('../config/cloudinaryConfig');
 const {
   validateFullName,
   validatePhone,
-  validateDateOfBirth,
+  validateStaffDateOfBirth,
   collectErrors,
 } = require('../utils/validators');
 const { GENDERS } = require('../models/enums');
@@ -253,7 +253,13 @@ const updateStaffProfile = async (id, body, currentUser) => {
   const validationError = collectErrors([
     () => (fullName !== undefined ? validateFullName(fullName) : null),
     () => (phone !== undefined ? validatePhone(phone) : null),
-    () => (dateOfBirth !== undefined ? validateDateOfBirth(dateOfBirth) : null),
+    () => {
+      if (dateOfBirth === undefined && gender === undefined) return null;
+      const effectiveDob = dateOfBirth !== undefined ? dateOfBirth : user.dateOfBirth;
+      if (!effectiveDob) return null;
+      const effectiveGender = gender !== undefined ? gender : user.gender;
+      return validateStaffDateOfBirth(effectiveDob, { role: user.role, gender: effectiveGender });
+    },
   ]);
   if (validationError) throw apiErr(CODES.STAFF_VALIDATION_FAILED, { statusCode: 400, params: { detail: validationError } });
 

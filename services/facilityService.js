@@ -586,6 +586,22 @@ const updateBed = async (bedId, data, user, req) => {
     if (data.status === 'maintenance' && bed.status === 'occupied') {
       throw Object.assign(new Error('Không thể chuyển giường đang sử dụng sang trạng thái bảo trì'), { status: 400 });
     }
+    if (data.status === 'available') {
+      if (bed.assignedResidentId) {
+        throw Object.assign(new Error('Không thể đặt trạng thái trống khi giường vẫn gán cho cư dân'), { status: 400 });
+      }
+      const Resident = require('../models/resident');
+      const residentOnBed = await Resident.findOne({
+        bedId: bed._id,
+        residencyStatus: 'admitted',
+      }).select('_id fullName residentCode');
+      if (residentOnBed) {
+        throw Object.assign(
+          new Error(`Không thể đặt trạng thái trống — cư dân ${residentOnBed.fullName || residentOnBed.residentCode} đang gán giường này`),
+          { status: 400 }
+        );
+      }
+    }
     bed.status = data.status;
   }
 

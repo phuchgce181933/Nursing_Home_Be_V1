@@ -50,6 +50,39 @@ const validateDateOfBirth = (dob) => {
   return null;
 };
 
+const STAFF_DOB_GENDERS = ['male', 'female'];
+
+const validateStaffDateOfBirth = (dob, { role, gender } = {}) => {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return 'dateOfBirth is not a valid date';
+  if (d > new Date()) return 'dateOfBirth cannot be in the future';
+
+  if (!STAFF_DOB_GENDERS.includes(gender)) {
+    return 'gender must be male or female when date of birth is provided';
+  }
+
+  const minYears = role === 'doctor' ? 24 : 18;
+  const minBirthDate = new Date();
+  minBirthDate.setFullYear(minBirthDate.getFullYear() - minYears);
+  if (d > minBirthDate) {
+    return role === 'doctor'
+      ? 'doctor must be at least 24 years old'
+      : 'staff must be at least 18 years old';
+  }
+
+  const maxYears = gender === 'male' ? 60 : 55;
+  const maxBirthDate = new Date();
+  maxBirthDate.setFullYear(maxBirthDate.getFullYear() - maxYears);
+  if (d < maxBirthDate) {
+    return gender === 'male'
+      ? 'male staff cannot exceed 60 years old'
+      : 'female staff cannot exceed 55 years old';
+  }
+
+  return null;
+};
+
 const collectErrors = (checks) => {
   const errors = checks.map((fn) => fn()).filter(Boolean);
   return errors.length ? errors.join('; ') : null;
@@ -62,5 +95,6 @@ module.exports = {
   validateUsername,
   validatePassword,
   validateDateOfBirth,
+  validateStaffDateOfBirth,
   collectErrors,
 };

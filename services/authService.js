@@ -5,7 +5,7 @@ const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const mailService = require('./mailService');
 const otpService = require('./otpService');
-const { validatePhone, validateUsername, validateDateOfBirth } = require('../utils/validators');
+const { validatePhone, validateUsername, validateStaffDateOfBirth } = require('../utils/validators');
 const STAFF_ROLES = ['doctor', 'nurse', 'pharmacist', 'caregiver'];
 const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', pharmacist: 'PHA', caregiver: 'CAR', admin: 'ADM' };
 const VALID_ROLES = [...STAFF_ROLES, 'admin', 'system'];
@@ -145,7 +145,7 @@ const createStaffAccount = async ({
   const usernameError = validateUsername(username);
   if (usernameError) throw apiErr(CODES.AUTH_VALIDATION_FAILED, { statusCode: 400, params: { detail: usernameError } });
 
-  const dobError = validateDateOfBirth(dateOfBirth);
+  const dobError = validateStaffDateOfBirth(dateOfBirth, { role, gender });
   if (dobError) throw apiErr(CODES.AUTH_VALIDATION_FAILED, { statusCode: 400, params: { detail: dobError } });
 
   const existing = await userRepo.findByEmail(email);

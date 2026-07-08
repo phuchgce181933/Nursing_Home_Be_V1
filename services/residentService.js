@@ -598,6 +598,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
     if (!bedsByRoomId.has(key)) bedsByRoomId.set(key, []);
     bedsByRoomId.get(key).push({ _id: bed._id, bedCode: bed.bedCode, bedType: bed.bedType, status: bed.status });
   }
+  const currentBedId = String(resident.bedId?._id || resident.bedId);
   const currentRoomId = String(resident.roomId?._id || resident.roomId);
   const targets = rooms
     .map((room) => ({
@@ -607,17 +608,21 @@ const getTransferTargets = async (residentId, { floorId }) => {
       capacity: room.capacity,
       occupiedCount: room.occupiedCount,
       status: room.status,
-      availableBeds: bedsByRoomId.get(String(room._id)) || [],
+      availableBeds: (bedsByRoomId.get(String(room._id)) || []).filter(
+        (bed) => String(bed._id) !== currentBedId
+      ),
     }))
-    .filter(
-      (room) =>
-        String(room._id) !== currentRoomId &&
-        room.availableBeds.length > 0
-    );
+    .filter((room) => {
+      if (room.availableBeds.length === 0) return false;
+      if (room.status === 'closed') return false;
+      if (String(room._id) === currentRoomId) return true;
+      return room.occupiedCount < room.capacity;
+    });
 
+  const messageKey = targets.length === 0 ? 'RESIDENT_TRANSFER_NO_TARGETS' : undefined;
   const message =
     targets.length === 0
-      ? 'Không có phòng/giường trống trên tầng đã chọn. Chọn tầng khác hoặc giải phóng giường trước.'
+      ? 'No vacant rooms/beds on selected floor. Choose another floor or free a bed first.'
       : undefined;
 
   return {
@@ -629,6 +634,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
     },
     currentAssignment: mapTransferAssignment(resident),
     targets,
+    messageKey,
     message,
   };
 };
@@ -646,7 +652,12 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   const targetRoom = await roomRepo.findById(targetRoomId);
   if (!targetRoom) throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_NOT_FOUND, { statusCode: 404 });
   if (targetRoom.status === 'closed') throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_CLOSED, { statusCode: 400 });
-  if (targetRoom.occupiedCount >= targetRoom.capacity) throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_FULL, { statusCode: 400 });
+
+  const sourceRoomId = String(resident.roomId?._id || resident.roomId);
+  const sameRoom = sourceRoomId === String(targetRoomId);
+  if (!sameRoom && targetRoom.occupiedCount >= targetRoom.capacity) {
+    throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_FULL, { statusCode: 400 });
+  }
 
   const targetBed = await bedRepo.findById(targetBedId);
   if (!targetBed) throw apiErr(CODES.RESIDENT_TRANSFER_BED_NOT_FOUND, { statusCode: 404 });
@@ -654,9 +665,13 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   if (targetBed.status !== 'available' || targetBed.assignedResidentId) throw apiErr(CODES.RESIDENT_TRANSFER_BED_UNAVAILABLE, { statusCode: 400 });
 
   await bedRepo.releaseBed(resident.bedId._id, new Date());
-  await roomRepo.adjustOccupiedCount(resident.roomId._id, -1);
+  if (!sameRoom) {
+    await roomRepo.adjustOccupiedCount(resident.roomId._id, -1);
+  }
   await bedRepo.occupyBed(targetBedId, resident._id, new Date());
-  await roomRepo.adjustOccupiedCount(targetRoomId, 1);
+  if (!sameRoom) {
+    await roomRepo.adjustOccupiedCount(targetRoomId, 1);
+  }
 
   const updatedResident = await residentRepo.updateRoomAssignment(residentId, { roomId: targetRoomId, bedId: targetBedId });
   if (!updatedResident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });

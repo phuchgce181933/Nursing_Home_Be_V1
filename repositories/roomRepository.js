@@ -26,8 +26,12 @@ const adjustOccupiedCount = async (roomId, delta) => {
   return room.toObject();
 };
 
+const { syncRoomOccupancy, syncAllRoomOccupancy } = require('../utils/roomOccupancySync');
+
 module.exports = {
   findByFloorId,
   findById,
   adjustOccupiedCount,
+  syncRoomOccupancy,
+  syncAllRoomOccupancy,
 };

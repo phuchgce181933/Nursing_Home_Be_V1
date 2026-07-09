@@ -49,11 +49,42 @@ const normalizeStringArray = (value) => {
   return [String(value).trim()].filter(Boolean);
 };
 
+const contactIdentityKey = (contact) => {
+  const name = String(contact?.fullName || '').trim().toLowerCase();
+  const phone = String(contact?.phone || '').replace(/\D/g, '');
+  return `${name}|${phone}`;
+};
+
+const throwDuplicateEmergencyContact = (contact) => {
+  throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_DUPLICATE, {
+    statusCode: 409,
+    params: { fullName: contact.fullName, phone: contact.phone },
+  });
+};
+
+const assertNoDuplicateEmergencyContact = (existingContacts, candidate, { excludeContactId } = {}) => {
+  const key = contactIdentityKey(candidate);
+  const dup = (existingContacts || []).find((c) => {
+    if (excludeContactId && c._id?.toString() === String(excludeContactId)) return false;
+    return contactIdentityKey(c) === key;
+  });
+  if (dup) throwDuplicateEmergencyContact(candidate);
+};
+
+const assertEmergencyContactsListUnique = (contacts) => {
+  const seen = new Set();
+  for (const c of contacts || []) {
+    const key = contactIdentityKey(c);
+    if (seen.has(key)) throwDuplicateEmergencyContact(c);
+    seen.add(key);
+  }
+};
+
 const normalizeEmergencyContacts = (value) => {
   if (value === undefined) return undefined;
   if (value === null) return [];
   if (!Array.isArray(value)) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'emergencyContacts phải là mảng' } });
-  return value.map((contact, index) => {
+  const normalized = value.map((contact, index) => {
     if (!contact || typeof contact !== 'object') {
       throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}] phải là object` } });
     }
@@ -72,6 +103,8 @@ const normalizeEmergencyContacts = (value) => {
       isPrimary: Boolean(contact.isPrimary),
     };
   });
+  assertEmergencyContactsListUnique(normalized);
+  return normalized;
 };
 
 const normalizeFamilyAccountIds = async (value) => {
@@ -321,7 +354,7 @@ const matchEmergencyContact = (a, b) => {
   const aId = a?._id?.toString?.();
   const bId = b?._id?.toString?.();
   if (aId && bId && aId === bId) return true;
-  return a?.fullName === b?.fullName && a?.phone === b?.phone;
+  return contactIdentityKey(a) === contactIdentityKey(b);
 };
 
 const assertPrimaryContactNotRemoved = (existingContacts, nextContacts) => {
@@ -438,6 +471,9 @@ const getResidentFamilyInfo = async (residentId) => {
 const addEmergencyContact = async (residentId, body) => {
   assertResidentId(residentId);
   const contact = validateContactPayload(body, { requireAll: true });
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  assertNoDuplicateEmergencyContact(existing.emergencyContacts, contact);
   const resident = await residentRepo.addEmergencyContact(residentId, contact);
   if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   const added = resident.emergencyContacts[resident.emergencyContacts.length - 1];
@@ -460,6 +496,7 @@ const replaceEmergencyContacts = async (residentId, contactsInput) => {
   if (!primarySet && normalized.length > 0) {
     normalized[0].isPrimary = true;
   }
+  assertEmergencyContactsListUnique(normalized);
   const existing = await residentRepo.findById(residentId);
   if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   assertPrimaryContactNotRemoved(existing.emergencyContacts, normalized);
@@ -472,12 +509,21 @@ const updateEmergencyContact = async (residentId, contactId, body) => {
   assertResidentId(residentId);
   assertContactId(contactId);
   const patch = validateContactPayload(body, { requireAll: false, partial: true });
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  const current = existing.emergencyContacts?.id?.(contactId);
+  if (!current) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
+  const merged = {
+    fullName: patch.fullName !== undefined ? patch.fullName : current.fullName,
+    phone: patch.phone !== undefined ? patch.phone : current.phone,
+    relationship: patch.relationship !== undefined ? patch.relationship : current.relationship,
+    email: patch.email !== undefined ? patch.email : current.email,
+    address: patch.address !== undefined ? patch.address : current.address,
+    isPrimary: patch.isPrimary !== undefined ? patch.isPrimary : current.isPrimary,
+  };
+  assertNoDuplicateEmergencyContact(existing.emergencyContacts, merged, { excludeContactId: contactId });
   const resident = await residentRepo.updateEmergencyContact(residentId, contactId, patch);
-  if (!resident) {
-    const exists = await residentRepo.findById(residentId);
-    if (!exists) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
-    throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
-  }
+  if (!resident) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
   const updated = resident.emergencyContacts.id(contactId);
   return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_UPDATED), emergencyContact: updated, emergencyContacts: resident.emergencyContacts };
 };
@@ -619,11 +665,8 @@ const getTransferTargets = async (residentId, { floorId }) => {
       return room.occupiedCount < room.capacity;
     });
 
-  const messageKey = targets.length === 0 ? 'RESIDENT_TRANSFER_NO_TARGETS' : undefined;
-  const message =
-    targets.length === 0
-      ? 'No vacant rooms/beds on selected floor. Choose another floor or free a bed first.'
-      : undefined;
+  const noTargets = targets.length === 0;
+  const infoMessage = noTargets ? apiSuccess(SUCCESS.RESIDENT_TRANSFER_NO_TARGETS) : null;
 
   return {
     resident: {
@@ -634,8 +677,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
     },
     currentAssignment: mapTransferAssignment(resident),
     targets,
-    messageKey,
-    message,
+    ...(infoMessage || {}),
   };
 };
 
@@ -1056,6 +1098,10 @@ const adminGetResident = async (residentId) => {
 
 const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
   if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw apiErr(CODES.RESIDENT_BODY_EMPTY, { statusCode: 400 });
+  const role = String(user?.role || '').toLowerCase();
+  if (body.allergies !== undefined && (role === 'admin' || role === 'manager')) {
+    throw apiErr(CODES.RESIDENT_DRUG_ALLERGIES_FORBIDDEN, { statusCode: 403 });
+  }
   const update = {};
   if (body.fullName !== undefined) {
     const fullName = String(body.fullName).trim();

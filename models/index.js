@@ -41,8 +41,6 @@ const MealTimeScheduleEntry = require('./mealTimeScheduleEntry');
 const MealIntakeNote = require('./mealIntakeNote');
 const HygieneActivityRecord = require('./hygieneActivityRecord');
 const DailyBehaviorRecord = require('./dailyBehaviorRecord');
-const RehabilitationScheduleDay = require('./rehabilitationScheduleDay');
-const RehabilitationScheduleEntry = require('./rehabilitationScheduleEntry');
 const LeaveRequest = require('./leaveRequest');
 const FacilityTour = require('./facilityTour');
 const ServicePackage = require('./servicePackage');
@@ -97,8 +95,6 @@ module.exports = {
   MealIntakeNote,
   HygieneActivityRecord,
   DailyBehaviorRecord,
-  RehabilitationScheduleDay,
-  RehabilitationScheduleEntry,
   FacilityTour,
   ServicePackage,
   MedicationSchedule,

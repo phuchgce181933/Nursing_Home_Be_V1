@@ -26,6 +26,8 @@ const { protect, authorize } = require('../middleware/auth');
 
 const adminManager = authorize('admin');
 const allStaff = authorize('admin', 'doctor', 'nurse', 'caregiver');
+const drugAllergiesRead = authorize('admin', 'manager', 'doctor', 'nurse');
+const drugAllergiesWrite = authorize('doctor');
 
 /**
  * @swagger
@@ -273,7 +275,7 @@ router.get('/pre-existing-conditions', protect, allStaff, listResidentsForPreExi
  *       200:
  *         description: Paginated list with area and record flags
  */
-router.get('/drug-allergies', protect, allStaff, listResidentsForDrugAllergies);
+router.get('/drug-allergies', protect, drugAllergiesRead, listResidentsForDrugAllergies);
 
 /**
  * @swagger
@@ -485,8 +487,8 @@ router.put('/:residentId/pre-existing-conditions', protect, allStaff, updatePreE
  *       400:
  *         description: Validation error or missing drugAllergies field
  */
-router.get('/:residentId/drug-allergies', protect, allStaff, getDrugAllergies);
-router.put('/:residentId/drug-allergies', protect, allStaff, updateDrugAllergies);
+router.get('/:residentId/drug-allergies', protect, drugAllergiesRead, getDrugAllergies);
+router.put('/:residentId/drug-allergies', protect, drugAllergiesWrite, updateDrugAllergies);
 
 /**
  * @swagger

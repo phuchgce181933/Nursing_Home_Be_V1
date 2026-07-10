@@ -49,34 +49,57 @@ const normalizeStringArray = (value) => {
   return [String(value).trim()].filter(Boolean);
 };
 
-const contactIdentityKey = (contact) => {
-  const name = String(contact?.fullName || '').trim().toLowerCase();
-  const phone = String(contact?.phone || '').replace(/\D/g, '');
-  return `${name}|${phone}`;
+const contactPhoneKey = (contact) => String(contact?.phone || '').replace(/\D/g, '');
+
+const contactEmailKey = (contact) => {
+  const email = String(contact?.email || '').trim().toLowerCase();
+  return email || null;
 };
 
-const throwDuplicateEmergencyContact = (contact) => {
+const throwDuplicateEmergencyContact = (candidate, existingContact) => {
   throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_DUPLICATE, {
     statusCode: 409,
-    params: { fullName: contact.fullName, phone: contact.phone },
+    params: { phone: candidate.phone, fullName: existingContact.fullName },
+  });
+};
+
+const throwDuplicateEmergencyContactEmail = (candidate, existingContact) => {
+  throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_EMAIL_DUPLICATE, {
+    statusCode: 409,
+    params: { email: candidate.email, fullName: existingContact.fullName },
   });
 };
 
 const assertNoDuplicateEmergencyContact = (existingContacts, candidate, { excludeContactId } = {}) => {
-  const key = contactIdentityKey(candidate);
-  const dup = (existingContacts || []).find((c) => {
+  const phoneKey = contactPhoneKey(candidate);
+  const phoneDup = (existingContacts || []).find((c) => {
     if (excludeContactId && c._id?.toString() === String(excludeContactId)) return false;
-    return contactIdentityKey(c) === key;
+    return contactPhoneKey(c) === phoneKey;
   });
-  if (dup) throwDuplicateEmergencyContact(candidate);
+  if (phoneDup) throwDuplicateEmergencyContact(candidate, phoneDup);
+
+  const emailKey = contactEmailKey(candidate);
+  if (!emailKey) return;
+
+  const emailDup = (existingContacts || []).find((c) => {
+    if (excludeContactId && c._id?.toString() === String(excludeContactId)) return false;
+    return contactEmailKey(c) === emailKey;
+  });
+  if (emailDup) throwDuplicateEmergencyContactEmail(candidate, emailDup);
 };
 
 const assertEmergencyContactsListUnique = (contacts) => {
-  const seen = new Set();
+  const seenPhones = new Map();
+  const seenEmails = new Map();
   for (const c of contacts || []) {
-    const key = contactIdentityKey(c);
-    if (seen.has(key)) throwDuplicateEmergencyContact(c);
-    seen.add(key);
+    const phoneKey = contactPhoneKey(c);
+    if (seenPhones.has(phoneKey)) throwDuplicateEmergencyContact(c, seenPhones.get(phoneKey));
+    seenPhones.set(phoneKey, c);
+
+    const emailKey = contactEmailKey(c);
+    if (!emailKey) continue;
+    if (seenEmails.has(emailKey)) throwDuplicateEmergencyContactEmail(c, seenEmails.get(emailKey));
+    seenEmails.set(emailKey, c);
   }
 };
 
@@ -354,7 +377,7 @@ const matchEmergencyContact = (a, b) => {
   const aId = a?._id?.toString?.();
   const bId = b?._id?.toString?.();
   if (aId && bId && aId === bId) return true;
-  return contactIdentityKey(a) === contactIdentityKey(b);
+  return contactPhoneKey(a) === contactPhoneKey(b);
 };
 
 const assertPrimaryContactNotRemoved = (existingContacts, nextContacts) => {

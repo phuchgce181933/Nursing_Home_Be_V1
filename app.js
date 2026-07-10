@@ -87,14 +87,12 @@ app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions')
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));
 app.use('/api/nurse/special-diets', require('./routes/specialDiets'));
 app.use('/api/nurse/meal-time-schedules', require('./routes/mealTimeSchedules'));
-app.use('/api/nurse/nutrition-reports', require('./routes/nutritionReports'));
 app.use('/api/caregiver/meal-intake-notes', require('./routes/caregiverMealIntakeNotes'));
 app.use('/api/caregiver/residents', require('./routes/caregiverResidents'));
 app.use('/api/caregiver/care-tasks', require('./routes/caregiverCareTasks'));
 app.use('/api/caregiver/hygiene-activities', require('./routes/caregiverHygieneActivities'));
 app.use('/api/caregiver/daily-behaviors', require('./routes/caregiverDailyBehaviors'));
 app.use('/api/caregiver/diet-plans', require('./routes/caregiverDietPlans'));
-app.use('/api/caregiver/rehabilitation-schedules', require('./routes/caregiverRehabilitationSchedules'));
 
 app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
 app.use('/api/medications', require('./routes/scheduleRoutes'));

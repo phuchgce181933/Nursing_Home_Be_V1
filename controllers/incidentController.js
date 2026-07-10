@@ -11,7 +11,7 @@ const createIncident = async (req, res) => {
 
 const listIncidents = async (req, res) => {
   try {
-    const result = await incidentService.listIncidents(req.query);
+    const result = await incidentService.listIncidents(req.user, req.query);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -20,7 +20,7 @@ const listIncidents = async (req, res) => {
 
 const getIncident = async (req, res) => {
   try {
-    const result = await incidentService.getIncident(req.params.id);
+    const result = await incidentService.getIncident(req.user, req.params.id);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -38,10 +38,19 @@ const updateIncidentStatus = async (req, res) => {
 
 const exportIncidents = async (req, res) => {
   try {
-    const { csv, fileName } = await incidentService.exportIncidents(req.query);
+    const { csv, fileName } = await incidentService.exportIncidents(req.user, req.query);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.send(csv);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const assignHandlers = async (req, res) => {
+  try {
+    const result = await incidentService.assignHandlers(req.user, req.params.id, req.body);
+    res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
   }
@@ -52,5 +61,6 @@ module.exports = {
   listIncidents,
   getIncident,
   updateIncidentStatus,
+  assignHandlers,
   exportIncidents,
 };

@@ -17,7 +17,7 @@ const fileAttachmentSchema = new Schema(
 const incidentSchema = new Schema(
   {
     residentId: { type: Types.ObjectId, ref: 'Resident', index: true },
-    reportedByStaffId: { type: Types.ObjectId, ref: 'StaffProfile', required: true, index: true },
+    reportedByStaffId: { type: Types.ObjectId, ref: 'StaffProfile', index: true },
     reportedByUserId: { type: Types.ObjectId, ref: 'User', index: true },
     reporterName: { type: String, trim: true },
     reporterEmail: { type: String, trim: true, lowercase: true },
@@ -29,6 +29,7 @@ const incidentSchema = new Schema(
     location: { type: String, trim: true },
     description: { type: String, required: true, trim: true },
     status: { type: String, enum: INCIDENT_STATUSES, default: 'open', index: true },
+    residentIds: [{ type: Types.ObjectId, ref: 'Resident', index: true }],
     assignedStaffIds: [{ type: Types.ObjectId, ref: 'StaffProfile' }],
     notifiedManagement: { type: Boolean, default: false },
     notifiedFamilyIds: [{ type: Types.ObjectId, ref: 'User' }],

@@ -14,20 +14,45 @@ const {
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
+const DEFAULT_RANGE_DAYS = 30;
+
+const normalizeDateValue = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const resolveDateRangeValues = (query, fromKey = 'from', toKey = 'to') => {
+  let from = normalizeDateValue(query[fromKey]);
+  let to = normalizeDateValue(query[toKey]);
+
+  if (!from && !to) {
+    to = new Date();
+    from = new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+  } else if (!from && to) {
+    from = new Date(to.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+  } else if (!to && from) {
+    to = new Date(from.getTime() + DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+  }
+
+  if (from && to && to < from) {
+    [from, to] = [to, from];
+  }
+
+  return { from, to };
+};
 
 const parseDateRange = (query, fromKey = 'from', toKey = 'to') => {
+  const { from, to } = resolveDateRangeValues(query, fromKey, toKey);
   const range = {};
-  if (query[fromKey]) {
-    const from = new Date(query[fromKey]);
-    if (!Number.isNaN(from.getTime())) range.$gte = from;
+
+  if (from) range.$gte = from;
+  if (to) {
+    const endOfDay = new Date(to);
+    endOfDay.setHours(23, 59, 59, 999);
+    range.$lte = endOfDay;
   }
-  if (query[toKey]) {
-    const to = new Date(query[toKey]);
-    if (!Number.isNaN(to.getTime())) {
-      to.setHours(23, 59, 59, 999);
-      range.$lte = to;
-    }
-  }
+
   return Object.keys(range).length ? range : null;
 };
 
@@ -129,7 +154,7 @@ const getResidentCountReport = async (query) => {
 const getSummaryReport = async (query) => {
   const incidentRange = buildDateRangeFilter(query, 'incidentAt');
   const activityRange = buildDateRangeFilter(query, 'scheduledAt');
-  const invoiceRange = buildDateRangeFilter(query, 'issuedAt');
+  const invoiceRange = buildDateRangeFilter(query, 'createdAt');
   const paymentRange = buildDateRangeFilter(query, 'paidAt');
 
   const [
@@ -157,7 +182,7 @@ const getSummaryReport = async (query) => {
     Activity.countDocuments({ ...(activityRange ? { scheduledAt: activityRange } : {}), status: 'completed' }),
     Activity.countDocuments({ ...(activityRange ? { scheduledAt: activityRange } : {}), status: 'scheduled' }),
     Invoice.aggregate([
-      { $match: invoiceRange ? { issuedAt: invoiceRange } : {} },
+      { $match: invoiceRange ? { createdAt: invoiceRange } : {} },
       {
         $group: {
           _id: null,
@@ -384,9 +409,10 @@ const getCareActivityReport = async (query) => {
 };
 
 const getFinancialReport = async (query) => {
-  const range = buildDateRangeFilter(query, 'issuedAt');
-  const invoiceFilter = range ? { issuedAt: range } : {};
-  const paymentFilter = buildDateRangeFilter(query, 'paidAt') || {};
+  const range = buildDateRangeFilter(query, 'createdAt');
+  const invoiceFilter = range ? { createdAt: range } : {};
+  const paymentFilter = buildDateRangeFilter(query, 'paidAt');
+  const paymentMatch = paymentFilter ? { paidAt: paymentFilter, paymentStatus: 'confirmed' } : { paymentStatus: 'confirmed' };
 
   const [invoiceSummary, paymentSummary, overdueInvoices] = await Promise.all([
     Invoice.aggregate([
@@ -401,7 +427,7 @@ const getFinancialReport = async (query) => {
       },
     ]),
     Payment.aggregate([
-      { $match: { ...paymentFilter, paymentStatus: 'confirmed' } },
+      { $match: paymentMatch },
       {
         $group: {
           _id: null,
@@ -441,7 +467,7 @@ const getFinancialReport = async (query) => {
 const getTimeSeriesReport = async (query) => {
   const metric = query.metric || 'incidents';
   const granularity = query.granularity || 'day';
-  const range = buildDateRangeFilter(query, query.metric === 'residentAdmissions' ? 'admittedAt' : query.metric === 'payments' ? 'paidAt' : query.metric === 'invoiceRevenue' ? 'issuedAt' : query.metric === 'activities' ? 'scheduledAt' : 'incidentAt');
+  const range = buildDateRangeFilter(query, query.metric === 'residentAdmissions' ? 'admittedAt' : query.metric === 'payments' ? 'paidAt' : query.metric === 'invoiceRevenue' ? 'createdAt' : query.metric === 'activities' ? 'scheduledAt' : 'incidentAt');
 
   let collection;
   let dateField;
@@ -458,10 +484,10 @@ const getTimeSeriesReport = async (query) => {
       break;
     case 'invoiceRevenue':
       collection = Invoice;
-      dateField = 'issuedAt';
+      dateField = 'createdAt';
       label = 'Invoice Revenue';
       valueField = 'totalAmount';
-      match = { ...range ? { issuedAt: range } : {} };
+      match = { ...range ? { createdAt: range } : {} };
       break;
     case 'payments':
       collection = Payment;
@@ -507,13 +533,9 @@ const getTimeSeriesReport = async (query) => {
 
 const getComparisonReport = async (query) => {
   const metric = query.metric || 'incidents';
-  if (!query.from || !query.to) {
-    throw new ServiceError('Comparison report requires `from` and `to` query parameters', 400);
-  }
+  const { from, to } = resolveDateRangeValues(query);
 
-  const from = new Date(query.from);
-  const to = new Date(query.to);
-  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+  if (!from || !to) {
     throw new ServiceError('Invalid comparison date range', 400);
   }
 
@@ -521,7 +543,7 @@ const getComparisonReport = async (query) => {
   const previousTo = new Date(from.getTime() - 1);
   const previousFrom = new Date(previousTo.getTime() - rangeInMs);
 
-  const currentSeries = await getTimeSeriesReport({ ...query, from, to });
+  const currentSeries = await getTimeSeriesReport({ ...query, from: from.toISOString(), to: to.toISOString() });
   const previousSeries = await getTimeSeriesReport({ ...query, from: previousFrom.toISOString(), to: previousTo.toISOString() });
 
   const sumValue = (series) => series.series.reduce((acc, item) => acc + Number(item.value || 0), 0);

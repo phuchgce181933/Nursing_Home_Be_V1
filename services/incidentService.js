@@ -6,6 +6,7 @@ const incidentRepo = require('../repositories/incidentRepository');
 const notificationRepo = require('../repositories/notificationRepository');
 const mailService = require('./mailService');
 const ServiceError = require('./serviceError');
+const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -17,7 +18,7 @@ const parsePagination = (query) => {
   return { page, limit, skip: (page - 1) * limit };
 };
 
-const getIncidentFilter = (query) => {
+const getIncidentFilter = async (query, currentUser = null) => {
   const filter = {};
 
   if (query.search) {
@@ -35,13 +36,26 @@ const getIncidentFilter = (query) => {
   if (query.status) filter.status = query.status;
   if (query.severity) filter.severity = query.severity;
   if (query.incidentType) filter.incidentType = query.incidentType;
-  if (query.residentId) filter.residentId = query.residentId;
+  if (query.residentId) {
+    const residentQuery = { $or: [{ residentId: query.residentId }, { residentIds: query.residentId }] };
+    if (filter.$or) {
+      filter.$and = [{ $or: filter.$or }, residentQuery];
+      delete filter.$or;
+    } else {
+      filter.$and = [residentQuery];
+    }
+  }
   if (query.reporterRole) filter.reporterRole = query.reporterRole;
 
   if (query.incidentFrom || query.incidentTo) {
     filter.incidentAt = {};
     if (query.incidentFrom) filter.incidentAt.$gte = new Date(query.incidentFrom);
     if (query.incidentTo) filter.incidentAt.$lte = new Date(`${query.incidentTo}T23:59:59.999Z`);
+  }
+
+  const caregiverAccessFilter = await buildCaregiverAccessFilter(currentUser);
+  if (caregiverAccessFilter) {
+    filter.$and = [...(Array.isArray(filter.$and) ? filter.$and : []), caregiverAccessFilter];
   }
 
   return filter;
@@ -60,11 +74,61 @@ const getReporterDetails = (user, override = {}) => ({
   reporterRole: override.reporterRole || user.role || undefined,
 });
 
+const isCaregiverRole = (role) => {
+  const normalized = String(role || '').toLowerCase();
+  return normalized === 'caregiver'
+    || normalized.includes('caregiver')
+    || normalized.includes('care giver')
+    || normalized.includes('chăm sóc');
+};
+
+const getCaregiverStaffProfileId = async (currentUser) => {
+  if (!currentUser?._id || !isCaregiverRole(currentUser.role)) return null;
+  const profile = await StaffProfile.findOne({ userId: currentUser._id }).select('_id').lean();
+  return profile?._id || null;
+};
+
+const buildCaregiverAccessFilter = async (currentUser) => {
+  if (!currentUser || !isCaregiverRole(currentUser.role)) return null;
+
+  const clauses = [{ reportedByUserId: currentUser._id }];
+  const staffProfileId = await getCaregiverStaffProfileId(currentUser);
+  if (staffProfileId) {
+    clauses.push({ assignedStaffIds: staffProfileId });
+  }
+
+  return { $or: clauses };
+};
+
+const isIncidentAccessibleToUser = async (incident, currentUser) => {
+  if (!currentUser || !isCaregiverRole(currentUser.role)) return true;
+  if (String(incident.reportedByUserId || '') === String(currentUser._id)) return true;
+
+  const staffProfileId = await getCaregiverStaffProfileId(currentUser);
+  if (!staffProfileId) return false;
+
+  return (incident.assignedStaffIds || []).some((entry) => {
+    const candidate = entry?._id || entry;
+    return String(candidate) === String(staffProfileId);
+  });
+};
+
 const validateStatus = (status) => {
   const allowed = ['open', 'investigating', 'resolved', 'closed'];
   if (!allowed.includes(status)) {
     throw new ServiceError('Invalid incident status', 400);
   }
+};
+
+const getStatusLabel = (status) => {
+  const labels = {
+    open: 'mở',
+    investigating: 'đang điều tra',
+    resolved: 'đã giải quyết',
+    closed: 'đã đóng',
+  };
+
+  return labels[status] || status;
 };
 
 const buildCsvRow = (value) => {
@@ -89,21 +153,34 @@ const toCsv = (incidents) => {
     'reporterRole',
   ];
 
-  const rows = incidents.map((incident) => [
-    incident._id.toString(),
-    incident.residentId?._id?.toString() || '',
-    incident.residentId?.fullName || '',
-    incident.incidentType,
-    incident.severity,
-    incident.status,
-    incident.incidentAt ? new Date(incident.incidentAt).toISOString() : '',
-    incident.location || '',
-    incident.description,
-    incident.reporterName || '',
-    incident.reporterEmail || '',
-    incident.reporterPhone || '',
-    incident.reporterRole || '',
-  ]);
+  const rows = incidents.map((incident) => {
+    const residentIds = Array.isArray(incident.residentIds)
+      ? incident.residentIds.map((resident) => resident?._id?.toString() || String(resident)).filter(Boolean)
+      : incident.residentId
+        ? [incident.residentId?._id?.toString() || String(incident.residentId)]
+        : [];
+    const residentNames = Array.isArray(incident.residentIds)
+      ? incident.residentIds.map((resident) => resident?.fullName || String(resident)).filter(Boolean)
+      : incident.residentId
+        ? [incident.residentId?.fullName || String(incident.residentId)]
+        : [];
+
+    return [
+      incident._id.toString(),
+      residentIds.join('; '),
+      residentNames.join('; '),
+      incident.incidentType,
+      incident.severity,
+      incident.status,
+      incident.incidentAt ? new Date(incident.incidentAt).toISOString() : '',
+      incident.location || '',
+      incident.description,
+      incident.reporterName || '',
+      incident.reporterEmail || '',
+      incident.reporterPhone || '',
+      incident.reporterRole || '',
+    ];
+  });
 
   const lines = [header, ...rows].map((row) => row.map(buildCsvRow).join(',')).join('\n');
   return lines;
@@ -115,24 +192,77 @@ const normalizeAssignedStaffIds = (assignedStaffIds) => {
   return [assignedStaffIds];
 };
 
-const getResidentForIncident = async (residentId) => {
-  if (!residentId) return null;
-  if (!mongoose.Types.ObjectId.isValid(residentId)) {
-    throw new ServiceError('Invalid residentId', 400);
+const convertUserIdsToStaffProfileIds = async (userIds) => {
+  if (!userIds || !Array.isArray(userIds) || userIds.length === 0) return [];
+  
+  try {
+    const staffProfiles = await StaffProfile.find({ userId: { $in: userIds } })
+      .select('_id userId')
+      .lean();
+    
+    console.log('[DEBUG] convertUserIdsToStaffProfileIds - Input userIds:', userIds.length);
+    console.log('[DEBUG] convertUserIdsToStaffProfileIds - Found staffProfiles:', staffProfiles.length);
+    
+    return staffProfiles.map((profile) => profile._id);
+  } catch (err) {
+    console.error('[ERROR] convertUserIdsToStaffProfileIds failed:', err.message);
+    return [];
   }
-
-  const resident = await Resident.findById(residentId).select('_id fullName familyPortalAccountIds');
-  if (!resident) {
-    throw new ServiceError('Resident not found', 404);
-  }
-  return resident;
 };
 
-const getStaffProfileByUserId = async (userId) => {
-  const profile = await StaffProfile.findOne({ userId }).select('_id');
+const normalizeResidentIds = (residentIds) => {
+  if (!residentIds) return [];
+  if (Array.isArray(residentIds)) return residentIds;
+  return [residentIds];
+};
+
+const getResidentsForIncident = async (residentIds) => {
+  const ids = normalizeResidentIds(residentIds).map(String).filter(Boolean);
+  console.log('[DEBUG] getResidentsForIncident - ids to query:', ids);
+  if (!ids.length) return [];
+  ids.forEach((id) => {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      throw new ServiceError('Invalid residentId', 400);
+    }
+  });
+
+  const uniqueIds = [...new Set(ids)];
+  const residents = await Resident.find({ _id: { $in: uniqueIds } })
+    .select('_id fullName familyPortalAccountIds')
+    .lean();
+
+  console.log('[DEBUG] getResidentsForIncident - found residents:', residents.length);
+  console.log('[DEBUG] getResidentsForIncident - first resident _id type:', residents[0]?._id?.constructor?.name);
+
+  if (residents.length !== uniqueIds.length) {
+    throw new ServiceError('Resident not found', 404);
+  }
+
+  return residents;
+};
+
+const getStaffProfileByUserId = async (userId, user = null) => {
+  console.log('[DEBUG] getStaffProfileByUserId - Looking for userId:', userId);
+  let profile = await StaffProfile.findOne({ userId }).select('_id');
+  console.log('[DEBUG] getStaffProfileByUserId - Found existing profile:', !!profile);
+  
   if (!profile) {
+    console.log('[DEBUG] getStaffProfileByUserId - Profile not found, attempting to auto-create...');
+    console.log('[DEBUG] getStaffProfileByUserId - User object:', user ? { _id: user._id, role: user.role, email: user.email } : 'Not provided');
+    
+    const userObj = user || (await User.findById(userId));
+    console.log('[DEBUG] getStaffProfileByUserId - User to create profile for:', { _id: userObj._id, role: userObj.role, email: userObj.email });
+    
+    profile = await ensureStaffProfileForUser(userObj);
+    console.log('[DEBUG] getStaffProfileByUserId - Auto-create result:', !!profile ? { _id: profile._id } : 'Failed');
+  }
+  
+  if (!profile) {
+    console.error('[ERROR] Staff profile not found and cannot be created for user:', userId);
     throw new ServiceError('Staff profile not found for current user', 403);
   }
+  
+  console.log('[DEBUG] getStaffProfileByUserId - Returning profile:', profile._id);
   return profile;
 };
 
@@ -203,13 +333,15 @@ const sendNotifications = async (incident, recipients, options = {}) => {
         recipientName: recipient.fullName,
         subject: options.emailSubject,
         message: options.content,
+        assignedStaffNames: options.assignedStaffNames,
+        residentName: options.residentName,
       }).catch((err) => console.error('Failed to send incident email', err.message))
     ),
     ...smsRecipients.map((recipient) =>
       mailService
         .sendTextBeeSms({
           to: recipient.phone,
-          message: options.smsMessage.replace('{recipientName}', recipient.fullName || 'there'),
+          message: options.smsMessage,
         })
         .catch((err) => console.error('Failed to send incident sms', err.message))
     ),
@@ -217,10 +349,29 @@ const sendNotifications = async (incident, recipients, options = {}) => {
 };
 
 const notifyIncident = async (incident, options) => {
-  const resident = await Resident.findById(incident.residentId).select('familyPortalAccountIds').lean();
-  const familyUserIds = resident?.familyPortalAccountIds?.map((id) => id.toString()) || [];
+  // Extract resident IDs - handle both ObjectId and populated Resident objects
+  const extractResidentId = (item) => {
+    if (!item) return null;
+    // If it's a populated Resident object with _id property
+    if (item._id) return item._id.toString?.() || String(item._id);
+    // Otherwise treat it as an ObjectId
+    return String(item);
+  };
+
+  const residentIds = [...new Set([
+    ...(Array.isArray(incident.residentIds) ? incident.residentIds.map(extractResidentId).filter(Boolean) : []),
+    ...(incident.residentId ? [extractResidentId(incident.residentId)] : []),
+  ])];
+
+  console.log('[DEBUG] notifyIncident - extracted residentIds:', residentIds);
+
+  const residentDocs = residentIds.length
+    ? await Resident.find({ _id: { $in: residentIds } }).select('familyPortalAccountIds').lean()
+    : [];
+
+  const familyUserIds = residentDocs.flatMap((resident) => resident.familyPortalAccountIds || []).map(String);
   const familyUsers = familyUserIds.length
-    ? await User.find({ _id: { $in: familyUserIds }, isActive: true, isBanned: false })
+    ? await User.find({ _id: { $in: [...new Set(familyUserIds)] }, isActive: true, isBanned: false })
         .select('fullName email phone role')
         .lean()
     : [];
@@ -254,18 +405,63 @@ const notifyIncident = async (incident, options) => {
 };
 
 const createIncident = async (currentUser, payload) => {
+  console.log('[DEBUG] === START createIncident ===');
+  console.log('[DEBUG] currentUser:', { _id: currentUser._id, role: currentUser.role, email: currentUser.email });
+  console.log('[DEBUG] payload:', { incidentType: payload?.incidentType, description: payload?.description?.substring(0, 50), residentIds: payload?.residentIds, residentId: payload?.residentId });
+  
   if (!payload?.incidentType?.trim()) throw new ServiceError('incidentType is required', 400);
   if (!payload?.description?.trim()) throw new ServiceError('description is required', 400);
   if (!payload?.incidentAt) throw new ServiceError('incidentAt is required', 400);
 
-  const resident = await getResidentForIncident(payload.residentId);
-  const staffProfile = await getStaffProfileByUserId(currentUser._id);
-  const assignedStaffIds = normalizeAssignedStaffIds(payload.assignedStaffIds);
+  try {
+    const residentIds = normalizeResidentIds(payload.residentIds?.length ? payload.residentIds : payload.residentId || []);
+    console.log('[DEBUG] normalizeResidentIds result:', residentIds);
+    
+    const residents = await getResidentsForIncident(residentIds);
+    console.log('[DEBUG] residents found:', residents.length);
+    
+    // Try to get staff profile, but don't fail if not found (admin users won't have one)
+    let staffProfile = null;
+    try {
+      staffProfile = await getStaffProfileByUserId(currentUser._id, currentUser);
+      console.log('[DEBUG] staffProfile obtained:', staffProfile._id);
+    } catch (err) {
+      console.log('[DEBUG] Staff profile not available (role may not be assignable):', err.message);
+      console.log('[DEBUG] Continuing with reportedByStaffId = null');
+    }
+    
+    const shouldAssignHandlers = String(currentUser.role || '').toLowerCase() === 'admin';
+    const assignedStaffIds = shouldAssignHandlers ? normalizeAssignedStaffIds(payload.assignedStaffIds) : [];
+    console.log('[DEBUG] assignedStaffIds from payload (User IDs):', assignedStaffIds);
 
-  const reporter = getReporterDetails(currentUser, payload);
-  const incidentData = {
-    residentId: resident?._id || null,
-    reportedByStaffId: staffProfile._id,
+    // Convert User IDs to StaffProfile IDs
+    const assignedStaffProfileIds = shouldAssignHandlers
+      ? await convertUserIdsToStaffProfileIds(assignedStaffIds)
+      : [];
+    console.log('[DEBUG] assignedStaffProfileIds (converted):', assignedStaffProfileIds);
+
+    const reporter = getReporterDetails(currentUser, payload);
+    console.log('[DEBUG] reporter details:', reporter);
+    
+    console.log('[DEBUG] residents count:', residents.length);
+    
+    // Ensure residentIds are proper ObjectIds (not strings or stringified objects)
+    const residentIdArray = residents.length 
+      ? residents.map((resident) => {
+          const id = resident._id;
+          if (!mongoose.Types.ObjectId.isValid(id)) {
+            throw new ServiceError(`Invalid resident ObjectId: ${id}`, 400);
+          }
+          return new mongoose.Types.ObjectId(String(id));
+        })
+      : [];
+    
+    console.log('[DEBUG] residentIdArray prepared:', residentIdArray.length, 'first:', residentIdArray[0]?.toString().substring(0, 12));
+    
+    const incidentData = {
+    residentId: residents[0]?._id || null,
+    residentIds: residentIdArray.length ? residentIdArray : undefined,
+    reportedByStaffId: staffProfile?._id || null,
     reportedByUserId: currentUser._id,
     incidentType: payload.incidentType.trim(),
     severity: payload.severity || 'medium',
@@ -273,28 +469,60 @@ const createIncident = async (currentUser, payload) => {
     location: payload.location?.trim() || '',
     description: payload.description.trim(),
     status: 'open',
-    assignedStaffIds,
+    assignedStaffIds: assignedStaffProfileIds,
     reporterName: reporter.reporterName,
     reporterEmail: reporter.reporterEmail,
     reporterPhone: reporter.reporterPhone,
     reporterRole: reporter.reporterRole,
   };
+  
+  console.log('[DEBUG] incidentData built - residentIds count:', incidentData.residentIds?.length || 0);
 
   const incident = await incidentRepo.createIncident(incidentData);
-  const createdIncident = await incidentRepo.findById(incident._id);
+  console.log('[DEBUG] Incident created with ID:', incident._id);
+  
+  let createdIncident;
+  try {
+    createdIncident = await incidentRepo.findById(incident._id);
+    console.log('[DEBUG] Incident populated successfully');
+  } catch (populateErr) {
+    console.error('[WARN] Incident populate failed (but incident was created):', populateErr.message);
+    createdIncident = incident;
+  }
 
-  await notifyIncident(createdIncident, {
-    title: 'Incident báo cáo mới',
-    content: `Sự cố ${createdIncident.incidentType} đã được ghi nhận cho ${resident?.fullName || 'bệnh nhân'}.`,
-    emailSubject: `Incident mới: ${createdIncident.incidentType}`,
-    smsMessage: `Sự cố ${createdIncident.incidentType} đã được ghi nhận. Vui lòng kiểm tra hệ thống.`,
-  });
+  const firstResidentName = residents[0]?.fullName || 'bệnh nhân';
+    
+    // Get all resident names
+    const allResidentNames = residents
+      .map((resident) => resident.fullName || 'bệnh nhân')
+      .join(', ');
 
-  return createdIncident;
+    // Extract assigned staff names
+    const assignedStaffNames = createdIncident.assignedStaffIds
+      ?.map((staff) => staff.userId?.fullName || staff.userId?.email || 'Nhân viên')
+      .filter(Boolean)
+      .join(', ') || 'Chưa gán nhân viên';
+
+    await notifyIncident(createdIncident, {
+      title: 'Báo cáo sự cố mới',
+      residentName: allResidentNames,
+      assignedStaffNames,
+      content: `Sự cố ${createdIncident.incidentType} đã được ghi nhận cho bệnh nhân: ${allResidentNames}.`,
+      emailSubject: `Báo cáo sự cố mới: ${createdIncident.incidentType}`,
+      smsMessage: `Báo cáo sự cố mới: ${createdIncident.incidentType} cho bệnh nhân ${allResidentNames}. Nhân viên xử lý: ${assignedStaffNames}. Vui lòng kiểm tra hệ thống.`,
+    });
+
+    console.log('[DEBUG] === END createIncident - SUCCESS ===');
+    return createdIncident;
+  } catch (error) {
+    console.error('[ERROR] createIncident failed:', error.message);
+    console.error('[ERROR] Full error:', error);
+    throw error;
+  }
 };
 
-const listIncidents = async (query) => {
-  const filter = getIncidentFilter(query);
+const listIncidents = async (currentUser, query) => {
+  const filter = await getIncidentFilter(query, currentUser);
   const { page, limit, skip } = parsePagination(query);
   const sort = getSort(query);
 
@@ -312,9 +540,13 @@ const listIncidents = async (query) => {
   };
 };
 
-const getIncident = async (id) => {
+const getIncident = async (currentUser, id) => {
   const incident = await incidentRepo.findById(id);
   if (!incident) throw new ServiceError('Incident not found', 404);
+
+  const canView = await isIncidentAccessibleToUser(incident, currentUser);
+  if (!canView) throw new ServiceError('Incident not found', 404);
+
   return incident;
 };
 
@@ -327,17 +559,17 @@ const updateIncidentStatus = async (currentUser, id, payload) => {
   const updated = await incidentRepo.updateById(id, { status: payload.status });
 
   await notifyIncident(updated, {
-    title: 'Cập nhật trạng thái incident',
-    content: `Trạng thái incident ${updated.incidentType} đã được cập nhật thành ${updated.status}.`,
-    emailSubject: `Cập nhật incident: ${updated.incidentType}`,
-    smsMessage: `Trạng thái incident ${updated.incidentType} đã cập nhật thành ${updated.status}.`,
+    title: 'Cập nhật trạng thái sự cố',
+    content: `Trạng thái sự cố ${updated.incidentType} đã được cập nhật thành ${getStatusLabel(updated.status)}.`,
+    emailSubject: `Cập nhật trạng thái sự cố: ${updated.incidentType}`,
+    smsMessage: `Trạng thái sự cố ${updated.incidentType} đã được cập nhật thành ${getStatusLabel(updated.status)}.`,
   });
 
   return updated;
 };
 
-const exportIncidents = async (query) => {
-  const filter = getIncidentFilter(query);
+const exportIncidents = async (currentUser, query) => {
+  const filter = await getIncidentFilter(query, currentUser);
   const incidents = await incidentRepo.findAll(filter, { sort: getSort(query) });
   return {
     csv: toCsv(incidents),
@@ -345,10 +577,45 @@ const exportIncidents = async (query) => {
   };
 };
 
+const assignHandlers = async (currentUser, id, payload) => {
+  // Only admin can assign handlers
+  if (!currentUser || currentUser.role !== 'admin') {
+    throw new ServiceError('Only admins can assign handlers', 403);
+  }
+
+  const existing = await incidentRepo.findById(id);
+  if (!existing) throw new ServiceError('Incident not found', 404);
+
+  // Check if handlers are already assigned
+  if (existing.assignedStaffIds && existing.assignedStaffIds.length > 0) {
+    throw new ServiceError('Handlers already assigned to this incident', 400);
+  }
+
+  const assignedStaffIds = normalizeAssignedStaffIds(payload.assignedStaffIds);
+  if (!assignedStaffIds || assignedStaffIds.length === 0) {
+    throw new ServiceError('At least one handler must be specified', 400);
+  }
+
+  // Convert user IDs to staff profile IDs if needed
+  const staffProfileIds = await convertUserIdsToStaffProfileIds(assignedStaffIds);
+
+  const updated = await incidentRepo.updateById(id, { assignedStaffIds: staffProfileIds });
+
+  await notifyIncident(updated, {
+    title: 'Được chỉ định xử lý sự cố',
+    content: `Bạn đã được chỉ định để xử lý sự cố ${updated.incidentType}.`,
+    emailSubject: `Được chỉ định xử lý sự cố: ${updated.incidentType}`,
+    smsMessage: `Bạn đã được chỉ định để xử lý sự cố ${updated.incidentType}.`,
+  });
+
+  return updated;
+};
+
 module.exports = {
   createIncident,
   listIncidents,
   getIncident,
   updateIncidentStatus,
+  assignHandlers,
   exportIncidents,
 };

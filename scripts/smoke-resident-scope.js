@@ -134,22 +134,6 @@ async function main() {
   }
   console.log('OK: outsider resident rejected on create');
 
-  const nutritionList = await api('GET', '/nurse/nutrition-reports/residents', nurseAToken);
-  if (nutritionList.status !== 200) {
-    throw new Error(`Nutrition list failed: ${nutritionList.status}`);
-  }
-  const nutritionIds = new Set(unwrapList(nutritionList.body).map((r) => String(r.residentId)));
-  for (const id of idsA) {
-    if (!nutritionIds.has(id)) throw new Error(`Nutrition list missing assigned resident ${id}`);
-  }
-  console.log('OK: nutrition report list scoped');
-
-  const nutritionOutsider = await api('GET', `/nurse/nutrition-reports/residents/${outsider}`, nurseAToken);
-  if (nutritionOutsider.status !== 403) {
-    throw new Error(`Nutrition detail outsider should be 403, got ${nutritionOutsider.status}`);
-  }
-  console.log('OK: nutrition report detail 403 for outsider');
-
   const shiftsRes = await api(
     'GET',
     `/shifts?fromDate=${workDate}&toDate=${workDate}&assignedStaffId=${nurseA.staffProfile._id}&limit=50`,

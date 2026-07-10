@@ -25,7 +25,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 
 const adminManager = authorize('admin');
-const allStaff = authorize('admin', 'doctor', 'nurse');
+const allStaff = authorize('admin', 'doctor', 'nurse', 'caregiver');
 const drugAllergiesRead = authorize('admin', 'manager', 'doctor', 'nurse');
 const drugAllergiesWrite = authorize('doctor');
 

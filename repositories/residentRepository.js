@@ -113,7 +113,14 @@ const findAll = async (filter, { sort, skip, limit }) =>
     .sort(sort)
     .skip(skip)
     .limit(limit)
-    .populate('roomId', 'roomCode name')
+    .populate({
+      path: 'roomId',
+      select: 'roomCode roomNumber name roomType floorId buildingId',
+      populate: {
+        path: 'floorId',
+        select: 'name floorNumber buildingId',
+      },
+    })
     .populate('bedId', 'bedCode')
     .populate('familyPortalAccountIds', 'fullName email phone');
 

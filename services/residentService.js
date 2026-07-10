@@ -170,14 +170,15 @@ const mapAreaFromRoom = (room) => {
   if (!room) return { room: null, floor: null, building: null };
   const floor = room.floorId;
   const building = floor?.buildingId || room.buildingId;
+  const roomNumber = room.roomNumber || room.roomCode;
   const floorName = floor?.name || (floor?.floorNumber != null ? `Tang ${floor.floorNumber}` : null);
   const buildingName = building?.name || building?.code;
   return {
     room: {
       _id: room._id,
-      roomNumber: room.roomNumber,
+      roomNumber,
       roomType: room.roomType,
-      label: room.roomNumber ? `Phong ${room.roomNumber}` : null,
+      label: roomNumber ? `Phong ${roomNumber}` : null,
     },
     floor: floor
       ? {
@@ -401,20 +402,26 @@ const mapResidentFamilySummary = (resident) => ({
 });
 
 const parseAssignmentStatusFilter = (status) => {
-  let queryStatus = status || 'admitted';
-  if (status && String(status).includes(',')) {
+  if (!status || String(status).toLowerCase() === 'all') {
+    return undefined;
+  }
+
+  let queryStatus = status;
+  if (String(status).includes(',')) {
     const statuses = String(status)
       .split(',')
-      .map((s) => s.trim());
+      .map((s) => s.trim())
+      .filter(Boolean);
     statuses.forEach((s) => {
       if (!RESIDENCY_STATUSES.includes(s)) {
         throw apiErr(CODES.RESIDENT_STATUS_INVALID, { statusCode: 400, params: { allowed: RESIDENCY_STATUSES.join(', ') } });
       }
     });
     queryStatus = statuses;
-  } else if (status && !RESIDENCY_STATUSES.includes(status)) {
+  } else if (!RESIDENCY_STATUSES.includes(String(status))) {
     throw apiErr(CODES.RESIDENT_STATUS_INVALID, { statusCode: 400, params: { allowed: RESIDENCY_STATUSES.join(', ') } });
   }
+
   return queryStatus;
 };
 
@@ -422,7 +429,7 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
   const queryStatus = parseAssignmentStatusFilter(status);
 
   let residentIds = null;
-  if (user && ['doctor', 'nurse'].includes(user.role)) {
+  if (user && ['doctor', 'nurse', 'caregiver'].includes(user.role)) {
     const staffProfileRepo = require('../repositories/staffProfileRepository');
     const profile = await staffProfileRepo.findByUserId(user._id);
     if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
@@ -454,10 +461,10 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
 };
 
 const listResidentsForFamilyManagement = async ({ search, status, page = 1, limit = 20 }) => {
-  const queryStatus = parseAssignmentStatusFilter(status);
+  const queryStatus = String(status || '').toLowerCase() === 'all' ? undefined : status;
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const limitNum = Math.min(1000, Math.max(1, parseInt(limit, 10) || 20));
   const { data, total, page: currentPage, limit: currentLimit } = await residentRepo.findForFamilyManagement({
     search,
     status: queryStatus,

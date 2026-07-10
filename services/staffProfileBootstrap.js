@@ -60,11 +60,29 @@ const ensureStaffProfilesForAssignableUsers = async () => {
 };
 
 const ensureStaffProfileForUser = async (user) => {
-  if (!user?._id || !isAssignableRole(user.role)) return null;
+  console.log('[DEBUG] ensureStaffProfileForUser - Input user:', { _id: user?._id, role: user?.role, email: user?.email });
+  
+  if (!user?._id) {
+    console.log('[DEBUG] ensureStaffProfileForUser - User has no _id, returning null');
+    return null;
+  }
+  
+  const isAssignable = isAssignableRole(user.role);
+  console.log('[DEBUG] ensureStaffProfileForUser - isAssignableRole(', user.role, '):', isAssignable);
+  
+  if (!isAssignable) {
+    console.log('[ERROR] ensureStaffProfileForUser - Role is not assignable, cannot create profile');
+    return null;
+  }
+  
   const existing = await StaffProfile.findOne({ userId: user._id });
+  console.log('[DEBUG] ensureStaffProfileForUser - Existing profile found:', !!existing);
   if (existing) return existing;
 
+  console.log('[DEBUG] ensureStaffProfileForUser - Creating new staff profile...');
   const staffCode = await nextStaffCode(user.role);
+  console.log('[DEBUG] ensureStaffProfileForUser - Generated staffCode:', staffCode);
+  
   const created = await StaffProfile.create({
     userId: user._id,
     staffCode,
@@ -73,6 +91,7 @@ const ensureStaffProfileForUser = async (user) => {
     assignedResidentIds: [],
   });
   console.log(`✅ Auto-created StaffProfile ${staffCode} for ${user.email} (${user.role})`);
+  console.log('[DEBUG] ensureStaffProfileForUser - Created profile _id:', created._id);
   return created;
 };
 

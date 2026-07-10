@@ -65,9 +65,6 @@ const timeSeriesReport = async (req, res) => {
 
 const comparisonReport = async (req, res) => {
   try {
-    if (!req.query.from || !req.query.to) {
-      return res.status(400).json({ message: 'Comparison report requires `from` and `to` query parameters' });
-    }
     const data = await reportService.getComparisonReport(req.query);
     res.json(data);
   } catch (err) {

@@ -1,7 +1,7 @@
 // Regex cho phép chữ cái Latin, chữ cái có dấu tiếng Việt, khoảng trắng, dấu gạch nối
 const FULLNAME_REGEX = /^[\p{L}\s'\-\.]+$/u;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-const PHONE_REGEX = /^(\+84|0)[0-9]{8,10}$/;
+const PHONE_REGEX = /^0\d{9}$/;
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
 const PASSWORD_MIN = 8;
 
@@ -21,7 +21,7 @@ const validateEmail = (email) => {
 
 const validatePhone = (phone) => {
   if (!phone) return null; // optional
-  if (!PHONE_REGEX.test(phone.trim())) return 'phone must be a valid Vietnamese phone number (e.g. 0912345678 or +84912345678)';
+  if (!PHONE_REGEX.test(phone.trim())) return 'phone must be exactly 10 digits starting with 0 (e.g. 0912345678)';
   return null;
 };
 

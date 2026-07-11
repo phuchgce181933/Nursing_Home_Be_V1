@@ -117,6 +117,10 @@ const normalizeEmergencyContacts = (value) => {
     if (!fullName || !relationship || !phone) {
       throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}] phải có đầy đủ fullName, relationship và phone` } });
     }
+    const phoneErr = validatePhone(phone);
+    if (phoneErr) {
+      throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}]: ${phoneErr}` } });
+    }
     return {
       fullName,
       relationship,

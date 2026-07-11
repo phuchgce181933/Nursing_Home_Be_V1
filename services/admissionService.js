@@ -91,6 +91,7 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
       email: admission.familyAccountId.email,
       phone: admission.familyAccountId.phone,
       username: admission.familyAccountId.username || 'N/A',
+      avatarUrl: admission.familyAccountId.avatarUrl,
     };
   }
 

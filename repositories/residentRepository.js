@@ -646,6 +646,18 @@ const updateDrugAllergies = async (residentId, payload) =>
     .select('residentCode fullName drugAllergies updatedAt')
     .lean();
 
+const countAdmittedInRoom = async (roomId) =>
+  Resident.countDocuments({ roomId, residencyStatus: 'admitted' });
+
+const countAdmittedByRoomIds = async (roomIds) => {
+  if (!Array.isArray(roomIds) || roomIds.length === 0) return new Map();
+  const rows = await Resident.aggregate([
+    { $match: { roomId: { $in: roomIds }, residencyStatus: 'admitted' } },
+    { $group: { _id: '$roomId', count: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), row.count]));
+};
+
 module.exports = {
   findForAssignment,
   findForFamilyManagement,
@@ -659,6 +671,8 @@ module.exports = {
   updateById,
   findByIdWithDetail,
   findByIdForTransfer,
+  countAdmittedInRoom,
+  countAdmittedByRoomIds,
   updateRoomAssignment,
   addEmergencyContact,
   replaceEmergencyContacts,

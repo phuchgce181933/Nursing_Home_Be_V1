@@ -211,6 +211,12 @@ const buildApplicant = (applicant, relationshipToRequester) => {
     }
   }
 
+  const phone = applicant.phone ? String(applicant.phone).trim() : undefined;
+  if (phone && !/^(0|\+84)(3|5|7|8|9)\d{8}$/.test(phone)) {
+    throw new ServiceError('Số điện thoại liên hệ của người cao tuổi không hợp lệ', 400);
+  }
+  const avatarUrl = applicant.avatarUrl ? String(applicant.avatarUrl).trim() : undefined;
+
   return {
     fullName,
     dateOfBirth,
@@ -222,6 +228,8 @@ const buildApplicant = (applicant, relationshipToRequester) => {
     allergies: normalizeStringArray(applicant.allergies),
     chronicConditions: normalizeStringArray(applicant.chronicConditions),
     initialHealthCondition: applicant.initialHealthCondition?.trim(),
+    phone,
+    avatarUrl,
   };
 };
 
@@ -247,6 +255,29 @@ const submitAdmissionRequest = async (user, body, req) => {
     throw new ServiceError('applicant object is required in request body', 400);
   }
 
+  // Handle base64 avatar upload for applicant
+  let uploadedAvatarUrl = applicant?.avatarUrl;
+  if (uploadedAvatarUrl && uploadedAvatarUrl.startsWith('data:image/')) {
+    try {
+      const { uploadImageBuffer } = require('../utils/cloudinaryUpload');
+      const matches = uploadedAvatarUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const mimeType = matches[1];
+        const buffer = Buffer.from(matches[2], 'base64');
+        const uploadResult = await uploadImageBuffer(buffer, {
+          folder: 'nursing-home/elderly',
+          mimeType,
+        });
+        uploadedAvatarUrl = uploadResult.secure_url;
+      }
+    } catch (uploadErr) {
+      console.error('Failed to upload applicant avatar to Cloudinary:', uploadErr);
+      throw new ServiceError('Không thể tải ảnh đại diện lên Cloudinary: ' + uploadErr.message, 400);
+    }
+  }
+
+  const applicantCopy = applicant ? { ...applicant, avatarUrl: uploadedAvatarUrl } : null;
+
   let resolvedApplicant;
   let resolvedResidentId = residentId || null;
 
@@ -265,7 +296,7 @@ const submitAdmissionRequest = async (user, body, req) => {
     }
 
     resolvedApplicant = buildApplicant(
-      applicant || {
+      applicantCopy || {
         fullName: resident.fullName,
         dateOfBirth: resident.dateOfBirth,
         gender: resident.gender,
@@ -280,7 +311,7 @@ const submitAdmissionRequest = async (user, body, req) => {
       relationshipToRequester
     );
   } else {
-    resolvedApplicant = buildApplicant(applicant, relationshipToRequester);
+    resolvedApplicant = buildApplicant(applicantCopy, relationshipToRequester);
 
     const duplicateFilter = {
       familyAccountId: user._id,
@@ -629,6 +660,8 @@ const approveAdmission = async (admin, admissionId, body, req) => {
       initialHealthCondition: applicant.initialHealthCondition,
       residencyStatus: 'pending',
       familyPortalAccountIds: [admission.familyAccountId],
+      avatarUrl: applicant.avatarUrl,
+      phone: applicant.phone,
     });
     residentId = resident._id;
     updateData.residentId = residentId;
@@ -1254,6 +1287,8 @@ const checkInResident = async (admin, admissionId, body, req) => {
       admittedAt: new Date(),
       servicePackage: admission.assignedServicePackage,
       familyPortalAccountIds: [admission.familyAccountId],
+      avatarUrl: applicant.avatarUrl,
+      phone: applicant.phone,
     });
   }
 

@@ -67,9 +67,18 @@ const scheduleTour = async (user, body, req) => {
   // Validate required fields
   const name = typeof contactName === 'string' ? contactName.trim() : '';
   if (!name) throw new ServiceError('contactName is required', 400);
+  if (name.length < 2 || name.length > 50) {
+    throw new ServiceError('Tên phải từ 2 đến 50 ký tự', 400);
+  }
+  if (!/^[a-zA-ZÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚĂĐĨŨƠàáâãèéêìíòóôõùúăđĩũơƯĂÂÊÔƠƯưăâêôơưẠ-ỹ\s]+$/.test(name)) {
+    throw new ServiceError('Tên liên hệ chỉ được chứa chữ cái và khoảng trắng', 400);
+  }
 
   const phone = typeof contactPhone === 'string' ? contactPhone.trim() : '';
   if (!phone) throw new ServiceError('contactPhone is required', 400);
+  if (!/^(0|\+84)(3|5|7|8|9)\d{8}$/.test(phone)) {
+    throw new ServiceError('Số điện thoại không hợp lệ (di động 10 chữ số bắt đầu bằng 03, 05, 07, 08 hoặc 09).', 400);
+  }
 
   if (!preferredDate) throw new ServiceError('preferredDate is required', 400);
   const parsedDate = new Date(preferredDate);

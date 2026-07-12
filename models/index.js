@@ -34,6 +34,7 @@ const CareScheduleDay = require('./careScheduleDay');
 const CareScheduleEntry = require('./careScheduleEntry');
 const MealPlanDay = require('./mealPlanDay');
 const MealPlanEntry = require('./mealPlanEntry');
+const Dish = require('./dish');
 const SpecialDietDay = require('./specialDietDay');
 const SpecialDietEntry = require('./specialDietEntry');
 const MealTimeScheduleDay = require('./mealTimeScheduleDay');
@@ -88,6 +89,7 @@ module.exports = {
   CareScheduleEntry,
   MealPlanDay,
   MealPlanEntry,
+  Dish,
   SpecialDietDay,
   SpecialDietEntry,
   MealTimeScheduleDay,

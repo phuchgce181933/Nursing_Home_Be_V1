@@ -671,6 +671,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
   if (!floor) throw apiErr(CODES.RESIDENT_TRANSFER_FLOOR_NOT_FOUND, { statusCode: 404 });
   const rooms = await roomRepo.findByFloorId(floorId);
   const roomIds = rooms.map((room) => room._id);
+  const admittedCountByRoomId = await residentRepo.countAdmittedByRoomIds(roomIds);
   const availableBeds = await bedRepo.findAvailableByRoomIds(roomIds);
   const bedsByRoomId = new Map();
   for (const bed of availableBeds) {
@@ -696,7 +697,8 @@ const getTransferTargets = async (residentId, { floorId }) => {
       if (room.availableBeds.length === 0) return false;
       if (room.status === 'closed') return false;
       if (String(room._id) === currentRoomId) return true;
-      return room.occupiedCount < room.capacity;
+      const admittedCount = admittedCountByRoomId.get(String(room._id)) || 0;
+      return admittedCount < room.capacity;
     });
 
   const noTargets = targets.length === 0;
@@ -731,8 +733,11 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
 
   const sourceRoomId = String(resident.roomId?._id || resident.roomId);
   const sameRoom = sourceRoomId === String(targetRoomId);
-  if (!sameRoom && targetRoom.occupiedCount >= targetRoom.capacity) {
-    throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_FULL, { statusCode: 400 });
+  if (!sameRoom) {
+    const admittedInTarget = await residentRepo.countAdmittedInRoom(targetRoomId);
+    if (admittedInTarget >= targetRoom.capacity) {
+      throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_FULL, { statusCode: 400 });
+    }
   }
 
   const targetBed = await bedRepo.findById(targetBedId);
@@ -751,6 +756,11 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
 
   const updatedResident = await residentRepo.updateRoomAssignment(residentId, { roomId: targetRoomId, bedId: targetBedId });
   if (!updatedResident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+
+  await roomRepo.syncRoomOccupancy(resident.roomId._id);
+  if (!sameRoom) {
+    await roomRepo.syncRoomOccupancy(targetRoomId);
+  }
 
   const targetFloorId = targetRoom.floorId?._id || targetRoom.floorId;
   const staffAreasSynced = await syncStaffAreasAfterResidentTransfer(residentId, {

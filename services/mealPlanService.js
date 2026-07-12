@@ -3,6 +3,7 @@ const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiEr
 const mealPlanDayRepo = require('../repositories/mealPlanDayRepository');
 const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
+const { getActiveDishMap } = require('./dishService');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
 const Resident = require('../models/resident');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
@@ -17,7 +18,7 @@ const NON_TX_ERROR_PATTERNS = [
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const MEAL_STAGES = ['recovery', 'maintenance', 'special_monitoring'];
-const VALID_ENTRY_SOURCES = ['template', 'manual'];
+const VALID_ENTRY_SOURCES = ['template', 'manual', 'catalog'];
 const DEFAULT_MEAL_TIMES = { breakfast: '07:30', lunch: '11:30', dinner: '17:30' };
 
 const MEAL_PLAN_TEMPLATES = [
@@ -127,7 +128,7 @@ const resolveMealTimeFromSchedule = (residentId, mealType, scheduleCache) => {
   return times[mealType];
 };
 
-const validateEntry = (entry, index, mealTimeOverride) => {
+const validateEntry = (entry, index, mealTimeOverride, dishMap = {}) => {
   const row = entry || {};
   assertValidObjectId(row.residentId, `entries[${index}].residentId`);
   if (!MEAL_TYPES.includes(row.mealType)) {
@@ -136,10 +137,39 @@ const validateEntry = (entry, index, mealTimeOverride) => {
       params: { index, allowed: MEAL_TYPES.join(', ') },
     });
   }
-  if (!row.mealName || !String(row.mealName).trim()) {
+
+  let dishId;
+  let mealName = row.mealName;
+  let calories = row.calories == null ? undefined : Number(row.calories);
+  let ingredients = Array.isArray(row.ingredients)
+    ? row.ingredients.map((v) => String(v).trim()).filter(Boolean)
+    : [];
+  let source = row.source || 'manual';
+
+  if (row.dishId) {
+    assertValidObjectId(row.dishId, `entries[${index}].dishId`);
+    const dish = dishMap[String(row.dishId)];
+    if (!dish) {
+      throw apiErr(CODES.DISH_NOT_FOUND, { statusCode: 400, params: { index } });
+    }
+    if (!dish.isActive) {
+      throw apiErr(CODES.DISH_INACTIVE, { statusCode: 400, params: { index } });
+    }
+    dishId = String(dish._id);
+    mealName = String(mealName || dish.name).trim();
+    if (calories == null || Number.isNaN(calories)) {
+      calories = dish.calories;
+    }
+    if (!ingredients.length && Array.isArray(dish.ingredients) && dish.ingredients.length) {
+      ingredients = dish.ingredients.map((v) => String(v).trim()).filter(Boolean);
+    }
+    source = 'catalog';
+  }
+
+  if (!mealName || !String(mealName).trim()) {
     throw apiErr(CODES.MEAL_ENTRY_NAME_REQUIRED, { statusCode: 400, params: { index } });
   }
-  if (row.source && !VALID_ENTRY_SOURCES.includes(row.source)) {
+  if (source && !VALID_ENTRY_SOURCES.includes(source)) {
     throw apiErr(CODES.MEAL_ENTRY_SOURCE_INVALID, {
       statusCode: 400,
       params: { index, allowed: VALID_ENTRY_SOURCES.join(', ') },
@@ -148,12 +178,13 @@ const validateEntry = (entry, index, mealTimeOverride) => {
   return {
     residentId: String(row.residentId),
     mealType: row.mealType,
-    mealName: String(row.mealName).trim(),
-    ingredients: Array.isArray(row.ingredients) ? row.ingredients.map((v) => String(v).trim()).filter(Boolean) : [],
-    calories: row.calories == null ? undefined : Number(row.calories),
+    dishId,
+    mealName: String(mealName).trim(),
+    ingredients,
+    calories,
     nutritionNote: row.nutritionNote?.trim(),
     stageNote: row.stageNote?.trim(),
-    source: row.source || 'manual',
+    source,
     templateKey: row.templateKey?.trim(),
     mealTime: row.mealTime?.trim() || mealTimeOverride || DEFAULT_MEAL_TIMES[row.mealType],
   };
@@ -167,13 +198,14 @@ const normalizeEntriesWithSchedule = async (entriesInput, workDateStr, mealTimeS
     residentIds
   );
   const scheduleCache = await mealTimeScheduleService.buildTimesByResidentFromSchedule(mealTimeScheduleDayId);
+  const dishMap = await getActiveDishMap(entriesInput.map((e) => e?.dishId).filter(Boolean));
   const normalized = [];
   for (const [index, raw] of entriesInput.entries()) {
     let mealTimeOverride;
     if (!raw?.mealTime?.trim()) {
       mealTimeOverride = resolveMealTimeFromSchedule(raw.residentId, raw.mealType, scheduleCache);
     }
-    normalized.push(validateEntry(raw, index, mealTimeOverride));
+    normalized.push(validateEntry(raw, index, mealTimeOverride, dishMap));
   }
   return normalized;
 };
@@ -259,7 +291,6 @@ const createDraft = async (body, actorUserId) => {
   const entriesInput = Array.isArray(body.entries) ? body.entries : [];
   if (!entriesInput.length) throw apiErr(CODES.MEAL_ENTRIES_REQUIRED, { statusCode: 400 });
   const entries = await normalizeEntriesWithSchedule(entriesInput, workDate, mealTimeScheduleDayId);
-  assertEntryMealTimesFromNow(entries, workDate);
   await assertNoMealPlanConflicts({ workDate, entries });
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
   if (residentIds.length < 1) {
@@ -331,7 +362,6 @@ const updateDraft = async (id, body, actorUserId) => {
     : null;
   if (hasEntries && !normalizedEntries.length) throw apiErr(CODES.MEAL_ENTRIES_EMPTY, { statusCode: 400 });
   if (normalizedEntries) {
-    assertEntryMealTimesFromNow(normalizedEntries, targetWorkDateStr);
     await assertNoMealPlanConflicts({
       workDate: targetWorkDateStr,
       entries: normalizedEntries,

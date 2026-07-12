@@ -101,6 +101,7 @@ app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/medical', require('./routes/medicalServicePackages'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
 // Clinical services and billing
+app.use('/api/nutrition/dishes', require('./routes/dishes'));
 app.use('/api/clinical/services', require('./routes/clinicalServices'));
 app.use('/api/clinical/charges', require('./routes/medicalCharges'));
 app.use('/api/clinical/invoices', require('./routes/invoices'));

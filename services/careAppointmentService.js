@@ -143,6 +143,35 @@ const validateStaffAvailability = async (staffProfileId, roleCategory, startAt, 
   }
 };
 
+const validateClinicalExamConstraints = (start, end, appointmentType) => {
+  if (appointmentType === 'Khám lâm sàng đầu vào') {
+    // 1. Must be scheduled to start within 24 hours of now
+    const now = new Date();
+    const limit = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    if (start > limit) {
+      throw new ServiceError('Thời gian khám lâm sàng đầu vào phải diễn ra trong vòng 24 giờ kể từ thời điểm hiện tại.', 400);
+    }
+
+    // 2. Start date and end date must be the same day
+    if (start.toDateString() !== end.toDateString()) {
+      throw new ServiceError('Ngày bắt đầu và ngày kết thúc của lịch khám phải là cùng một ngày.', 400);
+    }
+
+    // 3. Fixed hours (8:00 AM to 4:00 PM)
+    const startHour = start.getHours();
+    const startMin = start.getMinutes();
+    const endHour = end.getHours();
+    const endMin = end.getMinutes();
+
+    if (startHour < 8 || (startHour === 16 && startMin > 0) || startHour > 16) {
+      throw new ServiceError('Thời gian bắt đầu khám phải nằm trong khoảng từ 8h00 sáng đến 16h00 chiều.', 400);
+    }
+    if (endHour < 8 || (endHour === 16 && endMin > 0) || endHour > 16) {
+      throw new ServiceError('Thời gian kết thúc khám phải nằm trong khoảng từ 8h00 sáng đến 16h00 chiều.', 400);
+    }
+  }
+};
+
 const createAppointment = async (user, body, req) => {
   const { residentId, doctorStaffId, nurseStaffId, scheduledStartAt, scheduledEndAt, appointmentType, notes } = body;
   if (!residentId || !scheduledStartAt || !scheduledEndAt) {
@@ -158,6 +187,7 @@ const createAppointment = async (user, body, req) => {
   const start = new Date(scheduledStartAt);
   const end = new Date(scheduledEndAt);
   validateAppointmentWindow(start, end);
+  validateClinicalExamConstraints(start, end, appointmentType);
   if (start < new Date()) throw new ServiceError('scheduledStartAt cannot be in the past', 400);
 
   if (doctorStaffId) {
@@ -312,7 +342,9 @@ const updateAppointment = async (user, staffProfile, id, body, req) => {
 
   const start = body.scheduledStartAt ? new Date(body.scheduledStartAt) : appointment.scheduledStartAt;
   const end = body.scheduledEndAt ? new Date(body.scheduledEndAt) : appointment.scheduledEndAt;
+  const apptType = body.appointmentType || appointment.appointmentType;
   validateAppointmentWindow(start, end);
+  validateClinicalExamConstraints(start, end, apptType);
   // Only block when the start time is actually being moved into the past —
   // resaving an unchanged (already-past) time (e.g. editing notes only) is allowed.
   if (start.getTime() !== appointment.scheduledStartAt.getTime() && start < new Date()) {
@@ -409,6 +441,12 @@ const updateStatus = async (user, staffProfile, id, body, req) => {
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
   assertAppointmentAccess(appointment, user, staffProfile);
+
+  if (appointment.appointmentType === 'Khám lâm sàng đầu vào' && ['in_progress', 'completed'].includes(status)) {
+    if (!appointment.doctorStaffId || !appointment.nurseStaffId) {
+      throw new ServiceError('Yêu cầu chỉ định bắt buộc phải đủ cả bác sĩ và y tá trước khi thực hiện khám.', 400);
+    }
+  }
 
   const allowedNext = STATUS_TRANSITIONS[appointment.status];
   if (!allowedNext.includes(status)) {

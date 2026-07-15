@@ -2,6 +2,11 @@ const mongoose = require('mongoose');
 const Dish = require('../models/dish');
 const MealPlanEntry = require('../models/mealPlanEntry');
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
+const {
+  validateDishName,
+  validateDishCalories,
+  normalizeDishIngredients,
+} = require('../utils/dishValidation');
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -10,16 +15,6 @@ const assertValidObjectId = (value, label) => {
     throw apiErr(CODES.MEAL_OBJECT_ID_INVALID, { statusCode: 400, params: { label } });
   }
 };
-
-const parseCalories = (value) => {
-  if (value == null || value === '') return null;
-  const num = Number(value);
-  if (!Number.isFinite(num) || num < 0) return null;
-  return num;
-};
-
-const normalizeIngredients = (value) =>
-  Array.isArray(value) ? value.map((v) => String(v).trim()).filter(Boolean) : [];
 
 const formatDish = (dish) => ({
   _id: dish._id,
@@ -63,10 +58,9 @@ const getDish = async (id, user = {}) => {
 };
 
 const createDish = async (body = {}, actor) => {
-  const name = String(body.name || '').trim();
-  if (!name) throw apiErr(CODES.DISH_NAME_REQUIRED, { statusCode: 400 });
-  const calories = parseCalories(body.calories);
-  if (calories == null) throw apiErr(CODES.DISH_CALORIES_INVALID, { statusCode: 400 });
+  const name = validateDishName(body.name);
+  const calories = validateDishCalories(body.calories);
+  const ingredients = normalizeDishIngredients(body.ingredients);
 
   const duplicate = await findByNameInsensitive(name);
   if (duplicate) throw apiErr(CODES.DISH_NAME_DUPLICATE, { statusCode: 409, params: { name: duplicate.name } });
@@ -74,7 +68,7 @@ const createDish = async (body = {}, actor) => {
   const dish = await Dish.create({
     name,
     calories,
-    ingredients: normalizeIngredients(body.ingredients),
+    ingredients,
     isActive: body.isActive !== false,
     createdBy: actor?._id,
     updatedBy: actor?._id,
@@ -88,19 +82,16 @@ const updateDish = async (id, body = {}, actor) => {
   if (!dish) throw apiErr(CODES.DISH_NOT_FOUND, { statusCode: 404 });
 
   if (body.name !== undefined) {
-    const name = String(body.name || '').trim();
-    if (!name) throw apiErr(CODES.DISH_NAME_REQUIRED, { statusCode: 400 });
+    const name = validateDishName(body.name);
     const duplicate = await findByNameInsensitive(name, dish._id);
     if (duplicate) throw apiErr(CODES.DISH_NAME_DUPLICATE, { statusCode: 409, params: { name: duplicate.name } });
     dish.name = name;
   }
   if (body.calories !== undefined) {
-    const calories = parseCalories(body.calories);
-    if (calories == null) throw apiErr(CODES.DISH_CALORIES_INVALID, { statusCode: 400 });
-    dish.calories = calories;
+    dish.calories = validateDishCalories(body.calories);
   }
   if (body.ingredients !== undefined) {
-    dish.ingredients = normalizeIngredients(body.ingredients);
+    dish.ingredients = normalizeDishIngredients(body.ingredients);
   }
   if (body.isActive !== undefined) {
     dish.isActive = Boolean(body.isActive);

@@ -46,13 +46,30 @@ const unwrapList = (body) => {
   return [];
 };
 
+function uniqueDishName() {
+  const suffix = Array.from({ length: 4 }, () =>
+    String.fromCharCode(65 + Math.floor(Math.random() * 26))
+  ).join('');
+  return `Chao Yen Mach ${suffix}`;
+}
+
 async function main() {
   const workDate = futureDate();
-  const dishName = `Smoke Chao ${Date.now()}`;
+  const dishName = uniqueDishName();
   console.log('Smoke: dish catalog + meal plan entry, workDate =', workDate);
 
   const adminToken = await login('admin@test.com', 'password123');
   const nurseToken = await login('nurse@test.com', 'password123');
+
+  const invalidName = await api('POST', '/nutrition/dishes', adminToken, {
+    name: 'Chao123',
+    calories: 180,
+  });
+  if (invalidName.status !== 400 || invalidName.body?.errorCode !== 'DISH_NAME_INVALID') {
+    throw new Error(
+      `Expected DISH_NAME_INVALID 400, got ${invalidName.status} ${invalidName.body?.errorCode || invalidName.body?.message}`
+    );
+  }
 
   const createDish = await api('POST', '/nutrition/dishes', adminToken, {
     name: dishName,

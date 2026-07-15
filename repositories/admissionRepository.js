@@ -34,7 +34,7 @@ const countByFamily = (familyAccountId, filter) =>
 const updateAdmission = (id, update) =>
   Admission.findByIdAndUpdate(id, update, { new: true, runValidators: true })
     .populate('residentId', 'residentCode fullName residencyStatus')
-    .populate('familyAccountId', 'fullName email phone username')
+    .populate('familyAccountId', 'fullName email phone username avatarUrl')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')
@@ -57,7 +57,7 @@ const findAll = (filter, { sort, skip, limit }) =>
     .skip(skip)
     .limit(limit)
     .populate('residentId', 'residentCode fullName residencyStatus')
-    .populate('familyAccountId', 'fullName email phone username')
+    .populate('familyAccountId', 'fullName email phone username avatarUrl')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')
@@ -70,7 +70,7 @@ const countAll = (filter) => Admission.countDocuments(filter);
 const findByIdForAdmin = (id) =>
   Admission.findById(id)
     .populate('residentId', 'residentCode fullName residencyStatus')
-    .populate('familyAccountId', 'fullName email phone username')
+    .populate('familyAccountId', 'fullName email phone username avatarUrl')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
     .populate('assessedBy', 'fullName email role')

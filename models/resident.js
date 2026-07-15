@@ -24,6 +24,7 @@ const residentSchema = new Schema(
     insuranceNumber: { type: String, trim: true, index: true },
     bloodType: { type: String, enum: BLOOD_TYPES, default: 'unknown' },
     personalAddress: { type: String, trim: true },
+    phone: { type: String, trim: true },
     avatarUrl: { type: String, trim: true },
     emergencyContacts: [emergencyContactSchema],
     allergies: [{ type: String, trim: true }],

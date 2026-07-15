@@ -20,6 +20,8 @@ const applicantSchema = new Schema(
     allergies: [{ type: String, trim: true }],
     chronicConditions: [{ type: String, trim: true }],
     initialHealthCondition: { type: String, trim: true },
+    phone: { type: String, trim: true },
+    avatarUrl: { type: String, trim: true },
   },
   { _id: false }
 );

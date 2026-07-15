@@ -216,6 +216,7 @@ const createFloor = async (data, user, req) => {
 
   if (!buildingId) throw Object.assign(new Error('buildingId là bắt buộc'), { status: 400 });
   if (Number.isNaN(floorNumber)) throw Object.assign(new Error('floorNumber phải là số và là bắt buộc'), { status: 400 });
+  if (floorNumber <= 0) throw Object.assign(new Error('floorNumber phải lớn hơn 0'), { status: 400 });
 
   const building = await Building.findById(buildingId);
   if (!building) throw Object.assign(new Error('Không tìm thấy tòa nhà'), { status: 404 });
@@ -256,6 +257,7 @@ const updateFloor = async (floorId, data, user, req) => {
   if (data.floorNumber !== undefined) {
     const nextNum = Number(data.floorNumber);
     if (Number.isNaN(nextNum)) throw Object.assign(new Error('floorNumber phải là số hợp lệ'), { status: 400 });
+    if (nextNum <= 0) throw Object.assign(new Error('floorNumber phải lớn hơn 0'), { status: 400 });
     if (nextNum !== floor.floorNumber) {
       const existing = await Floor.findOne({ buildingId: floor.buildingId, floorNumber: nextNum });
       if (existing) throw Object.assign(new Error(`Tầng số ${nextNum} đã tồn tại trong tòa nhà này`), { status: 409 });
@@ -335,6 +337,9 @@ const createRoom = async (data, user, req) => {
   if (!buildingId) throw Object.assign(new Error('buildingId là bắt buộc'), { status: 400 });
   if (!floorId) throw Object.assign(new Error('floorId là bắt buộc'), { status: 400 });
   if (!roomNumber) throw Object.assign(new Error('roomNumber là bắt buộc'), { status: 400 });
+  if (roomNumber.startsWith('-') || (!isNaN(roomNumber) && Number(roomNumber) <= 0)) {
+    throw Object.assign(new Error('Số phòng phải lớn hơn 0'), { status: 400 });
+  }
   if (Number.isNaN(capacity) || capacity < 1) throw Object.assign(new Error('capacity phải là số lớn hơn hoặc bằng 1'), { status: 400 });
 
   const floor = await Floor.findById(floorId);
@@ -387,6 +392,9 @@ const updateRoom = async (roomId, data, user, req) => {
   if (data.roomNumber !== undefined) {
     const nextNum = String(data.roomNumber || '').trim();
     if (!nextNum) throw Object.assign(new Error('roomNumber không được để trống'), { status: 400 });
+    if (nextNum.startsWith('-') || (!isNaN(nextNum) && Number(nextNum) <= 0)) {
+      throw Object.assign(new Error('Số phòng phải lớn hơn 0'), { status: 400 });
+    }
     if (nextNum !== room.roomNumber) {
       const existing = await Room.findOne({ floorId: room.floorId, roomNumber: nextNum });
       if (existing) throw Object.assign(new Error(`Phòng số ${nextNum} đã tồn tại ở tầng này`), { status: 409 });
@@ -684,6 +692,18 @@ const createEquipment = async (data, user, req) => {
   if (!code) throw Object.assign(new Error('Mã thiết bị là bắt buộc'), { status: 400 });
   if (!name) throw Object.assign(new Error('Tên thiết bị là bắt buộc'), { status: 400 });
 
+  if (category.startsWith('-') || (!isNaN(category) && Number(category) < 0)) {
+    throw Object.assign(new Error('Danh mục không được là số âm'), { status: 400 });
+  }
+
+  if (data.maintenanceDueAt) {
+    const mDate = new Date(data.maintenanceDueAt);
+    if (isNaN(mDate.getTime())) throw Object.assign(new Error('Hạn bảo trì không hợp lệ'), { status: 400 });
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (mDate < today) throw Object.assign(new Error('Hạn bảo trì phải ở hiện tại hoặc tương lai'), { status: 400 });
+  }
+
   const existing = await Equipment.findOne({ code });
   if (existing) throw Object.assign(new Error(`Mã thiết bị ${code} đã tồn tại`), { status: 409 });
 
@@ -760,7 +780,11 @@ const updateEquipment = async (id, data, user, req) => {
   }
 
   if (data.category !== undefined) {
-    equipment.category = String(data.category || '').trim() || undefined;
+    const nextCat = String(data.category || '').trim();
+    if (nextCat.startsWith('-') || (!isNaN(nextCat) && Number(nextCat) < 0)) {
+      throw Object.assign(new Error('Danh mục không được là số âm'), { status: 400 });
+    }
+    equipment.category = nextCat || undefined;
   }
 
   if (data.status !== undefined) {
@@ -786,7 +810,16 @@ const updateEquipment = async (id, data, user, req) => {
   if (data.bedId !== undefined) equipment.bedId = data.bedId || undefined;
 
   if (data.maintenanceDueAt !== undefined) {
-    equipment.maintenanceDueAt = data.maintenanceDueAt ? new Date(data.maintenanceDueAt) : undefined;
+    if (data.maintenanceDueAt) {
+      const mDate = new Date(data.maintenanceDueAt);
+      if (isNaN(mDate.getTime())) throw Object.assign(new Error('Hạn bảo trì không hợp lệ'), { status: 400 });
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (mDate < today) throw Object.assign(new Error('Hạn bảo trì phải ở hiện tại hoặc tương lai'), { status: 400 });
+      equipment.maintenanceDueAt = mDate;
+    } else {
+      equipment.maintenanceDueAt = undefined;
+    }
   }
 
   if (data.notes !== undefined) {

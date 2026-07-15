@@ -200,6 +200,15 @@ const CODES = {
   MEAL_TIME_ENTRY_TIME_INVALID: 'MEAL_TIME_ENTRY_TIME_INVALID',
   MEAL_TIME_ENTRY_TIME_PAST_TODAY: 'MEAL_TIME_ENTRY_TIME_PAST_TODAY',
 
+  // Dish catalog
+  DISH_NAME_REQUIRED: 'DISH_NAME_REQUIRED',
+  DISH_NAME_INVALID: 'DISH_NAME_INVALID',
+  DISH_NAME_DUPLICATE: 'DISH_NAME_DUPLICATE',
+  DISH_CALORIES_INVALID: 'DISH_CALORIES_INVALID',
+  DISH_INGREDIENTS_INVALID: 'DISH_INGREDIENTS_INVALID',
+  DISH_NOT_FOUND: 'DISH_NOT_FOUND',
+  DISH_INACTIVE: 'DISH_INACTIVE',
+
   // Care schedules
   CARE_SCHEDULE_WORK_DATE_INVALID: 'CARE_SCHEDULE_WORK_DATE_INVALID',
   CARE_SCHEDULE_PAST_DATE: 'CARE_SCHEDULE_PAST_DATE',
@@ -467,6 +476,14 @@ const ERROR_MESSAGES = {
   [CODES.MEAL_RESIDENT_NO_MEAL_TIME_IN_SCHEDULE]: 'Resident has no {{mealType}} time in the selected meal time schedule',
   [CODES.MEAL_TIME_ENTRY_TIME_INVALID]: 'entries[{{index}}].{{field}} must be HH:mm',
   [CODES.MEAL_TIME_ENTRY_TIME_PAST_TODAY]: 'entries[{{index}}].{{field}} must be from now onward for today',
+
+  [CODES.DISH_NAME_REQUIRED]: 'Dish name is required',
+  [CODES.DISH_NAME_INVALID]: 'Dish name cannot contain numbers or special characters',
+  [CODES.DISH_NAME_DUPLICATE]: 'A dish named "{{name}}" already exists',
+  [CODES.DISH_CALORIES_INVALID]: 'calories must be a non-negative integer',
+  [CODES.DISH_INGREDIENTS_INVALID]: 'Ingredients cannot contain special characters',
+  [CODES.DISH_NOT_FOUND]: 'Dish not found',
+  [CODES.DISH_INACTIVE]: 'Dish is inactive',
 
   [CODES.CARE_SCHEDULE_WORK_DATE_INVALID]: 'workDate must be YYYY-MM-DD',
   [CODES.CARE_SCHEDULE_PAST_DATE]: 'Cannot create care schedule for a past date',

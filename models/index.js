@@ -34,6 +34,7 @@ const CareScheduleDay = require('./careScheduleDay');
 const CareScheduleEntry = require('./careScheduleEntry');
 const MealPlanDay = require('./mealPlanDay');
 const MealPlanEntry = require('./mealPlanEntry');
+const Dish = require('./dish');
 const SpecialDietDay = require('./specialDietDay');
 const SpecialDietEntry = require('./specialDietEntry');
 const MealTimeScheduleDay = require('./mealTimeScheduleDay');
@@ -41,8 +42,6 @@ const MealTimeScheduleEntry = require('./mealTimeScheduleEntry');
 const MealIntakeNote = require('./mealIntakeNote');
 const HygieneActivityRecord = require('./hygieneActivityRecord');
 const DailyBehaviorRecord = require('./dailyBehaviorRecord');
-const RehabilitationScheduleDay = require('./rehabilitationScheduleDay');
-const RehabilitationScheduleEntry = require('./rehabilitationScheduleEntry');
 const LeaveRequest = require('./leaveRequest');
 const FacilityTour = require('./facilityTour');
 const ServicePackage = require('./servicePackage');
@@ -90,6 +89,7 @@ module.exports = {
   CareScheduleEntry,
   MealPlanDay,
   MealPlanEntry,
+  Dish,
   SpecialDietDay,
   SpecialDietEntry,
   MealTimeScheduleDay,
@@ -97,8 +97,6 @@ module.exports = {
   MealIntakeNote,
   HygieneActivityRecord,
   DailyBehaviorRecord,
-  RehabilitationScheduleDay,
-  RehabilitationScheduleEntry,
   FacilityTour,
   ServicePackage,
   MedicationSchedule,

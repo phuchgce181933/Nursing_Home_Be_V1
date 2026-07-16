@@ -239,7 +239,6 @@ const createDraft = async (body, actorUserId) => {
   if (!entriesInput.length) throw apiErr(CODES.MEAL_ENTRIES_REQUIRED, { statusCode: 400 });
 
   const entries = entriesInput.map((entry, index) => validateEntry(entry, index));
-  assertEntryTimesFromNow(entries, workDate);
 
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
   if (residentIds.length < 1) {
@@ -291,13 +290,6 @@ const updateDraft = async (id, body, actorUserId) => {
   const hasEntries = Array.isArray(body.entries);
   const normalizedEntries = hasEntries ? body.entries.map((entry, index) => validateEntry(entry, index)) : null;
   if (hasEntries && !normalizedEntries.length) throw apiErr(CODES.MEAL_ENTRIES_EMPTY, { statusCode: 400 });
-
-  const targetWorkDateStr =
-    body.workDate !== undefined ? parseWorkDateStrict(body.workDate) : workDateToVNString(day.workDate);
-
-  if (normalizedEntries) {
-    assertEntryTimesFromNow(normalizedEntries, targetWorkDateStr);
-  }
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

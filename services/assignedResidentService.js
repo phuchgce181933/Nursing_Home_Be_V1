@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const Resident = require('../models/resident');
+const activityService = require('./activityService');
 
 const MINIMAL_SELECT = '_id fullName residentCode';
 const MEAL_RESIDENT_SELECT = '_id fullName residentCode allergies chronicConditions';
@@ -181,6 +182,30 @@ const listAssignedAdmittedResidentsForUser = async (userId, options = {}) => {
   return { data: rows, total: rows.length };
 };
 
+const listAssignedResidentActivities = async (userId, options = {}) => {
+  const profile = await getStaffProfileByUserId(userId);
+  const ids = (profile.assignedResidentIds || []).map((r) => r._id || r);
+
+  if (!ids.length) {
+    return { data: [], total: 0 };
+  }
+
+  const now = new Date();
+  const from = options.from ? new Date(options.from) : now;
+  const to = options.to ? new Date(options.to) : new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  const query = {
+    participantResidentIds: ids,
+    status: options.status || 'scheduled',
+    from,
+    to,
+    page: options.page || 1,
+    limit: options.limit || 20,
+  };
+
+  return activityService.listActivities(query);
+};
+
 const listAssignedAdmittedResidentsForStaffProfile = async (staffProfileId, options = {}) => {
   assertValidObjectId(staffProfileId, 'staffProfileId');
   const profile = await staffProfileRepo.findById(staffProfileId);
@@ -257,6 +282,7 @@ module.exports = {
   MEAL_RESIDENT_SELECT,
   getStaffProfileByUserId,
   listAssignedResidentsForUser,
+  listAssignedResidentActivities,
   listAssignedAdmittedResidentsForUser,
   listAssignedAdmittedResidentsForStaffProfile,
   assertResidentsAssignedToUser,

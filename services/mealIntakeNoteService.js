@@ -2,11 +2,10 @@ const mongoose = require('mongoose');
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const mealIntakeNoteRepo = require('../repositories/mealIntakeNoteRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
-const MealPlanDay = require('../models/mealPlanDay');
-const MealPlanEntry = require('../models/mealPlanEntry');
 const Resident = require('../models/resident');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
 const assignedResidentService = require('./assignedResidentService');
+const { findPublishedMealPlanEntryForResident } = require('../utils/publishedMealPlanLookup');
 const { parseWorkDate, todayVN } = require('../utils/shiftTime');
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
@@ -92,21 +91,8 @@ const validateIntakePayload = (body, isUpdate = false) => {
 };
 
 const findPublishedMealPlanEntry = async (residentId, workDateStr, mealType) => {
-  const day = await MealPlanDay.findOne({
-    status: 'published',
-    workDate: {
-      $gte: new Date(`${workDateStr}T00:00:00.000Z`),
-      $lte: new Date(`${workDateStr}T23:59:59.999Z`),
-    },
-  }).sort({ publishedAt: -1 });
-
-  if (!day) return null;
-
-  return MealPlanEntry.findOne({
-    mealPlanDayId: day._id,
-    residentId,
-    mealType,
-  }).lean();
+  const { entry } = await findPublishedMealPlanEntryForResident(residentId, workDateStr, mealType);
+  return entry;
 };
 
 const getMealContext = async (residentId, workDateInput, mealType, userId) => {

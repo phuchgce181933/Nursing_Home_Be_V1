@@ -6,11 +6,13 @@ const {
   listIncidents,
   getIncident,
   updateIncidentStatus,
+  assignHandlers,
   exportIncidents,
 } = require('../controllers/incidentController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('doctor', 'nurse', 'admin'));
+router.use(protect);
+router.use(authorize('doctor', 'nurse', 'admin', 'caregiver'));
 
 /**
  * @swagger
@@ -46,6 +48,10 @@ router.use(protect, authorize('doctor', 'nurse', 'admin'));
  *               description:
  *                 type: string
  *               assignedStaffIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               residentIds:
  *                 type: array
  *                 items:
  *                   type: string
@@ -181,5 +187,43 @@ router.get('/:id', getIncident);
  *         description: Incident status updated
  */
 router.patch('/:id/status', updateIncidentStatus);
+
+/**
+ * @swagger
+ * /api/incidents/{id}/handlers:
+ *   patch:
+ *     summary: Assign handlers to incident (admin only)
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - assignedStaffIds
+ *             properties:
+ *               assignedStaffIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of staff profile IDs or user IDs
+ *     responses:
+ *       200:
+ *         description: Handlers assigned to incident
+ *       403:
+ *         description: Only admins can assign handlers
+ *       400:
+ *         description: Handlers already assigned or no handlers specified
+ */
+router.patch('/:id/handlers', authorize('admin'), assignHandlers);
 
 module.exports = router;

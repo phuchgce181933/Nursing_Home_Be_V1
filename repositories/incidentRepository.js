@@ -3,6 +3,7 @@ const Incident = require('../models/incident');
 const populateDetails = (query) =>
   query
     .populate('residentId', 'residentCode fullName')
+    .populate('residentIds', 'residentCode fullName')
     .populate({
       path: 'reportedByStaffId',
       select: 'staffCode specialty userId',

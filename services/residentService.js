@@ -49,11 +49,65 @@ const normalizeStringArray = (value) => {
   return [String(value).trim()].filter(Boolean);
 };
 
+const contactPhoneKey = (contact) => String(contact?.phone || '').replace(/\D/g, '');
+
+const contactEmailKey = (contact) => {
+  const email = String(contact?.email || '').trim().toLowerCase();
+  return email || null;
+};
+
+const throwDuplicateEmergencyContact = (candidate, existingContact) => {
+  throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_DUPLICATE, {
+    statusCode: 409,
+    params: { phone: candidate.phone, fullName: existingContact.fullName },
+  });
+};
+
+const throwDuplicateEmergencyContactEmail = (candidate, existingContact) => {
+  throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_EMAIL_DUPLICATE, {
+    statusCode: 409,
+    params: { email: candidate.email, fullName: existingContact.fullName },
+  });
+};
+
+const assertNoDuplicateEmergencyContact = (existingContacts, candidate, { excludeContactId } = {}) => {
+  const phoneKey = contactPhoneKey(candidate);
+  const phoneDup = (existingContacts || []).find((c) => {
+    if (excludeContactId && c._id?.toString() === String(excludeContactId)) return false;
+    return contactPhoneKey(c) === phoneKey;
+  });
+  if (phoneDup) throwDuplicateEmergencyContact(candidate, phoneDup);
+
+  const emailKey = contactEmailKey(candidate);
+  if (!emailKey) return;
+
+  const emailDup = (existingContacts || []).find((c) => {
+    if (excludeContactId && c._id?.toString() === String(excludeContactId)) return false;
+    return contactEmailKey(c) === emailKey;
+  });
+  if (emailDup) throwDuplicateEmergencyContactEmail(candidate, emailDup);
+};
+
+const assertEmergencyContactsListUnique = (contacts) => {
+  const seenPhones = new Map();
+  const seenEmails = new Map();
+  for (const c of contacts || []) {
+    const phoneKey = contactPhoneKey(c);
+    if (seenPhones.has(phoneKey)) throwDuplicateEmergencyContact(c, seenPhones.get(phoneKey));
+    seenPhones.set(phoneKey, c);
+
+    const emailKey = contactEmailKey(c);
+    if (!emailKey) continue;
+    if (seenEmails.has(emailKey)) throwDuplicateEmergencyContactEmail(c, seenEmails.get(emailKey));
+    seenEmails.set(emailKey, c);
+  }
+};
+
 const normalizeEmergencyContacts = (value) => {
   if (value === undefined) return undefined;
   if (value === null) return [];
   if (!Array.isArray(value)) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'emergencyContacts phải là mảng' } });
-  return value.map((contact, index) => {
+  const normalized = value.map((contact, index) => {
     if (!contact || typeof contact !== 'object') {
       throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}] phải là object` } });
     }
@@ -62,6 +116,10 @@ const normalizeEmergencyContacts = (value) => {
     const phone = String(contact.phone || '').trim();
     if (!fullName || !relationship || !phone) {
       throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}] phải có đầy đủ fullName, relationship và phone` } });
+    }
+    const phoneErr = validatePhone(phone);
+    if (phoneErr) {
+      throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}]: ${phoneErr}` } });
     }
     return {
       fullName,
@@ -72,6 +130,8 @@ const normalizeEmergencyContacts = (value) => {
       isPrimary: Boolean(contact.isPrimary),
     };
   });
+  assertEmergencyContactsListUnique(normalized);
+  return normalized;
 };
 
 const normalizeFamilyAccountIds = async (value) => {
@@ -114,14 +174,15 @@ const mapAreaFromRoom = (room) => {
   if (!room) return { room: null, floor: null, building: null };
   const floor = room.floorId;
   const building = floor?.buildingId || room.buildingId;
+  const roomNumber = room.roomNumber || room.roomCode;
   const floorName = floor?.name || (floor?.floorNumber != null ? `Tang ${floor.floorNumber}` : null);
   const buildingName = building?.name || building?.code;
   return {
     room: {
       _id: room._id,
-      roomNumber: room.roomNumber,
+      roomNumber,
       roomType: room.roomType,
-      label: room.roomNumber ? `Phong ${room.roomNumber}` : null,
+      label: roomNumber ? `Phong ${roomNumber}` : null,
     },
     floor: floor
       ? {
@@ -321,7 +382,7 @@ const matchEmergencyContact = (a, b) => {
   const aId = a?._id?.toString?.();
   const bId = b?._id?.toString?.();
   if (aId && bId && aId === bId) return true;
-  return a?.fullName === b?.fullName && a?.phone === b?.phone;
+  return contactPhoneKey(a) === contactPhoneKey(b);
 };
 
 const assertPrimaryContactNotRemoved = (existingContacts, nextContacts) => {
@@ -345,20 +406,26 @@ const mapResidentFamilySummary = (resident) => ({
 });
 
 const parseAssignmentStatusFilter = (status) => {
-  let queryStatus = status || 'admitted';
-  if (status && String(status).includes(',')) {
+  if (!status || String(status).toLowerCase() === 'all') {
+    return undefined;
+  }
+
+  let queryStatus = status;
+  if (String(status).includes(',')) {
     const statuses = String(status)
       .split(',')
-      .map((s) => s.trim());
+      .map((s) => s.trim())
+      .filter(Boolean);
     statuses.forEach((s) => {
       if (!RESIDENCY_STATUSES.includes(s)) {
         throw apiErr(CODES.RESIDENT_STATUS_INVALID, { statusCode: 400, params: { allowed: RESIDENCY_STATUSES.join(', ') } });
       }
     });
     queryStatus = statuses;
-  } else if (status && !RESIDENCY_STATUSES.includes(status)) {
+  } else if (!RESIDENCY_STATUSES.includes(String(status))) {
     throw apiErr(CODES.RESIDENT_STATUS_INVALID, { statusCode: 400, params: { allowed: RESIDENCY_STATUSES.join(', ') } });
   }
+
   return queryStatus;
 };
 
@@ -366,7 +433,7 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
   const queryStatus = parseAssignmentStatusFilter(status);
 
   let residentIds = null;
-  if (user && ['doctor', 'nurse'].includes(user.role)) {
+  if (user && ['doctor', 'nurse', 'caregiver'].includes(user.role)) {
     const staffProfileRepo = require('../repositories/staffProfileRepository');
     const profile = await staffProfileRepo.findByUserId(user._id);
     if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
@@ -398,10 +465,10 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
 };
 
 const listResidentsForFamilyManagement = async ({ search, status, page = 1, limit = 20 }) => {
-  const queryStatus = parseAssignmentStatusFilter(status);
+  const queryStatus = String(status || '').toLowerCase() === 'all' ? undefined : status;
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const limitNum = Math.min(1000, Math.max(1, parseInt(limit, 10) || 20));
   const { data, total, page: currentPage, limit: currentLimit } = await residentRepo.findForFamilyManagement({
     search,
     status: queryStatus,
@@ -438,6 +505,9 @@ const getResidentFamilyInfo = async (residentId) => {
 const addEmergencyContact = async (residentId, body) => {
   assertResidentId(residentId);
   const contact = validateContactPayload(body, { requireAll: true });
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  assertNoDuplicateEmergencyContact(existing.emergencyContacts, contact);
   const resident = await residentRepo.addEmergencyContact(residentId, contact);
   if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   const added = resident.emergencyContacts[resident.emergencyContacts.length - 1];
@@ -460,6 +530,7 @@ const replaceEmergencyContacts = async (residentId, contactsInput) => {
   if (!primarySet && normalized.length > 0) {
     normalized[0].isPrimary = true;
   }
+  assertEmergencyContactsListUnique(normalized);
   const existing = await residentRepo.findById(residentId);
   if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   assertPrimaryContactNotRemoved(existing.emergencyContacts, normalized);
@@ -472,12 +543,21 @@ const updateEmergencyContact = async (residentId, contactId, body) => {
   assertResidentId(residentId);
   assertContactId(contactId);
   const patch = validateContactPayload(body, { requireAll: false, partial: true });
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  const current = existing.emergencyContacts?.id?.(contactId);
+  if (!current) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
+  const merged = {
+    fullName: patch.fullName !== undefined ? patch.fullName : current.fullName,
+    phone: patch.phone !== undefined ? patch.phone : current.phone,
+    relationship: patch.relationship !== undefined ? patch.relationship : current.relationship,
+    email: patch.email !== undefined ? patch.email : current.email,
+    address: patch.address !== undefined ? patch.address : current.address,
+    isPrimary: patch.isPrimary !== undefined ? patch.isPrimary : current.isPrimary,
+  };
+  assertNoDuplicateEmergencyContact(existing.emergencyContacts, merged, { excludeContactId: contactId });
   const resident = await residentRepo.updateEmergencyContact(residentId, contactId, patch);
-  if (!resident) {
-    const exists = await residentRepo.findById(residentId);
-    if (!exists) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
-    throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
-  }
+  if (!resident) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
   const updated = resident.emergencyContacts.id(contactId);
   return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_UPDATED), emergencyContact: updated, emergencyContacts: resident.emergencyContacts };
 };
@@ -591,6 +671,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
   if (!floor) throw apiErr(CODES.RESIDENT_TRANSFER_FLOOR_NOT_FOUND, { statusCode: 404 });
   const rooms = await roomRepo.findByFloorId(floorId);
   const roomIds = rooms.map((room) => room._id);
+  const admittedCountByRoomId = await residentRepo.countAdmittedByRoomIds(roomIds);
   const availableBeds = await bedRepo.findAvailableByRoomIds(roomIds);
   const bedsByRoomId = new Map();
   for (const bed of availableBeds) {
@@ -598,6 +679,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
     if (!bedsByRoomId.has(key)) bedsByRoomId.set(key, []);
     bedsByRoomId.get(key).push({ _id: bed._id, bedCode: bed.bedCode, bedType: bed.bedType, status: bed.status });
   }
+  const currentBedId = String(resident.bedId?._id || resident.bedId);
   const currentRoomId = String(resident.roomId?._id || resident.roomId);
   const targets = rooms
     .map((room) => ({
@@ -607,18 +689,20 @@ const getTransferTargets = async (residentId, { floorId }) => {
       capacity: room.capacity,
       occupiedCount: room.occupiedCount,
       status: room.status,
-      availableBeds: bedsByRoomId.get(String(room._id)) || [],
+      availableBeds: (bedsByRoomId.get(String(room._id)) || []).filter(
+        (bed) => String(bed._id) !== currentBedId
+      ),
     }))
-    .filter(
-      (room) =>
-        String(room._id) !== currentRoomId &&
-        room.availableBeds.length > 0
-    );
+    .filter((room) => {
+      if (room.availableBeds.length === 0) return false;
+      if (room.status === 'closed') return false;
+      if (String(room._id) === currentRoomId) return true;
+      const admittedCount = admittedCountByRoomId.get(String(room._id)) || 0;
+      return admittedCount < room.capacity;
+    });
 
-  const message =
-    targets.length === 0
-      ? 'Không có phòng/giường trống trên tầng đã chọn. Chọn tầng khác hoặc giải phóng giường trước.'
-      : undefined;
+  const noTargets = targets.length === 0;
+  const infoMessage = noTargets ? apiSuccess(SUCCESS.RESIDENT_TRANSFER_NO_TARGETS) : null;
 
   return {
     resident: {
@@ -629,7 +713,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
     },
     currentAssignment: mapTransferAssignment(resident),
     targets,
-    message,
+    ...(infoMessage || {}),
   };
 };
 
@@ -646,7 +730,15 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   const targetRoom = await roomRepo.findById(targetRoomId);
   if (!targetRoom) throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_NOT_FOUND, { statusCode: 404 });
   if (targetRoom.status === 'closed') throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_CLOSED, { statusCode: 400 });
-  if (targetRoom.occupiedCount >= targetRoom.capacity) throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_FULL, { statusCode: 400 });
+
+  const sourceRoomId = String(resident.roomId?._id || resident.roomId);
+  const sameRoom = sourceRoomId === String(targetRoomId);
+  if (!sameRoom) {
+    const admittedInTarget = await residentRepo.countAdmittedInRoom(targetRoomId);
+    if (admittedInTarget >= targetRoom.capacity) {
+      throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_FULL, { statusCode: 400 });
+    }
+  }
 
   const targetBed = await bedRepo.findById(targetBedId);
   if (!targetBed) throw apiErr(CODES.RESIDENT_TRANSFER_BED_NOT_FOUND, { statusCode: 404 });
@@ -654,12 +746,21 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   if (targetBed.status !== 'available' || targetBed.assignedResidentId) throw apiErr(CODES.RESIDENT_TRANSFER_BED_UNAVAILABLE, { statusCode: 400 });
 
   await bedRepo.releaseBed(resident.bedId._id, new Date());
-  await roomRepo.adjustOccupiedCount(resident.roomId._id, -1);
+  if (!sameRoom) {
+    await roomRepo.adjustOccupiedCount(resident.roomId._id, -1);
+  }
   await bedRepo.occupyBed(targetBedId, resident._id, new Date());
-  await roomRepo.adjustOccupiedCount(targetRoomId, 1);
+  if (!sameRoom) {
+    await roomRepo.adjustOccupiedCount(targetRoomId, 1);
+  }
 
   const updatedResident = await residentRepo.updateRoomAssignment(residentId, { roomId: targetRoomId, bedId: targetBedId });
   if (!updatedResident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+
+  await roomRepo.syncRoomOccupancy(resident.roomId._id);
+  if (!sameRoom) {
+    await roomRepo.syncRoomOccupancy(targetRoomId);
+  }
 
   const targetFloorId = targetRoom.floorId?._id || targetRoom.floorId;
   const staffAreasSynced = await syncStaffAreasAfterResidentTransfer(residentId, {
@@ -1041,6 +1142,10 @@ const adminGetResident = async (residentId) => {
 
 const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
   if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw apiErr(CODES.RESIDENT_BODY_EMPTY, { statusCode: 400 });
+  const role = String(user?.role || '').toLowerCase();
+  if (body.allergies !== undefined && (role === 'admin' || role === 'manager')) {
+    throw apiErr(CODES.RESIDENT_DRUG_ALLERGIES_FORBIDDEN, { statusCode: 403 });
+  }
   const update = {};
   if (body.fullName !== undefined) {
     const fullName = String(body.fullName).trim();

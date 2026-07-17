@@ -16,11 +16,13 @@ const activitySchema = new Schema(
     participantResidentIds: [{ type: Types.ObjectId, ref: 'Resident' }],
     attendanceRecords: [{
       residentId: { type: Types.ObjectId, ref: 'Resident' },
+      occurrenceDate: { type: Date },
       status: { type: String, enum: ['present', 'absent', 'late', 'left_early'], default: 'present' },
       note: { type: String, trim: true },
     }],
     participationRecords: [{
       residentId: { type: Types.ObjectId, ref: 'Resident' },
+      occurrenceDate: { type: Date },
       participationLevel: { type: String, enum: ['active', 'partial', 'passive'], default: 'active' },
       comment: { type: String, trim: true },
       incident: { type: String, trim: true },

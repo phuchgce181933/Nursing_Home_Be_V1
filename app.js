@@ -77,6 +77,7 @@ app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
+app.use('/api/conversations', require('./routes/conversations'));
 // expose conversations router at root path as well for legacy or direct calls
 app.use('/conversations', require('./routes/conversations'));
 app.use('/api/payos', require('./routes/payos'));

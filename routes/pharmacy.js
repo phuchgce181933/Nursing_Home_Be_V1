@@ -596,7 +596,7 @@ router.get('/alerts/low-stock', getLowStockAlerts);
  *         name: withinDays
  *         schema:
  *           type: integer
- *           default: 30
+ *           default: 365
  *     responses:
  *       200:
  *         description: Expiring stock list

@@ -73,6 +73,16 @@ const medicalRecordSchema = new Schema(
         notes: { type: String, trim: true },
       },
     ],
+    selectedServices: [
+      {
+        serviceId: { type: Types.ObjectId, ref: 'ClinicalService', index: true },
+        serviceCode: { type: String, trim: true },
+        serviceName: { type: String, trim: true },
+        quantity: { type: Number, min: 0, default: 1 },
+        unitPrice: { type: Number, min: 0, default: 0 },
+        fieldValues: { type: Schema.Types.Mixed, default: {} },
+      },
+    ],
     cognitiveFunction: {
       assessmentTool: { type: String, trim: true },
       score: { type: String, trim: true },

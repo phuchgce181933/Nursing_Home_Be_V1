@@ -556,6 +556,14 @@ const updateIncidentStatus = async (currentUser, id, payload) => {
   const existing = await incidentRepo.findById(id);
   if (!existing) throw new ServiceError('Incident not found', 404);
 
+  // Prevent backward status transitions. Allowed statuses in order:
+  const STATUS_ORDER = ['open', 'investigating', 'resolved', 'closed'];
+  const currentIndex = STATUS_ORDER.indexOf(existing.status);
+  const newIndex = STATUS_ORDER.indexOf(payload.status);
+  if (newIndex < currentIndex) {
+    throw new ServiceError('Invalid status transition: cannot move to a previous state', 400);
+  }
+
   const updated = await incidentRepo.updateById(id, { status: payload.status });
 
   await notifyIncident(updated, {

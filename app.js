@@ -78,6 +78,7 @@ app.use('/api/care-notes', require('./routes/careNotes'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/admin', require('./routes/adminIndex'));
+app.use('/api/conversations', require('./routes/conversations'));
 // expose conversations router at root path as well for legacy or direct calls
 app.use('/conversations', require('./routes/conversations'));
 app.use('/api/payos', require('./routes/payos'));
@@ -86,6 +87,7 @@ app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions')
 
 
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));
+app.use('/api/nurse/nutrition', require('./routes/nutritionCoverage'));
 app.use('/api/nurse/special-diets', require('./routes/specialDiets'));
 app.use('/api/nurse/meal-time-schedules', require('./routes/mealTimeSchedules'));
 app.use('/api/caregiver/meal-intake-notes', require('./routes/caregiverMealIntakeNotes'));

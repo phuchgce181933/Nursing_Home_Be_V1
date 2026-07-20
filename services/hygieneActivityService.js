@@ -9,7 +9,11 @@ const {
   HYGIENE_ACTIVITY_TYPES,
   COMPLETION_STATUSES,
 } = require('../models/hygieneActivityRecord');
-const { parseWorkDate, todayVN } = require('../utils/shiftTime');
+const { parseWorkDate, todayVN, workDateToVNString } = require('../utils/shiftTime');
+const {
+  getCaregiverRecordingWindow,
+  assertCaregiverRecordingWindowOpen,
+} = require('../utils/mealIntakeShiftWindow');
 
 const CATEGORY_BY_TYPE = {
   bathing: 'personal',
@@ -108,12 +112,23 @@ const getActivityContext = async (residentId, workDateInput, activityType, userI
     activityType
   );
 
+  const { canMutate } = await getCaregiverRecordingWindow(profile._id, workDate);
+
+  const existingRecordedByName = existing
+    ? existing.recordedByStaffId?.userId?.fullName ||
+      existing.recordedByStaffId?.staffCode ||
+      null
+    : null;
+
   return {
     workDate,
     activityType,
     activityCategory: CATEGORY_BY_TYPE[activityType],
     existingRecordId: existing?._id || null,
     hasExistingRecord: Boolean(existing),
+    existingRecordedByName,
+    existingRecordedAt: existing?.recordedAt || null,
+    canRecord: canMutate,
   };
 };
 
@@ -146,6 +161,44 @@ const listRecords = async (userId, query) => {
   const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
   const skip = (page - 1) * limit;
 
+  let meta = { canMutate: false };
+  if (query.workDate) {
+    const wd = parseWorkDateStrict(query.workDate);
+    const { canMutate } = await getCaregiverRecordingWindow(profile._id, wd);
+    meta = { canMutate };
+  }
+
+  const [data, total] = await Promise.all([
+    hygieneActivityRepo.findAll(filter, { skip, limit, sort: { recordedAt: -1 } }),
+    hygieneActivityRepo.countAll(filter),
+  ]);
+
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1, meta };
+};
+
+const listRecordsForAdmin = async (query) => {
+  const filter = {};
+  if (query.residentId) {
+    assertValidObjectId(query.residentId, 'residentId');
+    filter.residentId = query.residentId;
+  }
+  if (query.activityCategory) {
+    assertFieldOneOf('activityCategory', query.activityCategory, HYGIENE_CATEGORIES);
+    filter.activityCategory = query.activityCategory;
+  }
+  if (query.activityType) {
+    assertFieldOneOf('activityType', query.activityType, HYGIENE_ACTIVITY_TYPES);
+    filter.activityType = query.activityType;
+  }
+  if (query.workDate) {
+    const wd = parseWorkDateStrict(query.workDate);
+    filter.workDate = workDateToDate(wd);
+  }
+
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
+  const skip = (page - 1) * limit;
+
   const [data, total] = await Promise.all([
     hygieneActivityRepo.findAll(filter, { skip, limit, sort: { recordedAt: -1 } }),
     hygieneActivityRepo.countAll(filter),
@@ -159,6 +212,11 @@ const createRecord = async (userId, body) => {
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, body.residentId);
+  await assertCaregiverRecordingWindowOpen(
+    profile._id,
+    workDate,
+    CODES.HYGIENE_SHIFT_WINDOW_CLOSED
+  );
 
   const workDateDate = workDateToDate(workDate);
   const existing = await hygieneActivityRepo.findOneByUnique(
@@ -205,6 +263,11 @@ const updateRecord = async (userId, id, body) => {
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  await assertCaregiverRecordingWindowOpen(
+    profile._id,
+    workDateToVNString(record.workDate),
+    CODES.HYGIENE_SHIFT_WINDOW_CLOSED
+  );
   validatePayload(body, true);
 
   const update = {};
@@ -220,6 +283,11 @@ const deleteRecord = async (userId, id) => {
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  await assertCaregiverRecordingWindowOpen(
+    profile._id,
+    workDateToVNString(record.workDate),
+    CODES.HYGIENE_SHIFT_WINDOW_CLOSED
+  );
   await hygieneActivityRepo.deleteById(id);
   return { ...apiSuccess(SUCCESS.HYGIENE_RECORD_DELETED), deleted: true, id };
 };
@@ -232,6 +300,7 @@ module.exports = {
   listAssignedResidents,
   getActivityContext,
   listRecords,
+  listRecordsForAdmin,
   createRecord,
   getRecord,
   updateRecord,

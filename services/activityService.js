@@ -98,8 +98,11 @@ const normalizeAttendanceRecords = (records) => {
       throw new ServiceError(`attendance status must be one of: ${VALID_ATTENDANCE_STATUSES.join(', ')}`, 400);
     }
 
+    const occurrenceDate = record?.occurrenceDate ? new Date(record.occurrenceDate) : null;
+
     return {
       residentId: new mongoose.Types.ObjectId(residentId),
+      occurrenceDate: occurrenceDate && !Number.isNaN(occurrenceDate.getTime()) ? occurrenceDate : undefined,
       status,
       note: typeof record?.note === 'string' ? record.note.trim() : '',
     };
@@ -122,8 +125,10 @@ const normalizeParticipationRecords = (records) => {
       throw new ServiceError(`participation level must be one of: ${VALID_PARTICIPATION_LEVELS.join(', ')}`, 400);
     }
 
+    const occurrenceDate = record?.occurrenceDate ? new Date(record.occurrenceDate) : null;
     return {
       residentId: new mongoose.Types.ObjectId(residentId),
+      occurrenceDate: occurrenceDate && !Number.isNaN(occurrenceDate.getTime()) ? occurrenceDate : undefined,
       participationLevel,
       comment: typeof record?.comment === 'string' ? record.comment.trim() : '',
       incident: typeof record?.incident === 'string' ? record.incident.trim() : '',
@@ -244,7 +249,12 @@ const createActivity = async (body) => {
   const shouldCreateRecurring = Boolean(body.createRecurring) || (requestedDailyMinutes !== null && endAt.getTime() - scheduledAt.getTime() > 24 * 60 * 60 * 1000);
   const recurringDailyDurationMinutes = requestedDailyMinutes !== null ? requestedDailyMinutes : (computedDurationMinutes < 60 ? 30 : computedDurationMinutes);
   if (shouldCreateRecurring && recurringDailyDurationMinutes < 1) {
-    throw new ServiceError('dailyDurationMinutes must be greater than 0', 400);
+    throw new ServiceError('Thời lượng mỗi ngày phải lớn hơn 0 phút', 400);
+  }
+  // Validate daily duration does not exceed 24 hours
+  const MAX_DAILY_MINUTES = 24 * 60;
+  if (requestedDailyMinutes !== null && requestedDailyMinutes > MAX_DAILY_MINUTES) {
+    throw new ServiceError('Thời lượng mỗi ngày không được vượt quá 24 giờ', 400);
   }
 
   if (body.organizerStaffId && !mongoose.Types.ObjectId.isValid(body.organizerStaffId)) {
@@ -376,6 +386,18 @@ const updateActivity = async (activityId, body) => {
       throw new ServiceError('endAt must be later than startAt', 400);
     }
     update.durationMinutes = computedDurationMinutes;
+  }
+  // support updating dailyDurationMinutes for recurring activities
+  if (body.dailyDurationMinutes !== undefined) {
+    const dd = body.dailyDurationMinutes === '' || body.dailyDurationMinutes === null ? null : Number(body.dailyDurationMinutes);
+    if (dd !== null && (!Number.isFinite(dd) || dd < 1)) {
+      throw new ServiceError('Thời lượng mỗi ngày phải là số dương', 400);
+    }
+    const MAX_DAILY_MINUTES = 24 * 60;
+    if (dd !== null && dd > MAX_DAILY_MINUTES) {
+      throw new ServiceError('Thời lượng mỗi ngày không được vượt quá 24 giờ', 400);
+    }
+    if (dd !== null) update.dailyDurationMinutes = dd;
   }
   if (body.location !== undefined) update.location = body.location?.trim();
   if (body.organizerStaffId !== undefined) {
@@ -538,6 +560,28 @@ const recordParticipationResult = async (activityId, body) => {
   if (body.participationRecords !== undefined) updates.participationRecords = normalizeParticipationRecords(body.participationRecords);
   if (Object.keys(updates).length === 0) {
     throw new ServiceError('At least one field is required to record participation results', 400);
+  }
+
+  // Merge attendance/participation records by occurrenceDate + residentId instead of replacing whole arrays
+  const existing = await activityRepo.findById(activityId);
+  if (!existing) throw new ServiceError('Activity not found', 404);
+
+  if (updates.attendanceRecords) {
+    const mapKey = (rec) => `${rec.residentId.toString()}|${rec.occurrenceDate ? new Date(rec.occurrenceDate).toISOString().slice(0,10) : 'none'}`;
+    const merged = [];
+    const existingMap = new Map((existing.attendanceRecords || []).map((r) => [mapKey(r), r]));
+    (updates.attendanceRecords || []).forEach((r) => existingMap.set(mapKey(r), r));
+    existingMap.forEach((v) => merged.push(v));
+    updates.attendanceRecords = merged;
+  }
+
+  if (updates.participationRecords) {
+    const mapKey = (rec) => `${rec.residentId.toString()}|${rec.occurrenceDate ? new Date(rec.occurrenceDate).toISOString().slice(0,10) : 'none'}`;
+    const merged = [];
+    const existingMap = new Map((existing.participationRecords || []).map((r) => [mapKey(r), r]));
+    (updates.participationRecords || []).forEach((r) => existingMap.set(mapKey(r), r));
+    existingMap.forEach((v) => merged.push(v));
+    updates.participationRecords = merged;
   }
 
   const updated = await activityRepo.findByIdAndUpdate(activityId, updates);

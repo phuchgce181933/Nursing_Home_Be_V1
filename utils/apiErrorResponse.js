@@ -25,9 +25,10 @@ const formatApiError = (err) => {
     };
   }
 
-  if (err instanceof ServiceError || err?.statusCode) {
+  const statusCode = err?.statusCode || err?.status;
+  if (err instanceof ServiceError || statusCode) {
     return {
-      statusCode: err.statusCode || 500,
+      statusCode: statusCode || 500,
       payload: {
         message: err.message || 'Internal server error',
         ...(err.errorCode ? { errorCode: err.errorCode } : {}),

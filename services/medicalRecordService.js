@@ -216,6 +216,38 @@ const normalizeNutritionalStatus = (value) => {
 
 const mongoose = require('mongoose');
 
+const normalizeServiceFieldValues = (values) => {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return {};
+  const result = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (Array.isArray(value)) {
+      result[key] = value.map((item) => String(item || '').trim()).filter(Boolean);
+    } else if (typeof value === 'string') {
+      const normalized = value.trim();
+      if (normalized.includes(',')) {
+        result[key] = normalized.split(',').map((item) => item.trim()).filter(Boolean);
+      } else {
+        result[key] = normalized;
+      }
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+};
+
+const normalizeSelectedServices = (services) => {
+  if (!Array.isArray(services)) return [];
+  return services.map((s) => ({
+    serviceId: s.serviceId && mongoose.Types.ObjectId.isValid(s.serviceId) ? s.serviceId : undefined,
+    serviceCode: String(s.serviceCode || '').trim(),
+    serviceName: String(s.serviceName || '').trim(),
+    quantity: Math.max(1, Number(s.quantity) || 1),
+    unitPrice: Math.max(0, Number(s.unitPrice) || 0),
+    fieldValues: normalizeServiceFieldValues(s.fieldValues),
+  }));
+};
+
 const recordMedicalRecord = async (user, residentId, body, req) => {
   console.log('[recordMedicalRecord] Called with body keys:', Object.keys(body));
   console.log('[recordMedicalRecord] selectedServices:', body.selectedServices);
@@ -312,6 +344,7 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     functionalStatus: normalizeFunctionalStatus(functionalStatus),
     fallRisk: normalizeFallRisk(fallRisk),
     nutritionalStatus: normalizeNutritionalStatus(nutritionalStatus),
+    selectedServices: normalizeSelectedServices(selectedServices),
     roomCost,
     medicationCost,
     careServiceCost,
@@ -359,20 +392,12 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
       category: 'SERVICE',
     }));
 
+    // Charges are created in PENDING state here. Invoice creation is deferred until an admin
+    // explicitly generates the invoice for these clinical service charges.
     if (items.length) {
-      const invoice = await paymentService.createInvoice(user, residentId, {
-        items,
-        billingPeriodStart: body.billingPeriodStart,
-        billingPeriodEnd: body.billingPeriodEnd,
-        dueDate: body.dueDate,
-      });
-      // attach invoice id to record if created
-      try {
-        const MedicalRecord = require('../models/medicalRecord');
-        await MedicalRecord.findByIdAndUpdate(record._id, { invoiceId: invoice._id });
-      } catch (err) {
-        console.error('Failed to attach invoiceId to medical record:', err.message || err);
-      }
+      console.log(
+        `[medicalRecordService] Created ${items.length} service charge(s) for resident ${residentId}; invoice generation deferred.`
+      );
     }
   }
 

@@ -3,6 +3,7 @@ const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiEr
 const mealTimeScheduleDayRepo = require('../repositories/mealTimeScheduleDayRepository');
 const mealTimeScheduleEntryRepo = require('../repositories/mealTimeScheduleEntryRepository');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
+const { assertNoPublishedScheduleConflicts } = require('../utils/nutritionPublishGuards');
 const Resident = require('../models/resident');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 
@@ -412,6 +413,7 @@ const publishSchedule = async (id, actorUserId) => {
     throw apiErr(CODES.MEAL_TIME_SCHEDULE_PUBLISH_NO_RESIDENTS, { statusCode: 400 });
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
+  await assertNoPublishedScheduleConflicts(workDate, residentIds, id);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

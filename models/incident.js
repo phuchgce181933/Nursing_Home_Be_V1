@@ -34,6 +34,30 @@ const incidentSchema = new Schema(
     notifiedManagement: { type: Boolean, default: false },
     notifiedFamilyIds: [{ type: Types.ObjectId, ref: 'User' }],
     attachments: [fileAttachmentSchema],
+    resolution: {
+      status: { type: String, trim: true },
+      method: { type: String, trim: true },
+      rootCause: { type: String, trim: true },
+      detailedCause: { type: String, trim: true },
+      immediateActions: [{ type: String, trim: true }],
+      medical: {
+        medications: [
+          {
+            name: { type: String, trim: true },
+            dose: { type: String, trim: true },
+            time: { type: String, trim: true },
+          },
+        ],
+        procedures: [{ type: String, trim: true }],
+        residentCondition: { type: String, trim: true },
+        needFollowUp: { type: Boolean },
+      },
+      result: { type: String, trim: true },
+      notes: { type: String, trim: true },
+      completedAt: { type: Date },
+      resolvedByUserId: { type: Types.ObjectId, ref: 'User' },
+      attachments: [fileAttachmentSchema],
+    },
   },
   { timestamps: true }
 );

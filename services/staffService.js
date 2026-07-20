@@ -747,9 +747,10 @@ const getAvailability = async ({ role, date, floorId }) => {
   const dayEnd = new Date(checkDate.getTime() + 24 * 60 * 60 * 1000 - 1);
   const isToday = checkDateLocal === todayLocal;
 
-  const filter = { role: { $in: ['doctor', 'nurse'] }, isActive: true, isBanned: false };
+  const allowedAvailabilityRoles = ['doctor', 'nurse', 'caregiver', 'pharmacist'];
+  const filter = { role: { $in: allowedAvailabilityRoles }, isActive: true, isBanned: false };
   if (role) {
-    if (!['doctor', 'nurse'].includes(role)) throw apiErr(CODES.STAFF_AVAILABILITY_ROLE_INVALID, { statusCode: 400 });
+    if (!allowedAvailabilityRoles.includes(role)) throw apiErr(CODES.STAFF_AVAILABILITY_ROLE_INVALID, { statusCode: 400 });
     filter.role = role;
   }
 

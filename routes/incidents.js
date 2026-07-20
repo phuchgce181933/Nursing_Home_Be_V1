@@ -12,7 +12,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 
 router.use(protect);
-router.use(authorize('doctor', 'nurse', 'admin', 'caregiver'));
+router.use(authorize('doctor', 'nurse', 'admin', 'manager', 'caregiver', 'pharmacist'));
 
 /**
  * @swagger
@@ -187,6 +187,52 @@ router.get('/:id', getIncident);
  *         description: Incident status updated
  */
 router.patch('/:id/status', updateIncidentStatus);
+
+/**
+ * @swagger
+ * /api/incidents/{id}/resolution:
+ *   patch:
+ *     summary: Update incident resolution (save draft or mark resolved)
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status:
+ *                 type: string
+ *               method:
+ *                 type: string
+ *               rootCause:
+ *                 type: string
+ *               detailedCause:
+ *                 type: string
+ *               immediateActions:
+ *                 type: string
+ *               result:
+ *                 type: string
+ *               action:
+ *                 type: string
+ *               resolutionFiles:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *     responses:
+ *       200:
+ *         description: Incident resolution updated
+ */
+router.patch('/:id/resolution', require('../controllers/incidentController').updateIncidentResolution);
 
 /**
  * @swagger

@@ -25,6 +25,7 @@ const Invoice = require('./invoice');
 const Payment = require('./payment');
 const Notification = require('./notification');
 const SupportRequest = require('./supportRequest');
+const ConsultationRequest = require('./consultationRequest');
 const Conversation = require('./conversation');
 const Message = require('./message');
 const AuditLog = require('./auditLog');
@@ -79,6 +80,7 @@ module.exports = {
   Payment,
   Notification,
   SupportRequest,
+  ConsultationRequest,
   Conversation,
   Message,
   AuditLog,

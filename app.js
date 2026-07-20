@@ -84,7 +84,8 @@ app.use('/conversations', require('./routes/conversations'));
 app.use('/api/payos', require('./routes/payos'));
 app.use('/payos', require('./routes/payos'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
-
+app.use('/api/consultation-requests', require('./routes/consultationRequest'));
+app.use('/api/admin/consultation-requests', require('./routes/adminConsultationRequests'));
 
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));
 app.use('/api/nurse/nutrition', require('./routes/nutritionCoverage'));

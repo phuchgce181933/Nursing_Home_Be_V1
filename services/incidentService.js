@@ -53,9 +53,9 @@ const getIncidentFilter = async (query, currentUser = null) => {
     if (query.incidentTo) filter.incidentAt.$lte = new Date(`${query.incidentTo}T23:59:59.999Z`);
   }
 
-  const caregiverAccessFilter = await buildCaregiverAccessFilter(currentUser);
-  if (caregiverAccessFilter) {
-    filter.$and = [...(Array.isArray(filter.$and) ? filter.$and : []), caregiverAccessFilter];
+  const staffAccessFilter = await buildStaffAccessFilter(currentUser);
+  if (staffAccessFilter) {
+    filter.$and = [...(Array.isArray(filter.$and) ? filter.$and : []), staffAccessFilter];
   }
 
   return filter;
@@ -82,17 +82,22 @@ const isCaregiverRole = (role) => {
     || normalized.includes('chăm sóc');
 };
 
-const getCaregiverStaffProfileId = async (currentUser) => {
-  if (!currentUser?._id || !isCaregiverRole(currentUser.role)) return null;
+const isStaffRole = (role) => {
+  const normalized = String(role || '').toLowerCase();
+  return ['doctor', 'nurse', 'caregiver', 'pharmacist'].includes(normalized);
+};
+
+const getStaffProfileIdForUser = async (currentUser) => {
+  if (!currentUser?._id || !isStaffRole(currentUser.role)) return null;
   const profile = await StaffProfile.findOne({ userId: currentUser._id }).select('_id').lean();
   return profile?._id || null;
 };
 
-const buildCaregiverAccessFilter = async (currentUser) => {
-  if (!currentUser || !isCaregiverRole(currentUser.role)) return null;
+const buildStaffAccessFilter = async (currentUser) => {
+  if (!currentUser || currentUser.role === 'admin') return null;
 
   const clauses = [{ reportedByUserId: currentUser._id }];
-  const staffProfileId = await getCaregiverStaffProfileId(currentUser);
+  const staffProfileId = await getStaffProfileIdForUser(currentUser);
   if (staffProfileId) {
     clauses.push({ assignedStaffIds: staffProfileId });
   }
@@ -101,10 +106,10 @@ const buildCaregiverAccessFilter = async (currentUser) => {
 };
 
 const isIncidentAccessibleToUser = async (incident, currentUser) => {
-  if (!currentUser || !isCaregiverRole(currentUser.role)) return true;
+  if (!currentUser || currentUser.role === 'admin') return true;
   if (String(incident.reportedByUserId || '') === String(currentUser._id)) return true;
 
-  const staffProfileId = await getCaregiverStaffProfileId(currentUser);
+  const staffProfileId = await getStaffProfileIdForUser(currentUser);
   if (!staffProfileId) return false;
 
   return (incident.assignedStaffIds || []).some((entry) => {
@@ -194,16 +199,23 @@ const normalizeAssignedStaffIds = (assignedStaffIds) => {
 
 const convertUserIdsToStaffProfileIds = async (userIds) => {
   if (!userIds || !Array.isArray(userIds) || userIds.length === 0) return [];
-  
+
   try {
-    const staffProfiles = await StaffProfile.find({ userId: { $in: userIds } })
-      .select('_id userId')
-      .lean();
-    
-    console.log('[DEBUG] convertUserIdsToStaffProfileIds - Input userIds:', userIds.length);
-    console.log('[DEBUG] convertUserIdsToStaffProfileIds - Found staffProfiles:', staffProfiles.length);
-    
-    return staffProfiles.map((profile) => profile._id);
+    const normalizedIds = userIds
+      .map((value) => value?._id || value?.id || value)
+      .filter(Boolean);
+
+    const profiles = [];
+    for (const id of normalizedIds) {
+      const profile = await StaffProfile.findOne({
+        $or: [{ userId: id }, { _id: id }],
+      }).select('_id userId').lean();
+
+      if (profile) profiles.push(profile);
+    }
+
+    const uniqueProfiles = profiles.filter((profile, index, arr) => arr.findIndex((item) => String(item._id) === String(profile._id)) === index);
+    return uniqueProfiles.map((profile) => profile._id);
   } catch (err) {
     console.error('[ERROR] convertUserIdsToStaffProfileIds failed:', err.message);
     return [];
@@ -564,6 +576,18 @@ const updateIncidentStatus = async (currentUser, id, payload) => {
     throw new ServiceError('Invalid status transition: cannot move to a previous state', 400);
   }
 
+  // Prevent direct transition to 'resolved' unless there is a valid resolution
+  if (payload.status === 'resolved') {
+    // Only allow resolving from investigating
+    if (existing.status !== 'investigating') {
+      throw new ServiceError('Không thể chuyển sang "đã giải quyết" trừ khi sự cố đang ở trạng thái "đang xác minh".', 400);
+    }
+    const res = existing.resolution || {};
+    if (!res.method || !res.rootCause || !res.result) {
+      throw new ServiceError('Không thể chuyển sang "đã giải quyết": thông tin giải quyết chưa đầy đủ.', 400);
+    }
+  }
+
   const updated = await incidentRepo.updateById(id, { status: payload.status });
 
   await notifyIncident(updated, {
@@ -619,11 +643,108 @@ const assignHandlers = async (currentUser, id, payload) => {
   return updated;
 };
 
+const updateIncidentResolution = async (currentUser, id, payload = {}, files = []) => {
+  const existing = await incidentRepo.findById(id);
+  if (!existing) throw new ServiceError('Incident not found', 404);
+
+  const canEdit = await isIncidentAccessibleToUser(existing, currentUser);
+  if (!canEdit) throw new ServiceError('Incident not found', 404);
+
+  // Only allow entering resolution when incident is in 'investigating' state
+  if (existing.status !== 'investigating') {
+    throw new ServiceError('Chỉ được nhập thông tin giải quyết khi sự cố đang ở trạng thái "đang xác minh".', 400);
+  }
+
+  // Build resolution object
+  const resolution = {
+    status: payload.status || existing.resolution?.status || '',
+    method: payload.method || existing.resolution?.method || '',
+    rootCause: payload.rootCause || existing.resolution?.rootCause || '',
+    detailedCause: payload.detailedCause || existing.resolution?.detailedCause || '',
+    immediateActions: [],
+    medical: existing.resolution?.medical || { medications: [], procedures: [], residentCondition: '', needFollowUp: false },
+    result: payload.result || existing.resolution?.result || '',
+    notes: payload.notes || existing.resolution?.notes || '',
+  };
+
+  // immediateActions may come as comma-separated string or array
+  if (payload.immediateActions) {
+    if (Array.isArray(payload.immediateActions)) resolution.immediateActions = payload.immediateActions;
+    else resolution.immediateActions = String(payload.immediateActions).split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
+  // medical medications may be JSON encoded
+  if (payload.medications) {
+    try {
+      resolution.medical.medications = Array.isArray(payload.medications) ? payload.medications : JSON.parse(payload.medications);
+    } catch {
+      resolution.medical.medications = [];
+    }
+  }
+  if (payload.procedures) {
+    try {
+      resolution.medical.procedures = Array.isArray(payload.procedures) ? payload.procedures : JSON.parse(payload.procedures);
+    } catch {
+      resolution.medical.procedures = [];
+    }
+  }
+  if (payload.residentCondition) resolution.medical.residentCondition = payload.residentCondition;
+  if (payload.needFollowUp !== undefined) resolution.medical.needFollowUp = payload.needFollowUp === 'true' || payload.needFollowUp === true;
+
+  // If action === markResolved, set completedAt and resolvedByUserId and update status
+  const action = payload.action || '';
+  if (action === 'markResolved') {
+    // Validate required resolution fields before marking resolved
+    if (!resolution.method || !resolution.rootCause || !resolution.result) {
+      throw new ServiceError('Không thể đánh dấu là đã giải quyết: thiếu thông tin bắt buộc (Phương pháp, Nguyên nhân chính, Kết quả).', 400);
+    }
+    resolution.completedAt = new Date();
+    resolution.resolvedByUserId = currentUser._id;
+  }
+
+  // Handle file uploads via Cloudinary utils
+  const { uploadImageBuffer, uploadRawBuffer } = require('../utils/cloudinaryUpload');
+  const attachments = [];
+  for (const file of files) {
+    try {
+      const isImage = String(file.mimetype || '').startsWith('image/');
+      const result = isImage
+        ? await uploadImageBuffer(file.buffer, { folder: 'nursing-home/incidents/resolution', mimeType: file.mimetype })
+        : await uploadRawBuffer(file.buffer, { folder: 'nursing-home/incidents/resolution' });
+      attachments.push({ fileName: file.originalname, fileUrl: result.secure_url, mimeType: file.mimetype, sizeInBytes: file.size, uploadedAt: new Date() });
+    } catch (err) {
+      console.error('[ERROR] resolution file upload failed:', err.message || err);
+    }
+  }
+
+  // Merge with existing attachments
+  resolution.attachments = [...(existing.resolution?.attachments || []), ...attachments];
+
+  // If marking resolved, also set incident status to resolved
+  const update = { resolution };
+  if (action === 'markResolved') update.status = 'resolved';
+
+  const updated = await incidentRepo.updateById(id, update);
+
+  // Notify assigned staff and family if resolved
+  if (action === 'markResolved') {
+    await notifyIncident(updated, {
+      title: 'Sự cố đã được giải quyết',
+      content: `Sự cố ${updated.incidentType} đã được đánh dấu là đã giải quyết.`,
+      emailSubject: `Sự cố đã giải quyết: ${updated.incidentType}`,
+      smsMessage: `Sự cố ${updated.incidentType} đã được giải quyết.`,
+    });
+  }
+
+  return updated;
+};
+
 module.exports = {
   createIncident,
   listIncidents,
   getIncident,
   updateIncidentStatus,
   assignHandlers,
+  updateIncidentResolution,
   exportIncidents,
 };

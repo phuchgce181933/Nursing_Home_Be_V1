@@ -6,7 +6,8 @@ const Resident = require('../models/resident');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
 const assignedResidentService = require('./assignedResidentService');
 const { findPublishedMealPlanEntryForResident } = require('../utils/publishedMealPlanLookup');
-const { parseWorkDate, todayVN } = require('../utils/shiftTime');
+const { parseWorkDate, todayVN, workDateToVNString } = require('../utils/shiftTime');
+const { getCaregiverRecordingWindow, assertCaregiverRecordingWindowOpen } = require('../utils/mealIntakeShiftWindow');
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const INTAKE_STATUSES = ['full', 'partial', 'refused', 'assisted'];
@@ -90,6 +91,9 @@ const validateIntakePayload = (body, isUpdate = false) => {
   return row;
 };
 
+const assertRecordingWindowOpen = async (profileId, workDateStr) =>
+  assertCaregiverRecordingWindowOpen(profileId, workDateStr, CODES.MEAL_INTAKE_SHIFT_WINDOW_CLOSED);
+
 const findPublishedMealPlanEntry = async (residentId, workDateStr, mealType) => {
   const { entry } = await findPublishedMealPlanEntryForResident(residentId, workDateStr, mealType);
   return entry;
@@ -115,6 +119,14 @@ const getMealContext = async (residentId, workDateInput, mealType, userId) => {
     mealType
   );
 
+  const { canMutate } = await getCaregiverRecordingWindow(profile._id, workDate);
+
+  const existingRecordedByName = existing
+    ? existing.recordedByStaffId?.userId?.fullName ||
+      existing.recordedByStaffId?.staffCode ||
+      null
+    : null;
+
   return {
     workDate,
     mealType,
@@ -129,6 +141,9 @@ const getMealContext = async (residentId, workDateInput, mealType, userId) => {
     scheduledMealTime: mealTime,
     existingRecordId: existing?._id || null,
     hasExistingRecord: Boolean(existing),
+    existingRecordedByName,
+    existingRecordedAt: existing?.recordedAt || null,
+    canRecord: canMutate,
   };
 };
 
@@ -160,6 +175,40 @@ const listIntakeNotes = async (userId, query) => {
   const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
   const skip = (page - 1) * limit;
 
+  let meta = { canMutate: false };
+  if (query.workDate) {
+    const wd = parseWorkDateStrict(query.workDate);
+    const { canMutate } = await getCaregiverRecordingWindow(profile._id, wd);
+    meta = { canMutate };
+  }
+
+  const [data, total] = await Promise.all([
+    mealIntakeNoteRepo.findAll(filter, { skip, limit }),
+    mealIntakeNoteRepo.countAll(filter),
+  ]);
+
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1, meta };
+};
+
+const listIntakeNotesForAdmin = async (query) => {
+  const filter = {};
+  if (query.residentId) {
+    assertValidObjectId(query.residentId, 'residentId');
+    filter.residentId = query.residentId;
+  }
+  if (query.mealType) {
+    assertFieldOneOf('mealType', query.mealType, MEAL_TYPES);
+    filter.mealType = query.mealType;
+  }
+  if (query.workDate) {
+    const wd = parseWorkDateStrict(query.workDate);
+    filter.workDate = workDateToDate(wd);
+  }
+
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
+  const skip = (page - 1) * limit;
+
   const [data, total] = await Promise.all([
     mealIntakeNoteRepo.findAll(filter, { skip, limit }),
     mealIntakeNoteRepo.countAll(filter),
@@ -173,6 +222,7 @@ const createIntakeNote = async (userId, body) => {
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, body.residentId);
+  await assertRecordingWindowOpen(profile._id, workDate);
 
   const workDateDate = workDateToDate(workDate);
   const existing = await mealIntakeNoteRepo.findOneByUnique(
@@ -228,6 +278,7 @@ const updateIntakeNote = async (userId, id, body) => {
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
   await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
+  await assertRecordingWindowOpen(profile._id, workDateToVNString(note.workDate));
   validateIntakePayload(body, true);
 
   const update = {};
@@ -259,6 +310,7 @@ const deleteIntakeNote = async (userId, id) => {
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
   await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
+  await assertRecordingWindowOpen(profile._id, workDateToVNString(note.workDate));
   await mealIntakeNoteRepo.deleteById(id);
   return { ...apiSuccess(SUCCESS.MEAL_INTAKE_RECORD_DELETED), deleted: true, id };
 };
@@ -269,6 +321,7 @@ module.exports = {
   listAssignedResidents,
   getMealContext,
   listIntakeNotes,
+  listIntakeNotesForAdmin,
   createIntakeNote,
   getIntakeNote,
   updateIntakeNote,

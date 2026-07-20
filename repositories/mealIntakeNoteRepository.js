@@ -14,7 +14,7 @@ const create = async (data) => MealIntakeNote.create(data);
 const findById = async (id) => MealIntakeNote.findById(id).populate(POPULATE);
 
 const findOneByUnique = async (residentId, workDate, mealType) =>
-  MealIntakeNote.findOne({ residentId, workDate, mealType });
+  MealIntakeNote.findOne({ residentId, workDate, mealType }).populate(POPULATE);
 
 const findAll = async (filter, { skip = 0, limit = 50, sort = { recordedAt: -1 } } = {}) =>
   MealIntakeNote.find(filter).populate(POPULATE).sort(sort).skip(skip).limit(limit);

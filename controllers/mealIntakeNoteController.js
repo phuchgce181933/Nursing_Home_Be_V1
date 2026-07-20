@@ -33,6 +33,22 @@ const listNotes = (req, res) =>
         page: result.page,
         limit: result.limit,
         totalPages: result.totalPages,
+        meta: result.meta,
+      })
+    )
+    .catch((err) => sendApiError(res, err));
+
+const adminListNotes = (req, res) =>
+  svc
+    .listIntakeNotesForAdmin(req.query)
+    .then((result) =>
+      res.json({
+        success: true,
+        data: result.data,
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
       })
     )
     .catch((err) => sendApiError(res, err));
@@ -65,6 +81,7 @@ module.exports = {
   listResidents,
   getContext,
   listNotes,
+  adminListNotes,
   createNote,
   getNote,
   updateNote,

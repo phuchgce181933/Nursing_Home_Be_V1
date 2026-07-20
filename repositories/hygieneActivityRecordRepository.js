@@ -14,7 +14,7 @@ const create = async (data) => HygieneActivityRecord.create(data);
 const findById = async (id) => HygieneActivityRecord.findById(id).populate(POPULATE);
 
 const findOneByUnique = async (residentId, workDate, activityType) =>
-  HygieneActivityRecord.findOne({ residentId, workDate, activityType });
+  HygieneActivityRecord.findOne({ residentId, workDate, activityType }).populate(POPULATE);
 
 const findAll = async (filter, { skip = 0, limit = 50, sort = { recordedAt: -1 } } = {}) =>
   HygieneActivityRecord.find(filter).populate(POPULATE).sort(sort).skip(skip).limit(limit);

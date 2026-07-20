@@ -87,6 +87,7 @@ app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions')
 
 
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));
+app.use('/api/nurse/nutrition', require('./routes/nutritionCoverage'));
 app.use('/api/nurse/special-diets', require('./routes/specialDiets'));
 app.use('/api/nurse/meal-time-schedules', require('./routes/mealTimeSchedules'));
 app.use('/api/caregiver/meal-intake-notes', require('./routes/caregiverMealIntakeNotes'));

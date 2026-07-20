@@ -125,6 +125,11 @@ const CODES = {
   SHIFT_PAST_DATE: 'SHIFT_PAST_DATE',
   SHIFT_TIME_INVALID: 'SHIFT_TIME_INVALID',
   SHIFT_TIME_UNRESOLVABLE: 'SHIFT_TIME_UNRESOLVABLE',
+  SHIFT_FLEXIBLE_TIME_REQUIRED: 'SHIFT_FLEXIBLE_TIME_REQUIRED',
+  SHIFT_FLEXIBLE_TIME_FORMAT: 'SHIFT_FLEXIBLE_TIME_FORMAT',
+  SHIFT_FLEXIBLE_END_BEFORE_START: 'SHIFT_FLEXIBLE_END_BEFORE_START',
+  SHIFT_FLEXIBLE_DURATION_MIN: 'SHIFT_FLEXIBLE_DURATION_MIN',
+  SHIFT_FLEXIBLE_DURATION_MAX: 'SHIFT_FLEXIBLE_DURATION_MAX',
   SHIFT_STAFF_BANNED: 'SHIFT_STAFF_BANNED',
   SHIFT_STAFF_INACTIVE: 'SHIFT_STAFF_INACTIVE',
   SHIFT_ADMIN_NOT_ASSIGNABLE: 'SHIFT_ADMIN_NOT_ASSIGNABLE',
@@ -149,6 +154,9 @@ const CODES = {
   BEHAVIOR_RECORD_NOT_FOUND: 'BEHAVIOR_RECORD_NOT_FOUND',
   HYGIENE_RECORD_NOT_FOUND: 'HYGIENE_RECORD_NOT_FOUND',
   MEAL_INTAKE_RECORD_NOT_FOUND: 'MEAL_INTAKE_RECORD_NOT_FOUND',
+  MEAL_INTAKE_SHIFT_WINDOW_CLOSED: 'MEAL_INTAKE_SHIFT_WINDOW_CLOSED',
+  HYGIENE_SHIFT_WINDOW_CLOSED: 'HYGIENE_SHIFT_WINDOW_CLOSED',
+  BEHAVIOR_SHIFT_WINDOW_CLOSED: 'BEHAVIOR_SHIFT_WINDOW_CLOSED',
 
   // Meal plans / meal time / special diet
   MEAL_WORK_DATE_INVALID: 'MEAL_WORK_DATE_INVALID',
@@ -185,6 +193,7 @@ const CODES = {
   MEAL_SPECIAL_DIET_PUBLISH_PAST_DATE: 'MEAL_SPECIAL_DIET_PUBLISH_PAST_DATE',
   MEAL_SPECIAL_DIET_PUBLISH_EMPTY: 'MEAL_SPECIAL_DIET_PUBLISH_EMPTY',
   MEAL_SPECIAL_DIET_PUBLISH_NO_RESIDENTS: 'MEAL_SPECIAL_DIET_PUBLISH_NO_RESIDENTS',
+  MEAL_SPECIAL_DIET_PUBLISH_DUPLICATE_RESIDENT: 'MEAL_SPECIAL_DIET_PUBLISH_DUPLICATE_RESIDENT',
   MEAL_ENTRY_DIET_TYPE_INVALID: 'MEAL_ENTRY_DIET_TYPE_INVALID',
   MEAL_ENTRY_EFFECTIVE_TIME_INVALID: 'MEAL_ENTRY_EFFECTIVE_TIME_INVALID',
   MEAL_ENTRY_EFFECTIVE_TIME_PAST_TODAY: 'MEAL_ENTRY_EFFECTIVE_TIME_PAST_TODAY',
@@ -194,6 +203,7 @@ const CODES = {
   MEAL_TIME_SCHEDULE_PUBLISH_PAST_DATE: 'MEAL_TIME_SCHEDULE_PUBLISH_PAST_DATE',
   MEAL_TIME_SCHEDULE_PUBLISH_EMPTY: 'MEAL_TIME_SCHEDULE_PUBLISH_EMPTY',
   MEAL_TIME_SCHEDULE_PUBLISH_NO_RESIDENTS: 'MEAL_TIME_SCHEDULE_PUBLISH_NO_RESIDENTS',
+  MEAL_TIME_SCHEDULE_PUBLISH_DUPLICATE_RESIDENT: 'MEAL_TIME_SCHEDULE_PUBLISH_DUPLICATE_RESIDENT',
   MEAL_TIME_SCHEDULE_NO_RESIDENTS: 'MEAL_TIME_SCHEDULE_NO_RESIDENTS',
   MEAL_TIME_SCHEDULE_RESIDENTS_MISMATCH: 'MEAL_TIME_SCHEDULE_RESIDENTS_MISMATCH',
   MEAL_RESIDENT_NO_MEAL_TIME_IN_SCHEDULE: 'MEAL_RESIDENT_NO_MEAL_TIME_IN_SCHEDULE',
@@ -401,6 +411,12 @@ const ERROR_MESSAGES = {
   [CODES.SHIFT_TIME_INVALID]:
     'startTime/endTime may only be used with flexible (SPLIT) shift templates',
   [CODES.SHIFT_TIME_UNRESOLVABLE]: 'Could not resolve shift time window',
+  [CODES.SHIFT_FLEXIBLE_TIME_REQUIRED]: 'startTime and endTime are required for split shifts',
+  [CODES.SHIFT_FLEXIBLE_TIME_FORMAT]: 'Split shift times must use HH:mm format',
+  [CODES.SHIFT_FLEXIBLE_END_BEFORE_START]:
+    'End time must be after start time (split shift on the same day)',
+  [CODES.SHIFT_FLEXIBLE_DURATION_MIN]: 'Split shift must be at least {{minHours}} hour(s)',
+  [CODES.SHIFT_FLEXIBLE_DURATION_MAX]: 'Split shift cannot exceed {{maxHours}} hour(s)',
   [CODES.SHIFT_STAFF_BANNED]: 'Cannot assign shift to a banned staff account',
   [CODES.SHIFT_STAFF_INACTIVE]: 'Cannot assign shift to an inactive staff account',
   [CODES.SHIFT_ADMIN_NOT_ASSIGNABLE]: 'Cannot assign shifts to admin or manager accounts',
@@ -427,6 +443,12 @@ const ERROR_MESSAGES = {
   [CODES.BEHAVIOR_RECORD_NOT_FOUND]: 'Behavior record not found',
   [CODES.HYGIENE_RECORD_NOT_FOUND]: 'Hygiene activity record not found',
   [CODES.MEAL_INTAKE_RECORD_NOT_FOUND]: 'Meal intake record not found',
+  [CODES.MEAL_INTAKE_SHIFT_WINDOW_CLOSED]:
+    'Recording or editing meal intake is only allowed during your shift or within 30 minutes after it ends',
+  [CODES.HYGIENE_SHIFT_WINDOW_CLOSED]:
+    'Recording or editing hygiene activities is only allowed during your shift or within 30 minutes after it ends',
+  [CODES.BEHAVIOR_SHIFT_WINDOW_CLOSED]:
+    'Recording or editing daily behavior observations is only allowed during your shift or within 30 minutes after it ends',
 
   [CODES.MEAL_WORK_DATE_INVALID]: 'workDate must be YYYY-MM-DD',
   [CODES.MEAL_OBJECT_ID_INVALID]: '{{label}} is invalid',
@@ -462,6 +484,8 @@ const ERROR_MESSAGES = {
   [CODES.MEAL_SPECIAL_DIET_PUBLISH_PAST_DATE]: 'Cannot publish special diet plan for a past date',
   [CODES.MEAL_SPECIAL_DIET_PUBLISH_EMPTY]: 'Cannot publish an empty special diet plan',
   [CODES.MEAL_SPECIAL_DIET_PUBLISH_NO_RESIDENTS]: 'Special diet plan must have at least one resident before publish',
+  [CODES.MEAL_SPECIAL_DIET_PUBLISH_DUPLICATE_RESIDENT]:
+    'Some residents already have a published special diet for this date: {{residents}}',
   [CODES.MEAL_ENTRY_DIET_TYPE_INVALID]: 'entries[{{index}}].dietType must be one of: {{allowed}}',
   [CODES.MEAL_ENTRY_EFFECTIVE_TIME_INVALID]: 'entries[{{index}}].effectiveTime must be HH:mm',
   [CODES.MEAL_ENTRY_EFFECTIVE_TIME_PAST_TODAY]: 'entries[{{index}}].effectiveTime must be from now onward for today',
@@ -471,6 +495,8 @@ const ERROR_MESSAGES = {
   [CODES.MEAL_TIME_SCHEDULE_PUBLISH_PAST_DATE]: 'Cannot publish meal time schedule for a past date',
   [CODES.MEAL_TIME_SCHEDULE_PUBLISH_EMPTY]: 'Cannot publish an empty meal time schedule',
   [CODES.MEAL_TIME_SCHEDULE_PUBLISH_NO_RESIDENTS]: 'Meal time schedule must have at least one resident before publish',
+  [CODES.MEAL_TIME_SCHEDULE_PUBLISH_DUPLICATE_RESIDENT]:
+    'Some residents already have a published meal time schedule for this date: {{residents}}',
   [CODES.MEAL_TIME_SCHEDULE_NO_RESIDENTS]: 'Meal time schedule must include at least one resident',
   [CODES.MEAL_TIME_SCHEDULE_RESIDENTS_MISMATCH]: 'Some meal plan residents are not in the selected meal time schedule',
   [CODES.MEAL_RESIDENT_NO_MEAL_TIME_IN_SCHEDULE]: 'Resident has no {{mealType}} time in the selected meal time schedule',

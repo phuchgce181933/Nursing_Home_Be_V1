@@ -4,6 +4,7 @@ const residentRepo = require('../repositories/residentRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const paymentService = require('./paymentService');
 const chargeService = require('./chargeService');
+const notificationRepo = require('../repositories/notificationRepository');
 const { createAuditLog } = require('../utils/auditLog');
 
 const checkAbnormalVitals = (body) => {
@@ -248,6 +249,55 @@ const normalizeSelectedServices = (services) => {
   }));
 };
 
+const buildHealthMonitoringNotificationPayload = ({ resident, record, user }) => {
+  const residentName = resident?.fullName || 'bệnh nhân';
+  const doctorName = user?.fullName || user?.name || 'Bác sĩ';
+  const services = Array.isArray(record?.selectedServices)
+    ? record.selectedServices.map((item) => item?.serviceName || item?.serviceCode).filter(Boolean)
+    : [];
+  const summary = typeof record?.summary === 'string' ? record.summary.trim() : '';
+  const details = [];
+
+  if (record?.abnormalFlag) details.push('có chỉ số bất thường');
+  if (services.length) details.push(`đã cập nhật dịch vụ: ${services.join(', ')}`);
+  if (summary) details.push(`ghi chú: ${summary}`);
+
+  return {
+    category: 'health',
+    title: `Cập nhật sức khỏe: ${residentName}`,
+    content: [
+      `Bác sĩ ${doctorName} vừa cập nhật tình trạng sức khỏe của ${residentName}.`,
+      details.length ? `Thông tin nổi bật: ${details.join('; ')}.` : 'Vui lòng xem chi tiết trong hồ sơ sức khỏe của người thân.',
+    ].join(' '),
+    targetEntityType: 'MedicalRecord',
+    targetEntityId: record?._id,
+    deliveryChannels: ['in_app'],
+    sentAt: new Date(),
+  };
+};
+
+const notifyFamilyAboutHealthMonitoringUpdate = async ({ resident, record, user }) => {
+  if (!resident?._id || !record?._id) return;
+
+  const recipientUserIds = [...new Set((resident.familyPortalAccountIds || [])
+    .map((id) => (id ? id.toString() : ''))
+    .filter(Boolean))];
+
+  if (!recipientUserIds.length) return;
+
+  try {
+    const payload = buildHealthMonitoringNotificationPayload({ resident, record, user });
+    const notifications = recipientUserIds.map((recipientUserId) => ({
+      ...payload,
+      recipientUserId: new mongoose.Types.ObjectId(recipientUserId),
+    }));
+
+    await notificationRepo.insertMany(notifications);
+  } catch (error) {
+    console.error('[medicalRecordService] Failed creating family health notifications', error.message || error);
+  }
+};
+
 const recordMedicalRecord = async (user, residentId, body, req) => {
   console.log('[recordMedicalRecord] Called with body keys:', Object.keys(body));
   console.log('[recordMedicalRecord] selectedServices:', body.selectedServices);
@@ -422,6 +472,8 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     req,
   });
 
+  await notifyFamilyAboutHealthMonitoringUpdate({ resident, record, user });
+
   return record;
 };
 
@@ -462,6 +514,7 @@ const getResidentMedicalHistory = async (user, residentId, query) => {
 };
 
 module.exports = {
+  buildHealthMonitoringNotificationPayload,
   recordMedicalRecord,
   getResidentMedicalHistory,
 };

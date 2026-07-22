@@ -76,6 +76,43 @@ const collectErrors = (checks) => {
   return errors.length ? errors.join('; ') : null;
 };
 
+const ROLES_REQUIRING_CERT = ['doctor', 'nurse'];
+const CERTIFICATE_MAX_AGE_YEARS = 5;
+
+const validateStaffCertifications = (role, certificationDocuments) => {
+  if (!ROLES_REQUIRING_CERT.includes(role)) return null;
+
+  const docs = Array.isArray(certificationDocuments) ? certificationDocuments : [];
+  if (docs.length === 0) {
+    return 'at least one certification document is required for doctor/nurse';
+  }
+
+  const now = new Date();
+  now.setHours(23, 59, 59, 999);
+
+  const minDate = new Date();
+  minDate.setFullYear(minDate.getFullYear() - CERTIFICATE_MAX_AGE_YEARS);
+  minDate.setHours(0, 0, 0, 0);
+
+  for (const doc of docs) {
+    if (!doc?.issueDate) {
+      return 'each certification must have an issue date';
+    }
+    const d = new Date(doc.issueDate);
+    if (Number.isNaN(d.getTime())) {
+      return 'certification issue date is not a valid date';
+    }
+    if (d > now) {
+      return 'certification issue date cannot be in the future';
+    }
+    if (d < minDate) {
+      return `certification has expired (older than ${CERTIFICATE_MAX_AGE_YEARS} years)`;
+    }
+  }
+
+  return null;
+};
+
 module.exports = {
   validateFullName,
   validateEmail,
@@ -84,5 +121,8 @@ module.exports = {
   validatePassword,
   validateDateOfBirth,
   validateStaffDateOfBirth,
+  validateStaffCertifications,
   collectErrors,
+  ROLES_REQUIRING_CERT,
+  CERTIFICATE_MAX_AGE_YEARS,
 };

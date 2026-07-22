@@ -1,4 +1,3 @@
-//le nhut hao
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
@@ -25,7 +24,9 @@ const {
   validateFullName,
   validatePhone,
   validateStaffDateOfBirth,
+  validateStaffCertifications,
   collectErrors,
+  ROLES_REQUIRING_CERT,
 } = require('../utils/validators');
 const { GENDERS } = require('../models/enums');
 const {
@@ -66,6 +67,27 @@ const parseRemovedCertPublicIds = (value) => {
   }
   return [];
 };
+
+const parseCertificationIssueDateUpdates = (value) => {
+  if (!value) return [];
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item) => item?.publicId && item?.issueDate)
+    .map((item) => ({
+      publicId: String(item.publicId),
+      issueDate: new Date(item.issueDate),
+    }));
+};
+
+const toPlainCertDoc = (doc) => (doc?.toObject ? doc.toObject() : { ...doc });
 
 const buildFallbackStaffProfile = (user) => ({
   roleCategory: user.role,
@@ -248,7 +270,7 @@ const updateStaffProfile = async (id, body, currentUser) => {
   if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
   assertActorMayManageUser(currentUser, user);
 
-  const { fullName, phone, gender, dateOfBirth, address, avatarUrl, avatarPublicId, specialty, certifications, certificationDocuments, removedCertPublicIds } = body;
+  const { fullName, phone, gender, dateOfBirth, address, avatarUrl, avatarPublicId, specialty, certifications, certificationDocuments, removedCertPublicIds, certificationIssueDateUpdates } = body;
 
   // Validate only the fields that are provided
   const validationError = collectErrors([
@@ -307,7 +329,7 @@ const updateStaffProfile = async (id, body, currentUser) => {
     }
 
     let docsChanged = false;
-    let currentDocs = profile.certificationDocuments || [];
+    let currentDocs = (profile.certificationDocuments || []).map(toPlainCertDoc);
     let currentCerts = profile.certifications || [];
 
     const removedIds = parseRemovedCertPublicIds(removedCertPublicIds);
@@ -321,13 +343,32 @@ const updateStaffProfile = async (id, body, currentUser) => {
       docsChanged = true;
     }
 
+    const issueDateUpdates = parseCertificationIssueDateUpdates(certificationIssueDateUpdates);
+    if (issueDateUpdates.length) {
+      const updateMap = new Map(issueDateUpdates.map((u) => [u.publicId, u.issueDate]));
+      currentDocs = currentDocs.map((d) => {
+        if (d.publicId && updateMap.has(d.publicId)) {
+          return { ...d, issueDate: updateMap.get(d.publicId) };
+        }
+        return d;
+      });
+      docsChanged = true;
+    }
+
     if (Array.isArray(certificationDocuments) && certificationDocuments.length) {
-      currentDocs = [...currentDocs, ...certificationDocuments];
+      currentDocs = [...currentDocs, ...certificationDocuments.map(toPlainCertDoc)];
       const newNames = certificationDocuments.map((d) => d.fileName).filter(Boolean);
       if (newNames.length) {
         currentCerts = [...currentCerts, ...newNames];
       }
       docsChanged = true;
+    }
+
+    if (ROLES_REQUIRING_CERT.includes(user.role)) {
+      const certError = validateStaffCertifications(user.role, currentDocs);
+      if (certError) {
+        throw apiErr(CODES.STAFF_VALIDATION_FAILED, { statusCode: 400, params: { detail: certError } });
+      }
     }
 
     if (docsChanged) {
@@ -369,15 +410,24 @@ const updateStaffRole = async (id, { role }, currentUser) => {
     });
   }
 
+  const profile = await staffProfileRepo.findByUserId(id);
+  if (profile && ROLES_REQUIRING_CERT.includes(role)) {
+    const currentDocs = (profile.certificationDocuments || []).map(toPlainCertDoc);
+    const certError = validateStaffCertifications(role, currentDocs);
+    if (certError) {
+      throw apiErr(CODES.STAFF_VALIDATION_FAILED, { statusCode: 400, params: { detail: certError } });
+    }
+  }
+
   user.role = role;
   await userRepo.saveUser(user);
 
-  let profile = await staffProfileRepo.findByUserId(id);
-  if (profile) {
-    profile = await staffProfileRepo.updateById(profile._id, { roleCategory: role });
+  let updatedProfile = profile;
+  if (updatedProfile) {
+    updatedProfile = await staffProfileRepo.updateById(updatedProfile._id, { roleCategory: role });
   }
 
-  return { ...apiSuccess(SUCCESS.STAFF_ROLE_UPDATED), user: { _id: user._id, role: user.role }, staffProfile: profile };
+  return { ...apiSuccess(SUCCESS.STAFF_ROLE_UPDATED), user: { _id: user._id, role: user.role }, staffProfile: updatedProfile };
 };
 
 // ── Ban / Unban (replaces delete) ───────────────────────────────────────────

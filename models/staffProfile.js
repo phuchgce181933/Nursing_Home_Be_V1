@@ -15,6 +15,7 @@ const staffProfileSchema = new Schema(
         publicId: { type: String, trim: true },
         fileName: { type: String, trim: true },
         mimeType: { type: String, trim: true },
+        issueDate: { type: Date },
         uploadedAt: { type: Date, default: Date.now },
       },
     ],

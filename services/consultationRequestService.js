@@ -132,9 +132,13 @@ const listConsultationRequests = async (query) => {
     }
   }
 
-  const [data, total] = await Promise.all([
+  const countsFilter = { ...filter };
+  delete countsFilter.status;
+
+  const [data, total, statusCounts] = await Promise.all([
     consultationRequestRepo.find(filter, { page, limit, sort: { createdAt: -1 } }),
     consultationRequestRepo.count(filter),
+    consultationRequestRepo.countByStatus(countsFilter),
   ]);
 
   return {
@@ -143,6 +147,7 @@ const listConsultationRequests = async (query) => {
     page,
     limit,
     totalPages: Math.ceil(total / limit) || 1,
+    statusCounts,
   };
 };
 

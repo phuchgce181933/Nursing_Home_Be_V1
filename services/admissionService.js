@@ -18,6 +18,14 @@ const parsePagination = (query) => {
 };
 
 const formatAdmission = (admission, { includeFamily = true } = {}) => {
+  const applicantObj = admission.applicant
+    ? (typeof admission.applicant.toObject === 'function' ? admission.applicant.toObject() : { ...admission.applicant })
+    : {};
+
+  if (!applicantObj.avatarUrl && admission.residentId?.avatarUrl) {
+    applicantObj.avatarUrl = admission.residentId.avatarUrl;
+  }
+
   const base = {
     _id: admission._id,
     requestCode: admission.requestCode,
@@ -30,9 +38,10 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
           residentCode: admission.residentId.residentCode,
           fullName: admission.residentId.fullName,
           residencyStatus: admission.residentId.residencyStatus,
+          avatarUrl: admission.residentId.avatarUrl || null,
         }
       : null,
-    applicant: admission.applicant,
+    applicant: applicantObj,
     preferredAdmissionDate: admission.preferredAdmissionDate,
     reasonForAdmission: admission.reasonForAdmission,
     requestedByName: admission.requestedByName,
@@ -79,7 +88,6 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
       ? { _id: admission.assignedRoomId._id, roomNumber: admission.assignedRoomId.roomNumber }
       : null,
     checkInAt: admission.checkInAt,
-    cancelledAt: admission.cancelledAt,
     cancellationReason: admission.cancellationReason,
     rejectionReason: admission.rejectionReason,
     rejectedAt: admission.rejectedAt,
@@ -89,14 +97,14 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
     updatedAt: admission.updatedAt,
   };
 
-  if (includeFamily && admission.familyAccountId?.email) {
+  if (includeFamily && admission.familyAccountId && typeof admission.familyAccountId === 'object') {
     base.familyAccount = {
       _id: admission.familyAccountId._id,
       fullName: admission.familyAccountId.fullName,
       email: admission.familyAccountId.email,
       phone: admission.familyAccountId.phone,
       username: admission.familyAccountId.username || 'N/A',
-      avatarUrl: admission.familyAccountId.avatarUrl,
+      avatarUrl: admission.familyAccountId.avatarUrl || null,
     };
   }
 
@@ -431,7 +439,8 @@ const getAdmissionRequest = async (user, admissionId) => {
     throw new ServiceError('Admission request not found', 404);
   }
   await admission.populate([
-    { path: 'residentId', select: 'residentCode fullName residencyStatus' },
+    { path: 'residentId', select: 'residentCode fullName residencyStatus avatarUrl' },
+    { path: 'familyAccountId', select: 'fullName email phone username avatarUrl' },
     { path: 'consultantId', select: 'fullName email role' },
     { path: 'consultedBy', select: 'fullName email role' },
     { path: 'assessedBy', select: 'fullName email role' },
@@ -767,10 +776,10 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
     throw new ServiceError('Admission request not found', 404);
   }
 
-  // Allow consultation when admission is in any pre-contracting medical phase or contracting
-  if (!['new_request', 'consulting', 'assessing', 'contracting'].includes(admission.status)) {
+  // Allow consultation when admission is in any medical phase or contracting/checked_in
+  if (!['new_request', 'consulting', 'assessing', 'contracting', 'checked_in'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot perform consultation on admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting are allowed.`,
+      `Cannot perform consultation on admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting, checked_in are allowed.`,
       400
     );
   }
@@ -930,9 +939,9 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     throw new ServiceError('Admission request not found', 404);
   }
 
-  if (!['new_request', 'consulting', 'assessing', 'contracting'].includes(admission.status)) {
+  if (!['new_request', 'consulting', 'assessing', 'contracting', 'checked_in'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting are allowed.`,
+      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting, checked_in are allowed.`,
       400
     );
   }
@@ -1264,6 +1273,27 @@ const checkInResident = async (admin, admissionId, body, req) => {
   if (assignedRoomId) {
     const room = await Room.findById(assignedRoomId);
     if (!room) throw new ServiceError('Room not found', 404);
+
+    // Validate loại phòng phù hợp với Gói dịch vụ đã đăng ký
+    if (admission.servicePackageId) {
+      const servicePackageRepo = require('../repositories/servicePackageRepository');
+      const pkg = await servicePackageRepo.findById(admission.servicePackageId);
+      if (pkg) {
+        const pkgTier = pkg.tier || 'standard';
+        const allowedTypes = pkg.allowedRoomTypes?.length
+          ? pkg.allowedRoomTypes
+          : (pkgTier === 'vip' ? ['icu', 'isolation'] : pkgTier === 'premium' ? ['premium'] : ['standard']);
+
+        if (!allowedTypes.includes(room.roomType)) {
+          const typeNames = { standard: 'Standard', premium: 'Premium', icu: 'ICU', isolation: 'Isolation' };
+          const allowedStr = allowedTypes.map((t) => typeNames[t] || t).join(' / ');
+          throw new ServiceError(
+            `Không thể nhận phòng này: Cư dân đăng ký gói '${pkg.name}' (${pkgTier.toUpperCase()}), chỉ được xếp vào phòng loại ${allowedStr}.`,
+            400
+          );
+        }
+      }
+    }
   }
 
   // Create or update Resident

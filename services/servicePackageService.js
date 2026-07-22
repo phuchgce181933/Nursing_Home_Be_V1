@@ -19,12 +19,28 @@ const generatePackageCode = async () => {
   throw new ServiceError('Unable to generate package code', 500);
 };
 
+const TIER_ROOM_TYPES_MAP = {
+  basic: ['standard'],
+  standard: ['standard'],
+  premium: ['premium'],
+  vip: ['icu', 'isolation'],
+};
+
+const resolveAllowedRoomTypes = (tier, inputTypes) => {
+  if (Array.isArray(inputTypes) && inputTypes.length > 0) {
+    const valid = inputTypes.filter((t) => ['standard', 'premium', 'icu', 'isolation'].includes(t));
+    if (valid.length > 0) return valid;
+  }
+  return TIER_ROOM_TYPES_MAP[tier] || ['standard'];
+};
+
 const formatPackage = (pkg) => ({
   _id: pkg._id,
   packageCode: pkg.packageCode,
   name: pkg.name,
   description: pkg.description,
   tier: pkg.tier,
+  allowedRoomTypes: pkg.allowedRoomTypes?.length ? pkg.allowedRoomTypes : (TIER_ROOM_TYPES_MAP[pkg.tier] || ['standard']),
   services: pkg.services,
   monthlyPrice: pkg.monthlyPrice,
   isActive: pkg.isActive,
@@ -72,11 +88,15 @@ const createServicePackage = async (admin, body, req) => {
     );
   }
 
+  const tier = body.tier || 'standard';
+  const allowedRoomTypes = resolveAllowedRoomTypes(tier, body.allowedRoomTypes);
+
   const pkg = await servicePackageRepo.create({
     packageCode,
     name,
     description: body.description?.trim(),
-    tier: body.tier || 'standard',
+    tier,
+    allowedRoomTypes,
     services,
     monthlyPrice: body.monthlyPrice || 0,
     createdBy: admin._id,
@@ -90,7 +110,7 @@ const createServicePackage = async (admin, body, req) => {
     module: 'servicePackage',
     targetEntityType: 'ServicePackage',
     targetEntityId: pkg._id,
-    afterData: { packageCode: pkg.packageCode, name: pkg.name, tier: pkg.tier },
+    afterData: { packageCode: pkg.packageCode, name: pkg.name, tier: pkg.tier, allowedRoomTypes },
     req,
   });
 
@@ -126,7 +146,11 @@ const updateServicePackage = async (admin, packageId, body, req) => {
     updateData.name = newName;
   }
   if (body.description !== undefined) updateData.description = String(body.description).trim();
-  if (body.tier) updateData.tier = body.tier;
+  if (body.tier || body.allowedRoomTypes) {
+    const newTier = body.tier || pkg.tier;
+    updateData.tier = newTier;
+    updateData.allowedRoomTypes = resolveAllowedRoomTypes(newTier, body.allowedRoomTypes);
+  }
   if (body.monthlyPrice != null) updateData.monthlyPrice = body.monthlyPrice;
   if (Array.isArray(body.services)) {
     updateData.services = body.services.map((s) => String(s).trim()).filter(Boolean);

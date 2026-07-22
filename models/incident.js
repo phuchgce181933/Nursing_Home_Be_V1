@@ -7,6 +7,7 @@ const fileAttachmentSchema = new Schema(
   {
     fileName: { type: String, trim: true },
     fileUrl: { type: String, trim: true },
+    cloudinaryPublicId: { type: String, trim: true },
     mimeType: { type: String, trim: true },
     sizeInBytes: { type: Number, min: 0 },
     uploadedAt: { type: Date, default: Date.now },

@@ -788,8 +788,10 @@ const getAvailability = async ({ role, date, floorId }) => {
     shiftsOnDate.map((s) => (s.assignedStaffId?._id || s.assignedStaffId).toString())
   );
 
+  // Only consider confirmed shifts as 'on shift' for readiness. Published-but-unconfirmed shifts
+  // should not mark staff as On Duty until the staff confirms them in My Shifts.
   const activeShifts = shiftsOnDate.filter((s) =>
-    isShiftActiveForCheck(s.startTime, s.endTime, isToday, now)
+    s.status === 'confirmed' && isShiftActiveForCheck(s.startTime, s.endTime, isToday, now)
   );
 
   const onShiftSet = new Set();

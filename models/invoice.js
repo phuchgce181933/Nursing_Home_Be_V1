@@ -23,6 +23,7 @@ const invoiceSchema = new Schema(
     totalAmount: { type: Number, default: 0 },
     familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
     status: { type: String, enum: ['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'CANCELLED'], default: 'DRAFT', index: true },
+    cancellationReason: { type: String, trim: true },
     createdBy: { type: String },
     
     // Service fee components

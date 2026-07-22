@@ -163,8 +163,10 @@ app.use((req, res) => {
 });
 
 // global error handler
+const { sendApiError } = require('./utils/apiErrorResponse');
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: 'Internal server error' });
+  console.error(err && err.stack ? err.stack : err);
+  // Use standardized API error formatter which handles ServiceError and ApiError
+  return sendApiError(res, err);
 });
 module.exports = app;

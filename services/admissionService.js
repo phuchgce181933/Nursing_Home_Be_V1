@@ -65,6 +65,11 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
     contractDurationMonths: admission.contractDurationMonths,
     contractDiscountPercent: admission.contractDiscountPercent,
     contractTerms: admission.contractTerms,
+    contractStatus: admission.contractStatus,
+    contractCancelledAt: admission.contractCancelledAt,
+    contractCancellationReason: admission.contractCancellationReason,
+    cancelledAt: admission.cancelledAt,
+    cancellationReason: admission.cancellationReason,
     assignedBedId: admission.assignedBedId?._id || admission.assignedBedId || null,
     assignedBed: admission.assignedBedId?.bedCode
       ? { _id: admission.assignedBedId._id, bedCode: admission.assignedBedId.bedCode }
@@ -1156,6 +1161,13 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   if (contractStartDate && contractEndDate && contractEndDate <= contractStartDate) {
     throw new ServiceError('contractEndDate must be after contractStartDate', 400);
   }
+  if (contractStartDate && contractEndDate) {
+    const minimumEndDate = new Date(contractStartDate);
+    minimumEndDate.setDate(minimumEndDate.getDate() + 30);
+    if (contractEndDate < minimumEndDate) {
+      throw new ServiceError('Ngày kết thúc hợp đồng phải cách ngày bắt đầu ít nhất 30 ngày.', 400);
+    }
+  }
   if (contractDurationMonths !== undefined) {
     if (!Number.isFinite(contractDurationMonths) || contractDurationMonths < 1) {
       throw new ServiceError('contractDurationMonths must be a positive number', 400);
@@ -1169,6 +1181,7 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
 
   const updateData = {
     contractNumber,
+    contractStatus: 'active',
     contractSignedAt: new Date(),
     status: 'contracting',
   };
@@ -1335,6 +1348,107 @@ const checkInResident = async (admin, admissionId, body, req) => {
   };
 };
 
+const cancelAdmissionContract = async (admin, admissionId, body, req) => {
+  const admission = await admissionRepo.findById(admissionId);
+  if (!admission) throw new ServiceError('Admission request not found', 404);
+  if (!admission.contractNumber) throw new ServiceError('Admission does not have a contract', 400);
+  if (admission.contractStatus === 'cancelled' || !['contracting', 'checked_in'].includes(admission.status)) {
+    throw new ServiceError('Chỉ có thể hủy hợp đồng đang hoạt động.', 400);
+  }
+
+  const cancellationReason = String(body?.cancellationReason || body?.reason || '').trim();
+  if (!cancellationReason) {
+    throw new ServiceError('Vui lòng nhập lý do hủy hợp đồng.', 400);
+  }
+
+  const updated = await admissionRepo.updateAdmission(admissionId, {
+    contractStatus: 'cancelled',
+    contractCancelledAt: new Date(),
+    contractCancellationReason: cancellationReason,
+  });
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'CANCEL_ADMISSION_CONTRACT',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    beforeData: { requestCode: admission.requestCode, status: admission.status, contractNumber: admission.contractNumber, contractStatus: admission.contractStatus || 'active' },
+    afterData: { requestCode: updated.requestCode, status: updated.status, contractNumber: updated.contractNumber, contractStatus: updated.contractStatus, cancellationReason },
+    req,
+  });
+
+  return { message: 'Hủy hợp đồng thành công.', admission: formatAdmission(updated) };
+};
+
+const changeContractServicePackage = async (admin, admissionId, body, req) => {
+  const admission = await admissionRepo.findById(admissionId);
+  if (!admission) throw new ServiceError('Admission request not found', 404);
+  if (!admission.contractNumber) throw new ServiceError('Admission does not have a contract', 400);
+  if (admission.contractStatus === 'cancelled' || !['contracting', 'checked_in'].includes(admission.status)) {
+    throw new ServiceError('Không thể đổi gói dịch vụ cho hợp đồng này.', 400);
+  }
+
+  const servicePackageId = body?.servicePackageId;
+  if (!servicePackageId) throw new ServiceError('Vui lòng chọn gói dịch vụ mới.', 400);
+  const servicePackage = await servicePackageRepo.findById(servicePackageId);
+  if (!servicePackage) throw new ServiceError('Không tìm thấy gói dịch vụ.', 404);
+  if (!servicePackage.isActive) throw new ServiceError('Gói dịch vụ này đã ngừng hoạt động.', 400);
+
+  const residentId = admission.residentId?._id || admission.residentId;
+  const residentInvoices = residentId
+    ? await invoiceRepo.findByResidentId(residentId, { sort: { issuedAt: -1 }, limit: 100 })
+    : [];
+  const contractInvoices = residentInvoices.filter((invoice) =>
+    ['SERVICE', 'COMBINED'].includes(invoice.type)
+    && Number(invoice.careServiceCost || 0) > 0
+    && invoice.status !== 'CANCELLED'
+  );
+  const paidInvoice = contractInvoices.find((invoice) => ['PAID', 'PARTIALLY_PAID'].includes(invoice.status));
+  if (paidInvoice) {
+    throw new ServiceError('Không thể đổi gói vì hóa đơn dịch vụ đã được thanh toán.', 400);
+  }
+
+  const invoicesToCancel = contractInvoices.filter((invoice) => ['DRAFT', 'ISSUED'].includes(invoice.status));
+  for (const invoice of invoicesToCancel) {
+    await invoiceRepo.updateById(invoice._id, {
+      status: 'CANCELLED',
+      cancellationReason: 'Đã hủy do thay đổi gói dịch vụ.',
+    });
+  }
+
+  const previousPackage = admission.servicePackageId;
+  const previousPackageName = admission.assignedServicePackage;
+  const updated = await admissionRepo.updateAdmission(admissionId, {
+    servicePackageId: servicePackage._id,
+    assignedServicePackage: servicePackage.name,
+  });
+
+  if (admission.residentId) {
+    await Resident.findByIdAndUpdate(admission.residentId, { servicePackage: servicePackage.name });
+  }
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'CHANGE_ADMISSION_CONTRACT_SERVICE_PACKAGE',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    beforeData: { requestCode: admission.requestCode, servicePackageId: previousPackage, assignedServicePackage: previousPackageName },
+    afterData: {
+      requestCode: updated.requestCode,
+      servicePackageId: servicePackage._id,
+      assignedServicePackage: servicePackage.name,
+      cancelledInvoiceIds: invoicesToCancel.map((invoice) => invoice._id),
+    },
+    req,
+  });
+
+  return { message: 'Đổi gói dịch vụ thành công.', admission: formatAdmission(updated) };
+};
+
 /**
  * Extend the contract end date for an admission.
  * @param {object} admin - User making the request
@@ -1406,6 +1520,8 @@ module.exports = {
   evaluateAdmissionEligibility,
   assignServicePackage,
   createAdmissionContract,
+  cancelAdmissionContract,
+  changeContractServicePackage,
   checkInResident,
   extendAdmissionContract,
 };

@@ -1273,6 +1273,27 @@ const checkInResident = async (admin, admissionId, body, req) => {
   if (assignedRoomId) {
     const room = await Room.findById(assignedRoomId);
     if (!room) throw new ServiceError('Room not found', 404);
+
+    // Validate loại phòng phù hợp với Gói dịch vụ đã đăng ký
+    if (admission.servicePackageId) {
+      const servicePackageRepo = require('../repositories/servicePackageRepository');
+      const pkg = await servicePackageRepo.findById(admission.servicePackageId);
+      if (pkg) {
+        const pkgTier = pkg.tier || 'standard';
+        const allowedTypes = pkg.allowedRoomTypes?.length
+          ? pkg.allowedRoomTypes
+          : (pkgTier === 'vip' ? ['icu', 'isolation'] : pkgTier === 'premium' ? ['premium'] : ['standard']);
+
+        if (!allowedTypes.includes(room.roomType)) {
+          const typeNames = { standard: 'Standard', premium: 'Premium', icu: 'ICU', isolation: 'Isolation' };
+          const allowedStr = allowedTypes.map((t) => typeNames[t] || t).join(' / ');
+          throw new ServiceError(
+            `Không thể nhận phòng này: Cư dân đăng ký gói '${pkg.name}' (${pkgTier.toUpperCase()}), chỉ được xếp vào phòng loại ${allowedStr}.`,
+            400
+          );
+        }
+      }
+    }
   }
 
   // Create or update Resident

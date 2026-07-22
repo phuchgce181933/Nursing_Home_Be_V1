@@ -291,7 +291,7 @@ const assignCareTask = async (body, actorUserId) => {
   if (!scheduledTimeTrimmed || toMinutes(scheduledTimeTrimmed) === null) {
     throw apiErr(CODES.FIELD_INVALID_FORMAT, {
       statusCode: 400,
-      params: { field: 'scheduledTime', format: 'HH:mm' },
+      params: { field: 'Giờ dự kiến', format: 'HH:mm' },
     });
   }
 
@@ -335,7 +335,7 @@ const assignCareTask = async (body, actorUserId) => {
     const residentName = apptConflict.residentId?.fullName || 'cư dân';
     const apptStartStr = new Date(apptConflict.scheduledStartAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
     const apptEndStr = new Date(apptConflict.scheduledEndAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
-    throw apiErr(CODES.FIELD_INVALID_FORMAT, {
+    throw apiErr('CARE_TASK_CONFLICT', {
       statusCode: 409,
       message: `Nhân viên đã bị đụng lịch với cuộc hẹn khám của ${residentName} trong khung giờ ${apptStartStr} – ${apptEndStr} cùng ngày.`,
     });
@@ -352,7 +352,7 @@ const assignCareTask = async (body, actorUserId) => {
 
   if (existingTask) {
     const residentName = existingTask.residentId?.fullName || 'cư dân khác';
-    throw apiErr(CODES.FIELD_INVALID_FORMAT, {
+    throw apiErr('CARE_TASK_CONFLICT', {
       statusCode: 409,
       message: `Nhân viên đã được phân công nhiệm vụ chăm sóc cho ${residentName} vào lúc ${scheduledTimeTrimmed} cùng ngày.`,
     });

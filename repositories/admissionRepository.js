@@ -19,21 +19,30 @@ const findByRequestCode = (requestCode) => Admission.findOne({ requestCode });
 const findById = (id) => Admission.findById(id);
 
 const findByIdForFamily = (id, familyAccountId) =>
-  Admission.findOne({ _id: id, familyAccountId });
+  Admission.findOne({ _id: id, familyAccountId })
+    .populate('residentId', 'residentCode fullName residencyStatus avatarUrl')
+    .populate('familyAccountId', 'fullName email phone username avatarUrl')
+    .populate('consultantId', 'fullName email role')
+    .populate('consultedBy', 'fullName email role')
+    .populate('assessedBy', 'fullName email role')
+    .populate('servicePackageId', 'packageCode name tier monthlyPrice')
+    .populate('assignedBedId', 'bedCode')
+    .populate('assignedRoomId', 'roomNumber');
 
 const findByFamily = (familyAccountId, filter, { sort, skip, limit }) =>
   Admission.find({ familyAccountId, ...filter })
     .sort(sort)
     .skip(skip)
     .limit(limit)
-    .populate('residentId', 'residentCode fullName residencyStatus');
+    .populate('residentId', 'residentCode fullName residencyStatus avatarUrl')
+    .populate('familyAccountId', 'fullName email phone username avatarUrl');
 
 const countByFamily = (familyAccountId, filter) =>
   Admission.countDocuments({ familyAccountId, ...filter });
 
 const updateAdmission = (id, update) =>
   Admission.findByIdAndUpdate(id, update, { new: true, runValidators: true })
-    .populate('residentId', 'residentCode fullName residencyStatus')
+    .populate('residentId', 'residentCode fullName residencyStatus avatarUrl')
     .populate('familyAccountId', 'fullName email phone username avatarUrl')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
@@ -56,7 +65,7 @@ const findAll = (filter, { sort, skip, limit }) =>
     .sort(sort)
     .skip(skip)
     .limit(limit)
-    .populate('residentId', 'residentCode fullName residencyStatus')
+    .populate('residentId', 'residentCode fullName residencyStatus avatarUrl')
     .populate('familyAccountId', 'fullName email phone username avatarUrl')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')
@@ -69,7 +78,7 @@ const countAll = (filter) => Admission.countDocuments(filter);
 
 const findByIdForAdmin = (id) =>
   Admission.findById(id)
-    .populate('residentId', 'residentCode fullName residencyStatus')
+    .populate('residentId', 'residentCode fullName residencyStatus avatarUrl')
     .populate('familyAccountId', 'fullName email phone username avatarUrl')
     .populate('consultantId', 'fullName email role')
     .populate('consultedBy', 'fullName email role')

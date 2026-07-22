@@ -7,6 +7,8 @@ const notificationRepo = require('../repositories/notificationRepository');
 const mailService = require('./mailService');
 const ServiceError = require('./serviceError');
 const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
+const CareTask = require('../models/careTask');
+const CareAppointment = require('../models/careAppointment');
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -226,6 +228,170 @@ const normalizeResidentIds = (residentIds) => {
   if (!residentIds) return [];
   if (Array.isArray(residentIds)) return residentIds;
   return [residentIds];
+};
+
+const parseTimeToMinutes = (value) => {
+  if (!value) return null;
+  const match = String(value).trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+};
+
+const formatClockLabel = (value) => {
+  if (value instanceof Date) {
+    const hours = String(value.getHours()).padStart(2, '0');
+    const minutes = String(value.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  }
+
+  if (typeof value === 'number') {
+    const hours = Math.floor(value / 60);
+    const minutes = value % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  }
+
+  return String(value || '').trim();
+};
+
+const resolveStaffProfileIds = async (candidateIds = []) => {
+  if (!Array.isArray(candidateIds) || candidateIds.length === 0) return [];
+
+  const normalizedIds = candidateIds
+    .map((value) => value?._id || value?.id || value)
+    .filter(Boolean);
+
+  const profileIds = [];
+  for (const id of normalizedIds) {
+    if (!id) continue;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      const profile = await StaffProfile.findOne({ $or: [{ _id: id }, { userId: id }] }).select('_id').lean();
+      if (profile) profileIds.push(String(profile._id));
+    }
+  }
+
+  return [...new Set(profileIds)];
+};
+
+const getAssignmentConflictsForStaff = async ({ incidentAt, residentIds = [], staffProfileId }) => {
+  const incidentDate = incidentAt instanceof Date ? incidentAt : new Date(incidentAt);
+  if (Number.isNaN(incidentDate.getTime())) {
+    return { staffProfileId: String(staffProfileId), canAssign: false, hasCareTask: false, hasAppointment: false, reasons: ['incidentAt không hợp lệ'] };
+  }
+
+  const dayStart = new Date(incidentDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(incidentDate);
+  dayEnd.setHours(23, 59, 59, 999);
+
+  const incidentMinutes = incidentDate.getHours() * 60 + incidentDate.getMinutes();
+  const residentIdList = normalizeResidentIds(residentIds).filter(Boolean);
+  const residentObjectIds = residentIdList
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+  const careTasks = await CareTask.find({
+    staffProfileId: new mongoose.Types.ObjectId(String(staffProfileId)),
+    workDate: { $gte: dayStart, $lte: dayEnd },
+    ...(residentObjectIds.length ? { residentId: { $in: residentObjectIds } } : {}),
+  }).lean();
+
+  const matchingCareTasks = careTasks.filter((task) => {
+    const taskMinutes = parseTimeToMinutes(task?.scheduledTime);
+    return taskMinutes !== null && Math.abs(taskMinutes - incidentMinutes) <= 30;
+  });
+
+  const hasCareTask = matchingCareTasks.length > 0;
+
+  const appointments = await CareAppointment.find({
+    $or: [
+      { doctorStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
+      { nurseStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
+    ],
+    scheduledStartAt: { $lte: incidentDate },
+    scheduledEndAt: { $gte: incidentDate },
+    ...(residentObjectIds.length ? { residentId: { $in: residentObjectIds } } : {}),
+  }).lean();
+
+  // Also fetch all tasks and appointments for this staff (past and future) so UI can show full list
+  const allCareTasks = await CareTask.find({ staffProfileId: new mongoose.Types.ObjectId(String(staffProfileId)) }).lean();
+  const allAppointments = await CareAppointment.find({
+    $or: [
+      { doctorStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
+      { nurseStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
+    ],
+  }).lean();
+
+  // careTasks (above) already is limited to the same day; prepare its times
+  const careTasksForDayTimes = (careTasks || []).map((t) => t?.scheduledTime).filter(Boolean);
+
+  // appointment times on the same day as incidentDate
+  const appointmentTimesForDay = (allAppointments || []).filter((a) => {
+    if (!a?.scheduledStartAt) return false;
+    try {
+      const d = new Date(a.scheduledStartAt);
+      return d >= dayStart && d <= dayEnd;
+    } catch (e) {
+      return false;
+    }
+  }).map((a) => a?.scheduledStartAt).filter(Boolean);
+
+  const hasAppointment = appointments.length > 0;
+  const reasons = [];
+  const careTaskTimes = matchingCareTasks.map((task) => task?.scheduledTime).filter(Boolean);
+  const appointmentTimes = appointments.map((a) => a?.scheduledStartAt).filter(Boolean);
+  if (hasCareTask) {
+    const firstTaskTime = matchingCareTasks[0]?.scheduledTime;
+    const clockLabel = formatClockLabel(parseTimeToMinutes(firstTaskTime));
+    reasons.push(`có nhiệm vụ chăm sóc lúc ${clockLabel}`);
+  }
+  if (hasAppointment) {
+    const firstAppointmentTime = formatClockLabel(appointments[0]?.scheduledStartAt);
+    reasons.push(`có lịch khám lúc ${firstAppointmentTime}`);
+  }
+
+  return {
+    staffProfileId: String(staffProfileId),
+    canAssign: !hasCareTask && !hasAppointment,
+    hasCareTask,
+    hasAppointment,
+    careTaskCount: matchingCareTasks.length,
+    appointmentCount: appointments.length,
+    careTaskTimes,
+    appointmentTimes,
+    allCareTaskTimes: allCareTasks.map((t) => t?.scheduledTime).filter(Boolean),
+    allAppointmentTimes: allAppointments.map((a) => a?.scheduledStartAt).filter(Boolean),
+    careTasksForDayTimes,
+    appointmentTimesForDay,
+    reasons,
+  };
+};
+
+const getAssignmentConflicts = async (currentUser, payload = {}) => {
+  if (!currentUser || currentUser.role !== 'admin') {
+    throw new ServiceError('Only admins can check assignment conflicts', 403);
+  }
+
+  const incidentAt = payload.incidentAt ? new Date(payload.incidentAt) : null;
+  if (!incidentAt || Number.isNaN(incidentAt.getTime())) {
+    throw new ServiceError('incidentAt is required', 400);
+  }
+
+  const residentIds = normalizeResidentIds(payload.residentIds || payload.residentId || []);
+  const staffProfileIds = await resolveStaffProfileIds(payload.staffProfileIds || payload.staffIds || []);
+
+  const conflicts = {};
+  for (const staffProfileId of staffProfileIds) {
+    conflicts[String(staffProfileId)] = await getAssignmentConflictsForStaff({
+      incidentAt,
+      residentIds,
+      staffProfileId,
+    });
+  }
+
+  return { conflicts, incidentAt: incidentAt.toISOString() };
 };
 
 const getResidentsForIncident = async (residentIds) => {
@@ -452,6 +618,19 @@ const createIncident = async (currentUser, payload) => {
       : [];
     console.log('[DEBUG] assignedStaffProfileIds (converted):', assignedStaffProfileIds);
 
+    if (assignedStaffProfileIds.length) {
+      const conflictPayload = await getAssignmentConflicts(currentUser, {
+        incidentAt: payload.incidentAt,
+        residentIds: residentIds,
+        staffProfileIds: assignedStaffProfileIds,
+      });
+      const blockedStaffs = Object.values(conflictPayload.conflicts || {}).filter((conflict) => !conflict.canAssign);
+      if (blockedStaffs.length) {
+        const formatted = blockedStaffs.map((conflict) => conflict.reasons.join(' và ')).join('; ');
+        throw new ServiceError(`Không thể chỉ định nhân viên vì ${formatted}.`, 400);
+      }
+    }
+
     const reporter = getReporterDetails(currentUser, payload);
     console.log('[DEBUG] reporter details:', reporter);
     
@@ -631,6 +810,22 @@ const assignHandlers = async (currentUser, id, payload) => {
   // Convert user IDs to staff profile IDs if needed
   const staffProfileIds = await convertUserIdsToStaffProfileIds(assignedStaffIds);
 
+  const existingIncident = await incidentRepo.findById(id);
+  const incidentAt = existingIncident?.incidentAt || null;
+  const residentIds = existingIncident?.residentIds || (existingIncident?.residentId ? [existingIncident.residentId] : []);
+  if (staffProfileIds.length && incidentAt) {
+    const conflictPayload = await getAssignmentConflicts(currentUser, {
+      incidentAt,
+      residentIds,
+      staffProfileIds,
+    });
+    const blockedStaffs = Object.values(conflictPayload.conflicts || {}).filter((conflict) => !conflict.canAssign);
+    if (blockedStaffs.length) {
+      const formatted = blockedStaffs.map((conflict) => conflict.reasons.join(' và ')).join('; ');
+      throw new ServiceError(`Không thể chỉ định nhân viên vì ${formatted}.`, 400);
+    }
+  }
+
   const updated = await incidentRepo.updateById(id, { assignedStaffIds: staffProfileIds });
 
   await notifyIncident(updated, {
@@ -702,19 +897,23 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
     resolution.resolvedByUserId = currentUser._id;
   }
 
-  // Handle file uploads via Cloudinary utils
+  // Upload attachments before saving the resolution so failed uploads do not look successful.
   const { uploadImageBuffer, uploadRawBuffer } = require('../utils/cloudinaryUpload');
   const attachments = [];
   for (const file of files) {
-    try {
-      const isImage = String(file.mimetype || '').startsWith('image/');
-      const result = isImage
-        ? await uploadImageBuffer(file.buffer, { folder: 'nursing-home/incidents/resolution', mimeType: file.mimetype })
-        : await uploadRawBuffer(file.buffer, { folder: 'nursing-home/incidents/resolution' });
-      attachments.push({ fileName: file.originalname, fileUrl: result.secure_url, mimeType: file.mimetype, sizeInBytes: file.size, uploadedAt: new Date() });
-    } catch (err) {
-      console.error('[ERROR] resolution file upload failed:', err.message || err);
-    }
+    if (!file?.buffer?.length) throw new ServiceError('File đính kèm không hợp lệ.', 400);
+    const isImage = String(file.mimetype || '').startsWith('image/');
+    const result = isImage
+      ? await uploadImageBuffer(file.buffer, { folder: 'nursing-home/incidents/resolution', mimeType: file.mimetype })
+      : await uploadRawBuffer(file.buffer, { folder: 'nursing-home/incidents/resolution', mimeType: file.mimetype });
+    attachments.push({
+      fileName: file.originalname,
+      fileUrl: result.secure_url,
+      cloudinaryPublicId: result.public_id,
+      mimeType: file.mimetype,
+      sizeInBytes: file.size,
+      uploadedAt: new Date(),
+    });
   }
 
   // Merge with existing attachments
@@ -747,4 +946,5 @@ module.exports = {
   assignHandlers,
   updateIncidentResolution,
   exportIncidents,
+  getAssignmentConflicts,
 };

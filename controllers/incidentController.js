@@ -1,4 +1,10 @@
 const incidentService = require('../services/incidentService');
+const multer = require('multer');
+
+const resolutionUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 10 },
+});
 
 const createIncident = async (req, res) => {
   try {
@@ -56,12 +62,17 @@ const assignHandlers = async (req, res) => {
   }
 };
 
-const updateIncidentResolution = async (req, res) => {
-  // Use multer to parse multipart/form-data files in-memory
-  const multer = require('multer');
-  const upload = multer({ storage: multer.memoryStorage() });
+const getAssignmentConflicts = async (req, res) => {
+  try {
+    const result = await incidentService.getAssignmentConflicts(req.user, req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
 
-  const handler = upload.array('resolutionFiles', 10);
+const updateIncidentResolution = async (req, res) => {
+  const handler = resolutionUpload.array('resolutionFiles', 10);
   handler(req, res, async (err) => {
     if (err) {
       return res.status(400).json({ message: err.message });
@@ -85,4 +96,5 @@ module.exports = {
   assignHandlers,
   exportIncidents,
   updateIncidentResolution,
+  getAssignmentConflicts,
 };

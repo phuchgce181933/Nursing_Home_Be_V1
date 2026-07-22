@@ -9,6 +9,55 @@ const { calculateDurationMinutes } = require('../utils/activityDuration');
 const VALID_ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'left_early'];
 const VALID_PARTICIPATION_LEVELS = ['active', 'partial', 'passive'];
 const MANUAL_ACTIVITY_STATUSES = ['draft', 'scheduled', 'completed', 'cancelled'];
+const ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS = ['nurse', 'y tá', 'điều dưỡng', 'caregiver', 'hộ lý', 'doctor', 'bác sĩ'];
+const ALLOWED_ACTIVITY_CATEGORY_OPTIONS = [
+  'Hoạt động chăm sóc cá nhân hằng ngày',
+  'Hoạt động chăm sóc sức khỏe',
+  'Hoạt động ăn uống - dinh dưỡng',
+  'Hoạt động thể chất - phục hồi chức năng',
+  'Hoạt động giải trí',
+  'Hoạt động kích thích nhận thức',
+  'Hoạt động xã hội - giao lưu',
+  'Hoạt động tâm lý - tinh thần',
+  'Hoạt động sự kiện đặc biệt',
+  'Hoạt động với gia đình',
+  'Hoạt động quản lý nội bộ',
+  'Hoạt động xử lý sự cố',
+];
+
+const normalizeActivityCategory = (body) => {
+  const selectedCategory = typeof body.category === 'string' ? body.category.trim() : '';
+  if (!selectedCategory) {
+    throw new ServiceError('category is required', 400);
+  }
+
+  if (selectedCategory === 'Khác') {
+    const customCategory = typeof body.categoryOther === 'string' ? body.categoryOther.trim() : '';
+    if (!customCategory) {
+      throw new ServiceError('custom category is required when category is Khác', 400);
+    }
+    return customCategory;
+  }
+
+  if (!ALLOWED_ACTIVITY_CATEGORY_OPTIONS.includes(selectedCategory)) {
+    throw new ServiceError(`category must be one of: ${ALLOWED_ACTIVITY_CATEGORY_OPTIONS.join(', ')}, Khác`, 400);
+  }
+
+  return selectedCategory;
+};
+
+const isAllowedActivityStaffRole = (role) => {
+  const roleText = String(role || '').toLowerCase();
+  return ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS.some((keyword) => roleText.includes(keyword));
+};
+
+const normalizeStaffIdList = (value) => {
+  if (value === undefined || value === null || value === '') return [];
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== undefined && item !== null && item !== '').map((item) => String(item));
+  }
+  return [String(value)];
+};
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -217,9 +266,11 @@ const createActivity = async (body) => {
 
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const description = typeof body.description === 'string' ? body.description.trim() : '';
-  const category = typeof body.category === 'string' ? body.category.trim() : '';
+  const category = normalizeActivityCategory(body);
   const location = typeof body.location === 'string' ? body.location.trim() : '';
   const status = typeof body.status === 'string' ? body.status.trim() : 'scheduled';
+  const organizerStaffIds = normalizeStaffIdList(body.organizerStaffIds ?? body.organizerStaffId);
+  const supportStaffIds = normalizeStaffIdList(body.supportStaffIds ?? body.supportStaffId);
   const requestedDailyMinutes = body.dailyDurationMinutes !== undefined && body.dailyDurationMinutes !== '' && body.dailyDurationMinutes !== null
     ? Number(body.dailyDurationMinutes)
     : null;
@@ -261,16 +312,37 @@ const createActivity = async (body) => {
     throw new ServiceError('organizerStaffId must be a valid ObjectId', 400);
   }
 
-  if (body.organizerStaffId) {
-    const User = require('../models/user');
-    const organizer = await User.findById(body.organizerStaffId);
-    if (!organizer) {
-      throw new ServiceError('Organizer staff not found', 404);
+  if (organizerStaffIds.length) {
+    if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('organizerStaffIds must contain valid ObjectIds', 400);
     }
-    const role = String(organizer.role || '').toLowerCase();
-    const isNurse = role.includes('nurse') || role.includes('y tá') || role.includes('điều dưỡng');
-    if (!isNurse) {
-      throw new ServiceError('Activity organizer must be a nurse', 400);
+
+    const User = require('../models/user');
+    for (const organizerId of organizerStaffIds) {
+      const organizer = await User.findById(organizerId);
+      if (!organizer) {
+        throw new ServiceError('Organizer staff not found', 404);
+      }
+      if (!isAllowedActivityStaffRole(organizer.role)) {
+        throw new ServiceError('Activity organizer must be a nurse, caregiver, hộ lý, or doctor', 400);
+      }
+    }
+  }
+
+  if (supportStaffIds.length) {
+    if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('supportStaffIds must contain valid ObjectIds', 400);
+    }
+
+    const User = require('../models/user');
+    for (const supportStaffId of supportStaffIds) {
+      const supportStaff = await User.findById(supportStaffId);
+      if (!supportStaff) {
+        throw new ServiceError('Support staff not found', 404);
+      }
+      if (!isAllowedActivityStaffRole(supportStaff.role)) {
+        throw new ServiceError('Support staff must be a nurse, caregiver, hộ lý, or doctor', 400);
+      }
     }
   }
 
@@ -308,7 +380,10 @@ const createActivity = async (body) => {
         endAt: occurrenceEnd,
         durationMinutes: recurringDailyDurationMinutes,
         location: location || undefined,
-        organizerStaffId: body.organizerStaffId || undefined,
+        organizerStaffId: organizerStaffIds[0] || undefined,
+        organizerStaffIds: organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
+        supportStaffId: supportStaffIds[0] || undefined,
+        supportStaffIds: supportStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
         participantResidentIds: normalizeObjectIds(body.participantResidentIds),
         status,
       });
@@ -332,7 +407,10 @@ const createActivity = async (body) => {
     endAt,
     durationMinutes: computedDurationMinutes,
     location: location || undefined,
-    organizerStaffId: body.organizerStaffId || undefined,
+    organizerStaffId: organizerStaffIds[0] || undefined,
+    organizerStaffIds: organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
+    supportStaffId: supportStaffIds[0] || undefined,
+    supportStaffIds: supportStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
     participantResidentIds: normalizeObjectIds(body.participantResidentIds),
     status,
   });
@@ -366,7 +444,7 @@ const getActivityById = async (activityId) => {
 const updateActivity = async (activityId, body) => {
   const update = {};
   if (body.title !== undefined) update.title = body.title.trim();
-  if (body.category !== undefined) update.category = body.category?.trim();
+  if (body.category !== undefined) update.category = normalizeActivityCategory(body);
   if (body.description !== undefined) update.description = body.description?.trim();
   if (body.startAt !== undefined || body.scheduledAt !== undefined) {
     update.scheduledAt = new Date(body.startAt ?? body.scheduledAt);
@@ -400,20 +478,46 @@ const updateActivity = async (activityId, body) => {
     if (dd !== null) update.dailyDurationMinutes = dd;
   }
   if (body.location !== undefined) update.location = body.location?.trim();
-  if (body.organizerStaffId !== undefined) {
-    if (body.organizerStaffId) {
-      const User = require('../models/user');
-      const organizer = await User.findById(body.organizerStaffId);
-      if (!organizer) {
-        throw new ServiceError('Organizer staff not found', 404);
+  if (body.organizerStaffIds !== undefined || body.organizerStaffId !== undefined) {
+    const organizerStaffIds = normalizeStaffIdList(body.organizerStaffIds ?? body.organizerStaffId);
+    if (organizerStaffIds.length) {
+      if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+        throw new ServiceError('organizerStaffIds must contain valid ObjectIds', 400);
       }
-      const role = String(organizer.role || '').toLowerCase();
-      const isNurse = role.includes('nurse') || role.includes('y tá') || role.includes('điều dưỡng');
-      if (!isNurse) {
-        throw new ServiceError('Activity organizer must be a nurse', 400);
+      const User = require('../models/user');
+      for (const organizerId of organizerStaffIds) {
+        const organizer = await User.findById(organizerId);
+        if (!organizer) {
+          throw new ServiceError('Organizer staff not found', 404);
+        }
+        if (!isAllowedActivityStaffRole(organizer.role)) {
+          throw new ServiceError('Activity organizer must be a nurse, caregiver, hộ lý, or doctor', 400);
+        }
       }
     }
-    update.organizerStaffId = body.organizerStaffId;
+    update.organizerStaffIds = organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id));
+    update.organizerStaffId = organizerStaffIds[0] || null;
+  }
+
+  if (body.supportStaffIds !== undefined || body.supportStaffId !== undefined) {
+    const supportStaffIds = normalizeStaffIdList(body.supportStaffIds ?? body.supportStaffId);
+    if (supportStaffIds.length) {
+      if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+        throw new ServiceError('supportStaffIds must contain valid ObjectIds', 400);
+      }
+      const User = require('../models/user');
+      for (const supportStaffId of supportStaffIds) {
+        const supportStaff = await User.findById(supportStaffId);
+        if (!supportStaff) {
+          throw new ServiceError('Support staff not found', 404);
+        }
+        if (!isAllowedActivityStaffRole(supportStaff.role)) {
+          throw new ServiceError('Support staff must be a nurse, caregiver, hộ lý, or doctor', 400);
+        }
+      }
+    }
+    update.supportStaffIds = supportStaffIds.map((id) => new mongoose.Types.ObjectId(id));
+    update.supportStaffId = supportStaffIds[0] || null;
   }
   if (body.status !== undefined) {
     if (body.status === 'ongoing') {

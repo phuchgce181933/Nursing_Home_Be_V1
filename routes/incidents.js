@@ -8,6 +8,7 @@ const {
   updateIncidentStatus,
   assignHandlers,
   exportIncidents,
+  getAssignmentConflicts,
 } = require('../controllers/incidentController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -121,6 +122,8 @@ router.post('/', createIncident);
  *         description: Paginated incident list
  */
 router.get('/', listIncidents);
+
+router.post('/assignment-conflicts', authorize('admin'), getAssignmentConflicts);
 
 /**
  * @swagger

@@ -30,6 +30,8 @@ const normalizeCost = (value) => {
   return Number.isNaN(amount) ? 0 : Math.max(0, amount);
 };
 
+const isUnpaidInvoice = (invoice) => ['DRAFT', 'ISSUED', 'PARTIALLY_PAID'].includes(invoice?.status);
+
 const markInvoiceAsPaid = async (invoiceId) => {
   const invoice = await invoiceRepo.findById(invoiceId);
   if (!invoice) {
@@ -251,6 +253,9 @@ const truncatePayosDescription = (text) => {
 };
 
 const createPayosPaymentRequest = async ({ invoice, req }) => {
+  if (invoice.status === 'CANCELLED') {
+    throw new ServiceError('Không thể thanh toán hóa đơn đã bị hủy.', 400);
+  }
   const publicUrl = getPayosPublicUrl(req);
   const { clientId, apiKey, partnerCode } = getPayosCredentials();
   const orderCode = buildPayosOrderCode(invoice);
@@ -406,6 +411,20 @@ const createInvoice = async (user, residentId, body) => {
   const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
 
+  if (body.admissionId) {
+    if (!Types.ObjectId.isValid(body.admissionId)) {
+      throw new ServiceError('Invalid admissionId provided', 400);
+    }
+    const admission = await Admission.findById(body.admissionId).select('residentId contractNumber').lean();
+    if (!admission) throw new ServiceError('Admission request not found', 404);
+    if (String(admission.residentId) !== String(residentId)) {
+      throw new ServiceError('Admission request does not belong to the resident', 400);
+    }
+    if (!admission.contractNumber) {
+      throw new ServiceError('Vui lòng tạo hợp đồng trước khi tạo hóa đơn.', 400);
+    }
+  }
+
   if (user.role === 'family') {
     const familyResidentIds = await familyPortalRepo.getFamilyResidentIds(user._id);
     if (!familyResidentIds.includes(residentId.toString())) {
@@ -420,6 +439,18 @@ const createInvoice = async (user, residentId, body) => {
   let careServiceCost = normalizeCost(body.careServiceCost);
   const otherCost = normalizeCost(body.otherCost);
   let prescriptionId = null;
+
+  const existingInvoices = await invoiceRepo.findByResidentId(residentId, { sort: { createdAt: -1 }, limit: 100 });
+  const pendingServiceInvoice = existingInvoices.find((invoice) =>
+    isUnpaidInvoice(invoice)
+    && ['SERVICE', 'COMBINED'].includes(invoice.type)
+    && Number(invoice.careServiceCost || 0) > 0
+  );
+  const pendingMedicationInvoice = existingInvoices.find((invoice) =>
+    isUnpaidInvoice(invoice)
+    && invoice.type === 'MEDICATION'
+    && (!body.prescriptionId || String(invoice.prescriptionId || '') === String(body.prescriptionId))
+  );
 
   if (body.prescriptionId) {
     prescriptionId = resolveObjectIdString(body.prescriptionId);
@@ -441,6 +472,9 @@ const createInvoice = async (user, residentId, body) => {
   }
   // If caller provided explicit invoice items (service-line items), use them and ignore legacy cost fields
   if (body.items && Array.isArray(body.items) && body.items.length > 0) {
+    if (pendingServiceInvoice) {
+      throw new ServiceError('Đã có hóa đơn dịch vụ chưa thanh toán cho cư dân này.', 409);
+    }
     const items = body.items.map((it) => ({
       chargeId: it.chargeId,
       description: it.description,
@@ -510,6 +544,9 @@ const createInvoice = async (user, residentId, body) => {
 
   // Create SERVICE invoice if there's a service cost
   if (careServiceCost > 0 || roomCost > 0 || (otherCost > 0 && medicationCost === 0)) {
+    if (pendingServiceInvoice) {
+      throw new ServiceError('Đã có hóa đơn dịch vụ chưa thanh toán cho cư dân này.', 409);
+    }
     const serviceTotal = roomCost + careServiceCost + otherCost;
     const serviceInvoice = await invoiceRepo.create({
       invoiceNumber: buildInvoiceNumber(),
@@ -532,6 +569,9 @@ const createInvoice = async (user, residentId, body) => {
 
   // Create MEDICATION invoice if there's medication cost
   if (medicationCost > 0) {
+    if (pendingMedicationInvoice) {
+      throw new ServiceError('Đã có hóa đơn thuốc chưa thanh toán cho đơn thuốc này.', 409);
+    }
     const medicationInvoice = await invoiceRepo.create({
       invoiceNumber: buildInvoiceNumber(),
       residentId,
@@ -652,6 +692,9 @@ const findInvoiceForCheckout = async (user, residentId, invoiceId, query = {}) =
   if (!invoiceResidentId || invoiceResidentId !== residentId) {
     throw new ServiceError('Invoice does not belong to the requested resident', 403);
   }
+  if (invoice.status === 'CANCELLED') {
+    throw new ServiceError('Không thể mở thanh toán cho hóa đơn đã bị hủy.', 400);
+  }
 
   if (user) {
     await assertInvoiceAccess(user, invoice);
@@ -670,6 +713,9 @@ const recordPayment = async (user, invoiceId, body) => {
 
   if (invoice.status === 'PAID') {
     throw new ServiceError('Invoice is already fully paid', 400);
+  }
+  if (invoice.status === 'CANCELLED') {
+    throw new ServiceError('Không thể thanh toán hóa đơn đã bị hủy.', 400);
   }
 
   const amount = normalizeCost(body.amount || invoice.totalAmount);

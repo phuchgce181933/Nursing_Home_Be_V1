@@ -13,6 +13,9 @@ const activitySchema = new Schema(
     durationMinutes: { type: Number, min: 1 },
     location: { type: String, trim: true },
     organizerStaffId: { type: Types.ObjectId, ref: 'StaffProfile' },
+    organizerStaffIds: [{ type: Types.ObjectId, ref: 'StaffProfile' }],
+    supportStaffId: { type: Types.ObjectId, ref: 'StaffProfile' },
+    supportStaffIds: [{ type: Types.ObjectId, ref: 'StaffProfile' }],
     participantResidentIds: [{ type: Types.ObjectId, ref: 'Resident' }],
     attendanceRecords: [{
       residentId: { type: Types.ObjectId, ref: 'Resident' },

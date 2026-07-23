@@ -23,7 +23,7 @@ const listActivities = async (req, res) => {
         || userRole.includes('doctor')
         || userRole.includes('bác sĩ');
       if (isStaffLikeRole) {
-        query.organizerStaffId = req.user._id.toString();
+        query.organizerStaffIds = req.user._id.toString();
       }
     }
     const result = await activityService.listActivities(query);

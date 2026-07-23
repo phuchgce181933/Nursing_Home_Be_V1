@@ -462,6 +462,14 @@ const editPrescription = async (req, res) => {
         existing.isActive = false;
       }
 
+      if (softDeletePatches.length) {
+        await MedicationSchedule.deleteMany({
+          prescriptionId: prescription._id,
+          prescriptionItemId: { $in: softDeletePatches.map((item) => item._id) },
+          status: 'PENDING',
+        });
+      }
+
       // Lightweight patches: only times/instructions change, no medication/dosage change.
       for (const { existing, entry } of lightweightPatches) {
         if (entry.times !== undefined) {

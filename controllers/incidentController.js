@@ -42,6 +42,15 @@ const updateIncidentStatus = async (req, res) => {
   }
 };
 
+const reopenIncident = async (req, res) => {
+  try {
+    const result = await incidentService.reopenIncident(req.user, req.params.id, req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const exportIncidents = async (req, res) => {
   try {
     const { csv, fileName } = await incidentService.exportIncidents(req.user, req.query);
@@ -93,6 +102,7 @@ module.exports = {
   listIncidents,
   getIncident,
   updateIncidentStatus,
+  reopenIncident,
   assignHandlers,
   exportIncidents,
   updateIncidentResolution,

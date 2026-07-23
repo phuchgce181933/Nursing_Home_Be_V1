@@ -7,6 +7,7 @@ const floorRepo = require('../repositories/floorRepository');
 const { GENDERS, BLOOD_TYPES, RESIDENCY_STATUSES } = require('../models/enums');
 const { validateFullName, validatePhone } = require('../utils/validators');
 const User = require('../models/user');
+const Admission = require('../models/admission');
 const { createAuditLog } = require('../utils/auditLog');
 const { syncStaffAreasAfterResidentTransfer } = require('../utils/syncStaffAreasAfterResidentTransfer');
 
@@ -664,11 +665,12 @@ const getTransferTargets = async (residentId, { floorId }) => {
   assertObjectId(floorId, 'floorId');
   const resident = await residentRepo.findByIdForTransfer(residentId);
   if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
-  if (resident.residencyStatus !== 'admitted') throw apiErr(CODES.RESIDENT_TRANSFER_NOT_ADMITTED, { statusCode: 400 });
-  if (!resident.roomId || !resident.bedId) throw apiErr(CODES.RESIDENT_TRANSFER_NO_ROOM, { statusCode: 400 });
 
   const floor = await floorRepo.findById(floorId);
   if (!floor) throw apiErr(CODES.RESIDENT_TRANSFER_FLOOR_NOT_FOUND, { statusCode: 404 });
+
+  const currentAssignment = mapTransferAssignment(resident);
+  const hasCurrentAssignment = Boolean(resident?.roomId || resident?.bedId);
   const rooms = await roomRepo.findByFloorId(floorId);
   const roomIds = rooms.map((room) => room._id);
   const admittedCountByRoomId = await residentRepo.countAdmittedByRoomIds(roomIds);
@@ -679,8 +681,9 @@ const getTransferTargets = async (residentId, { floorId }) => {
     if (!bedsByRoomId.has(key)) bedsByRoomId.set(key, []);
     bedsByRoomId.get(key).push({ _id: bed._id, bedCode: bed.bedCode, bedType: bed.bedType, status: bed.status });
   }
-  const currentBedId = String(resident.bedId?._id || resident.bedId);
-  const currentRoomId = String(resident.roomId?._id || resident.roomId);
+
+  const currentBedId = resident?.bedId ? String(resident.bedId?._id || resident.bedId) : '';
+  const currentRoomId = resident?.roomId ? String(resident.roomId?._id || resident.roomId) : '';
   const targets = rooms
     .map((room) => ({
       _id: room._id,
@@ -690,13 +693,13 @@ const getTransferTargets = async (residentId, { floorId }) => {
       occupiedCount: room.occupiedCount,
       status: room.status,
       availableBeds: (bedsByRoomId.get(String(room._id)) || []).filter(
-        (bed) => String(bed._id) !== currentBedId
+        (bed) => !currentBedId || String(bed._id) !== currentBedId
       ),
     }))
     .filter((room) => {
       if (room.availableBeds.length === 0) return false;
       if (room.status === 'closed') return false;
-      if (String(room._id) === currentRoomId) return true;
+      if (currentRoomId && String(room._id) === currentRoomId) return true;
       const admittedCount = admittedCountByRoomId.get(String(room._id)) || 0;
       return admittedCount < room.capacity;
     });
@@ -711,7 +714,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
       fullName: resident.fullName,
       residencyStatus: resident.residencyStatus,
     },
-    currentAssignment: mapTransferAssignment(resident),
+    currentAssignment: hasCurrentAssignment ? currentAssignment : null,
     targets,
     ...(infoMessage || {}),
   };
@@ -724,15 +727,17 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   const resident = await residentRepo.findByIdForTransfer(residentId);
   if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   if (resident.residencyStatus !== 'admitted') throw apiErr(CODES.RESIDENT_TRANSFER_NOT_ADMITTED, { statusCode: 400 });
-  if (!resident.roomId || !resident.bedId) throw apiErr(CODES.RESIDENT_TRANSFER_NO_ROOM, { statusCode: 400 });
-  if (String(resident.bedId._id) === String(targetBedId)) throw apiErr(CODES.RESIDENT_TRANSFER_SAME_BED, { statusCode: 400 });
+
+  const hasCurrentAssignment = Boolean(resident.roomId || resident.bedId);
+  const currentBedId = resident.bedId ? String(resident.bedId._id || resident.bedId) : null;
+  if (currentBedId && currentBedId === String(targetBedId)) throw apiErr(CODES.RESIDENT_TRANSFER_SAME_BED, { statusCode: 400 });
 
   const targetRoom = await roomRepo.findById(targetRoomId);
   if (!targetRoom) throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_NOT_FOUND, { statusCode: 404 });
   if (targetRoom.status === 'closed') throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_CLOSED, { statusCode: 400 });
 
-  const sourceRoomId = String(resident.roomId?._id || resident.roomId);
-  const sameRoom = sourceRoomId === String(targetRoomId);
+  const sourceRoomId = resident.roomId ? String(resident.roomId._id || resident.roomId) : null;
+  const sameRoom = sourceRoomId && sourceRoomId === String(targetRoomId);
   if (!sameRoom) {
     const admittedInTarget = await residentRepo.countAdmittedInRoom(targetRoomId);
     if (admittedInTarget >= targetRoom.capacity) {
@@ -745,8 +750,10 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   if (String(targetBed.roomId) !== String(targetRoomId)) throw apiErr(CODES.RESIDENT_TRANSFER_BED_MISMATCH, { statusCode: 400 });
   if (targetBed.status !== 'available' || targetBed.assignedResidentId) throw apiErr(CODES.RESIDENT_TRANSFER_BED_UNAVAILABLE, { statusCode: 400 });
 
-  await bedRepo.releaseBed(resident.bedId._id, new Date());
-  if (!sameRoom) {
+  if (resident.bedId) {
+    await bedRepo.releaseBed(resident.bedId._id, new Date());
+  }
+  if (!sameRoom && resident.roomId) {
     await roomRepo.adjustOccupiedCount(resident.roomId._id, -1);
   }
   await bedRepo.occupyBed(targetBedId, resident._id, new Date());
@@ -757,10 +764,10 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   const updatedResident = await residentRepo.updateRoomAssignment(residentId, { roomId: targetRoomId, bedId: targetBedId });
   if (!updatedResident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
 
-  await roomRepo.syncRoomOccupancy(resident.roomId._id);
-  if (!sameRoom) {
-    await roomRepo.syncRoomOccupancy(targetRoomId);
+  if (resident.roomId) {
+    await roomRepo.syncRoomOccupancy(resident.roomId._id);
   }
+  await roomRepo.syncRoomOccupancy(targetRoomId);
 
   const targetFloorId = targetRoom.floorId?._id || targetRoom.floorId;
   const staffAreasSynced = await syncStaffAreasAfterResidentTransfer(residentId, {
@@ -781,6 +788,74 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
     from: mapTransferAssignment(resident),
     to: mapTransferAssignment(updatedResident),
     staffAreasSynced,
+  };
+};
+
+const adminReleaseResident = async (admin, residentId, req) => {
+  assertResidentId(residentId);
+  const resident = await residentRepo.findByIdForTransfer(residentId);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+
+  const currentRoomId = resident.roomId?._id || resident.roomId;
+  const currentBedId = resident.bedId?._id || resident.bedId;
+
+  if (currentBedId) {
+    await bedRepo.releaseBed(currentBedId, new Date());
+  }
+  if (currentRoomId) {
+    await roomRepo.adjustOccupiedCount(currentRoomId, -1);
+  }
+
+  const updatedResident = await residentRepo.updateById(residentId, {
+    roomId: null,
+    bedId: null,
+    servicePackage: null,
+    residencyStatus: 'pending',
+  });
+
+  const linkedAdmission = await Admission.findOne({ residentId }).sort({ createdAt: -1 });
+  if (linkedAdmission) {
+    await Admission.findByIdAndUpdate(
+      linkedAdmission._id,
+      {
+        servicePackageId: null,
+        assignedServicePackage: null,
+      },
+      { new: true, runValidators: true }
+    );
+  }
+
+  if (currentRoomId) {
+    await roomRepo.syncRoomOccupancy(currentRoomId);
+  }
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'RELEASE_RESIDENT_ROOM_BED',
+    displayAction: 'Giải phóng phòng/giường cư dân',
+    businessModule: 'resident',
+    module: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    beforeData: {
+      roomId: resident.roomId,
+      bedId: resident.bedId,
+      servicePackage: resident.servicePackage,
+      residencyStatus: resident.residencyStatus,
+    },
+    afterData: {
+      roomId: null,
+      bedId: null,
+      servicePackage: null,
+      residencyStatus: 'pending',
+    },
+    req,
+  });
+
+  return {
+    ...apiSuccess(SUCCESS.RESIDENT_UPDATED, { message: 'Giải phóng phòng/giường cư dân thành công.' }),
+    resident: formatResident(updatedResident),
   };
 };
 
@@ -1280,6 +1355,7 @@ module.exports = {
   getResidentDetail,
   getTransferTargets,
   transferResidentToRoom,
+  adminReleaseResident,
   listResidentsForInitialHealth,
   listResidentsForPreExisting,
   listResidentsForDrugAllergies,

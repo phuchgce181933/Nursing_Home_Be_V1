@@ -30,6 +30,22 @@ const normalizeCost = (value) => {
   return Number.isNaN(amount) ? 0 : Math.max(0, amount);
 };
 
+const normalizeInvoiceIssueDate = (invoice) => {
+  if (!invoice) return invoice;
+  if (!invoice.issuedAt && invoice.createdAt) {
+    invoice.issuedAt = invoice.createdAt;
+  }
+  return invoice;
+};
+
+const applyPaymentPlanToAmount = (amount, paymentPlan) => {
+  const numericAmount = Number(amount) || 0;
+  if (String(paymentPlan || '').toUpperCase() === 'HALF_NOW') {
+    return Math.round(numericAmount / 2);
+  }
+  return numericAmount;
+};
+
 const isUnpaidInvoice = (invoice) => ['DRAFT', 'ISSUED', 'PARTIALLY_PAID'].includes(invoice?.status);
 
 const markInvoiceAsPaid = async (invoiceId) => {
@@ -130,13 +146,15 @@ const buildInvoiceFilter = (query) => {
   const familyAccountId = query.familyAccountId?.trim();
   const minAmount = Number(query.minAmount);
   const maxAmount = Number(query.maxAmount);
+  const andFilters = [];
 
   if (search) {
-    filter.$or = [{ invoiceNumber: { $regex: search, $options: 'i' } }];
+    const searchClauses = [{ invoiceNumber: { $regex: search, $options: 'i' } }];
     if (Types.ObjectId.isValid(search)) {
-      filter.$or.push({ residentId: search });
-      filter.$or.push({ familyAccountId: search });
+      searchClauses.push({ residentId: search });
+      searchClauses.push({ familyAccountId: search });
     }
+    andFilters.push({ $or: searchClauses });
   }
 
   if (invoiceNumber) {
@@ -164,18 +182,26 @@ const buildInvoiceFilter = (query) => {
   }
 
   if (query.issueFrom || query.issueTo) {
-    filter.issuedAt = {};
+    const issueRange = {};
     if (query.issueFrom) {
       const from = new Date(query.issueFrom);
       if (!Number.isNaN(from.getTime())) {
-        filter.issuedAt.$gte = from;
+        issueRange.$gte = from;
       }
     }
     if (query.issueTo) {
       const to = new Date(query.issueTo);
       if (!Number.isNaN(to.getTime())) {
-        filter.issuedAt.$lte = to;
+        issueRange.$lte = to;
       }
+    }
+    if (Object.keys(issueRange).length > 0) {
+      andFilters.push({
+        $or: [
+          { issuedAt: issueRange },
+          { createdAt: issueRange },
+        ],
+      });
     }
   }
 
@@ -193,6 +219,10 @@ const buildInvoiceFilter = (query) => {
         filter.dueDate.$lte = to;
       }
     }
+  }
+
+  if (andFilters.length > 0) {
+    filter.$and = andFilters;
   }
 
   if (query.isOverdue === 'true') {
@@ -356,9 +386,13 @@ const getResidentServicePackagePrice = async (resident) => {
 };
 
 const getLatestMedicationUnitCost = async (medicationId) => {
-  const stocks = await medicationStockRepo.findAll({ medicationId }, { sort: { receivedDate: -1 }, limit: 1 });
+  const stocks = await medicationStockRepo.findAll(
+    { medicationId, costPerUnit: { $exists: true, $ne: null } },
+    { sort: { receivedDate: -1 }, limit: 1 }
+  );
   if (!stocks || stocks.length === 0) return null;
-  return stocks[0].costPerUnit || null;
+  const latestStock = stocks[0];
+  return latestStock.costPerUnit != null ? Number(latestStock.costPerUnit) : null;
 };
 
 const estimateMedicationCostFromPrescription = async (prescription) => {
@@ -379,10 +413,39 @@ const estimateMedicationCostFromPrescription = async (prescription) => {
 
   let estimatedCost = 0;
   for (const item of prescription.items) {
+    if (item.isActive === false) continue;
     const dosageValue = Number(item.dosage);
     const frequency = Number(item.frequency) || 0;
-    const duration = Number(item.duration) || 1;
-    const quantity = Number.isFinite(dosageValue) ? dosageValue * frequency * duration : 0;
+    let effectiveDays = 0;
+
+    if (item.startDate) {
+      const start = new Date(item.startDate);
+      if (!Number.isNaN(start.getTime())) {
+        let end = null;
+        if (item.endDate) {
+          const itemEnd = new Date(item.endDate);
+          if (!Number.isNaN(itemEnd.getTime()) && itemEnd >= start) {
+            end = itemEnd;
+          }
+        }
+        if (prescription.validUntil) {
+          const validUntilEnd = new Date(prescription.validUntil);
+          if (!Number.isNaN(validUntilEnd.getTime()) && validUntilEnd >= start) {
+            end = end ? (validUntilEnd > end ? validUntilEnd : end) : validUntilEnd;
+          }
+        }
+        if (end) {
+          effectiveDays = Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1;
+        }
+      }
+    }
+
+    if (effectiveDays <= 0 && item.duration && Number(item.duration) > 0) {
+      effectiveDays = Number(item.duration);
+    }
+
+    if (effectiveDays <= 0) effectiveDays = 1;
+    const quantity = Number.isFinite(dosageValue) ? dosageValue * frequency * effectiveDays : 0;
     const medicationId = item.medicationId?._id ? item.medicationId._id : item.medicationId;
     const unitCost = unitCostMap[String(medicationId)] || 0;
     estimatedCost += quantity * unitCost;
@@ -475,17 +538,23 @@ const createInvoice = async (user, residentId, body) => {
     if (pendingServiceInvoice) {
       throw new ServiceError('Đã có hóa đơn dịch vụ chưa thanh toán cho cư dân này.', 409);
     }
+    const rawSubTotal = body.items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+    const rawTax = Number(body.tax) || 0;
     const items = body.items.map((it) => ({
       chargeId: it.chargeId,
       description: it.description,
-      amount: Number(it.amount) || 0,
+      amount: applyPaymentPlanToAmount(it.amount, body.paymentPlan),
       category: it.category || 'SERVICE',
     }));
     const subTotal = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
-    const tax = Number(body.tax) || 0;
+    const tax = applyPaymentPlanToAmount(rawTax, body.paymentPlan);
     const totalAmount = subTotal + tax;
+    const originalTotalAmount = rawSubTotal + rawTax;
+    const remainingAmount = String(body.paymentPlan || 'FULL').toUpperCase() === 'HALF_NOW'
+      ? Math.max(0, originalTotalAmount - totalAmount)
+      : 0;
     const { start, end } = buildDefaultBillingPeriod();
-    const invoice = await invoiceRepo.create({
+    const invoiceData = {
       invoiceNumber: buildInvoiceNumber(),
       residentId,
       familyAccountId,
@@ -497,9 +566,14 @@ const createInvoice = async (user, residentId, body) => {
       tax,
       total: totalAmount,
       totalAmount,
+      originalTotalAmount,
+      remainingAmount,
+      paymentPlan: body.paymentPlan || 'FULL',
       status: totalAmount === 0 ? 'PAID' : 'ISSUED',
       dueDate: body.dueDate ? new Date(body.dueDate) : end,
-    });
+    };
+
+    const invoice = await invoiceRepo.create(invoiceData);
 
     const chargeIds = items
       .map((it) => it.chargeId)
@@ -548,20 +622,31 @@ const createInvoice = async (user, residentId, body) => {
       throw new ServiceError('Đã có hóa đơn dịch vụ chưa thanh toán cho cư dân này.', 409);
     }
     const serviceTotal = roomCost + careServiceCost + otherCost;
+    const effectiveRoomCost = applyPaymentPlanToAmount(roomCost, body.paymentPlan);
+    const effectiveCareServiceCost = applyPaymentPlanToAmount(careServiceCost, body.paymentPlan);
+    const effectiveOtherCost = medicationCost > 0 ? 0 : applyPaymentPlanToAmount(otherCost, body.paymentPlan);
+    const serviceInvoiceTotal = effectiveRoomCost + effectiveCareServiceCost + effectiveOtherCost;
+
+    const fullServiceTotal = roomCost + careServiceCost + otherCost;
     const serviceInvoice = await invoiceRepo.create({
       invoiceNumber: buildInvoiceNumber(),
       residentId,
       familyAccountId,
       billingPeriodStart: body.billingPeriodStart ? new Date(body.billingPeriodStart) : start,
       billingPeriodEnd: body.billingPeriodEnd ? new Date(body.billingPeriodEnd) : end,
-      roomCost,
+      roomCost: effectiveRoomCost,
       medicationCost: 0,
-      careServiceCost,
-      otherCost: medicationCost > 0 ? 0 : otherCost,
-      totalAmount: serviceTotal,
-      total: serviceTotal,
+      careServiceCost: effectiveCareServiceCost,
+      otherCost: effectiveOtherCost,
+      totalAmount: serviceInvoiceTotal,
+      total: serviceInvoiceTotal,
+      originalTotalAmount: fullServiceTotal,
+      remainingAmount: String(body.paymentPlan || 'FULL').toUpperCase() === 'HALF_NOW'
+        ? Math.max(0, fullServiceTotal - serviceInvoiceTotal)
+        : 0,
+      paymentPlan: body.paymentPlan || 'FULL',
       type: 'SERVICE',
-      status: serviceTotal === 0 ? 'PAID' : 'ISSUED',
+      status: serviceInvoiceTotal === 0 ? 'PAID' : 'ISSUED',
       dueDate: body.dueDate ? new Date(body.dueDate) : end,
     });
     createdInvoices.push(serviceInvoice);
@@ -572,6 +657,11 @@ const createInvoice = async (user, residentId, body) => {
     if (pendingMedicationInvoice) {
       throw new ServiceError('Đã có hóa đơn thuốc chưa thanh toán cho đơn thuốc này.', 409);
     }
+    const effectiveMedicationCost = applyPaymentPlanToAmount(medicationCost, body.paymentPlan);
+    const effectiveMedicationOtherCost = applyPaymentPlanToAmount(body.otherCost || 0, body.paymentPlan);
+    const medicationInvoiceTotal = effectiveMedicationCost + effectiveMedicationOtherCost;
+
+    const fullMedicationTotal = medicationCost + (body.otherCost || 0);
     const medicationInvoice = await invoiceRepo.create({
       invoiceNumber: buildInvoiceNumber(),
       residentId,
@@ -580,11 +670,16 @@ const createInvoice = async (user, residentId, body) => {
       billingPeriodStart: body.billingPeriodStart ? new Date(body.billingPeriodStart) : start,
       billingPeriodEnd: body.billingPeriodEnd ? new Date(body.billingPeriodEnd) : end,
       roomCost: 0,
-      medicationCost,
+      medicationCost: effectiveMedicationCost,
       careServiceCost: 0,
-      otherCost: body.otherCost || 0,
-      totalAmount: medicationCost + (body.otherCost || 0),
-      total: medicationCost + (body.otherCost || 0),
+      otherCost: effectiveMedicationOtherCost,
+      totalAmount: medicationInvoiceTotal,
+      total: medicationInvoiceTotal,
+      originalTotalAmount: fullMedicationTotal,
+      remainingAmount: String(body.paymentPlan || 'FULL').toUpperCase() === 'HALF_NOW'
+        ? Math.max(0, fullMedicationTotal - medicationInvoiceTotal)
+        : 0,
+      paymentPlan: body.paymentPlan || 'FULL',
       type: 'MEDICATION',
       status: 'ISSUED',
       dueDate: body.dueDate ? new Date(body.dueDate) : end,
@@ -767,14 +862,17 @@ const adminListInvoices = async (query) => {
     ? query.sortBy
     : 'issuedAt';
   const sortDirection = query.sortOrder === 'asc' ? 1 : -1;
+  const sort = sortBy === 'issuedAt'
+    ? { issuedAt: sortDirection, createdAt: sortDirection }
+    : { [sortBy]: sortDirection };
 
   const [data, total] = await Promise.all([
-    invoiceRepo.findAll(filter, { sort: { [sortBy]: sortDirection }, skip, limit: limitNum }),
+    invoiceRepo.findAll(filter, { sort, skip, limit: limitNum }),
     invoiceRepo.countAll(filter),
   ]);
 
   return {
-    data,
+    data: (data || []).map(normalizeInvoiceIssueDate),
     total,
     page: pageNum,
     limit: limitNum,
@@ -785,7 +883,7 @@ const adminListInvoices = async (query) => {
 const adminGetInvoice = async (invoiceId) => {
   const invoice = await invoiceRepo.findById(invoiceId);
   if (!invoice) throw new ServiceError('Invoice not found', 404);
-  return invoice;
+  return normalizeInvoiceIssueDate(invoice);
 };
 
 const listInvoicesByResident = async (residentId) => {

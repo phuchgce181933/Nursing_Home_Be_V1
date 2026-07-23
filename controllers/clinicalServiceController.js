@@ -121,7 +121,10 @@ const updateService = async (req, res) => {
 
 const deleteService = async (req, res) => {
   try {
-    await ClinicalService.findByIdAndDelete(req.params.id);
+    const svc = await ClinicalService.findById(req.params.id);
+    if (!svc) return res.status(404).json({ message: 'Service not found' });
+    svc.active = false;
+    await svc.save();
     return res.json({ success: true });
   } catch (err) {
     console.error(err.stack || err);

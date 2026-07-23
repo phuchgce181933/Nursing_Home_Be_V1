@@ -1,8 +1,10 @@
 const express = require('express');
+const multer = require('multer');
 const router = express.Router({ mergeParams: true });
 const { recordVitals, getHistory } = require('../controllers/medicalRecordController');
 const { protect, authorize } = require('../middleware/auth');
 
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const STAFF_ROLES = ['admin', 'doctor', 'nurse'];
 const VIEW_ROLES = ['admin', 'doctor', 'nurse', 'family'];
 
@@ -87,7 +89,7 @@ const VIEW_ROLES = ['admin', 'doctor', 'nurse', 'family'];
  *       404:
  *         description: Resident not found
  */
-router.post('/', protect, authorize('doctor', 'nurse'), recordVitals);
+router.post('/', protect, authorize('doctor', 'nurse'), upload.any(), recordVitals);
 
 /**
  * @swagger

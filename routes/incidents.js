@@ -6,6 +6,7 @@ const {
   listIncidents,
   getIncident,
   updateIncidentStatus,
+  reopenIncident,
   assignHandlers,
   exportIncidents,
   getAssignmentConflicts,
@@ -190,6 +191,7 @@ router.get('/:id', getIncident);
  *         description: Incident status updated
  */
 router.patch('/:id/status', updateIncidentStatus);
+router.patch('/:id/reopen', reopenIncident);
 
 /**
  * @swagger

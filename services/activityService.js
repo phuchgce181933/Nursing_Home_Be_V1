@@ -78,6 +78,7 @@ const buildFilterFromQuery = (query) => {
   if (query.status) filter.status = query.status;
   if (query.category) filter.category = query.category;
   if (query.organizerStaffId) filter.organizerStaffId = query.organizerStaffId;
+  if (query.organizerStaffIds) filter.organizerStaffIds = { $in: [query.organizerStaffIds] };
   if (query.participantResidentIds) filter.participantResidentIds = { $in: query.participantResidentIds };
   else if (query.participantResidentId) filter.participantResidentIds = query.participantResidentId;
   if (query.search) {

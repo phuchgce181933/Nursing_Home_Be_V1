@@ -315,13 +315,18 @@ const getAssignmentConflictsForStaff = async ({ incidentAt, residentIds = [], st
     ...(residentObjectIds.length ? { residentId: { $in: residentObjectIds } } : {}),
   }).lean();
 
-  // Also fetch all tasks and appointments for this staff (past and future) so UI can show full list
-  const allCareTasks = await CareTask.find({ staffProfileId: new mongoose.Types.ObjectId(String(staffProfileId)) }).lean();
+  // Only keep the staff schedule for the incident day so the reassignment UI does not show historical tasks/appointments.
+  const allCareTasks = await CareTask.find({
+    staffProfileId: new mongoose.Types.ObjectId(String(staffProfileId)),
+    workDate: { $gte: dayStart, $lte: dayEnd },
+  }).lean();
   const allAppointments = await CareAppointment.find({
     $or: [
       { doctorStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
       { nurseStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
     ],
+    scheduledStartAt: { $gte: dayStart, $lte: dayEnd },
+    scheduledEndAt: { $gte: dayStart, $lte: dayEnd },
   }).lean();
 
   // careTasks (above) already is limited to the same day; prepare its times
@@ -852,13 +857,13 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
 
   // Build resolution object
   const resolution = {
-    status: payload.status || existing.resolution?.status || '',
     method: payload.method || existing.resolution?.method || '',
     rootCause: payload.rootCause || existing.resolution?.rootCause || '',
     detailedCause: payload.detailedCause || existing.resolution?.detailedCause || '',
     immediateActions: [],
     medical: existing.resolution?.medical || { medications: [], procedures: [], residentCondition: '', needFollowUp: false },
-    result: payload.result || existing.resolution?.result || '',
+    severityAssessment: payload.severityAssessment || existing.resolution?.severityAssessment || '',
+    escalationRequested: payload.escalationRequested || existing.resolution?.escalationRequested || false,
     notes: payload.notes || existing.resolution?.notes || '',
   };
 
@@ -890,8 +895,8 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
   const action = payload.action || '';
   if (action === 'markResolved') {
     // Validate required resolution fields before marking resolved
-    if (!resolution.method || !resolution.rootCause || !resolution.result) {
-      throw new ServiceError('Không thể đánh dấu là đã giải quyết: thiếu thông tin bắt buộc (Phương pháp, Nguyên nhân chính, Kết quả).', 400);
+    if (!resolution.method || !resolution.rootCause || !resolution.severityAssessment) {
+      throw new ServiceError('Không thể đánh dấu là đã giải quyết: thiếu thông tin bắt buộc (Phương pháp, Nguyên nhân chính, Đánh giá mức độ).', 400);
     }
     resolution.completedAt = new Date();
     resolution.resolvedByUserId = currentUser._id;
@@ -938,6 +943,36 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
   return updated;
 };
 
+const reopenIncident = async (currentUser, id, payload) => {
+  const existing = await incidentRepo.findById(id);
+  if (!existing) throw new ServiceError('Incident not found', 404);
+
+  // Only allow reopening resolved incidents that have escalation requested
+  if (existing.status !== 'resolved') {
+    throw new ServiceError('Sự cố phải ở trạng thái đã giải quyết mới có thể mở lại', 400);
+  }
+
+  if (!existing.resolution?.escalationRequested) {
+    throw new ServiceError('Chỉ có thể mở lại sự cố có yêu cầu chuyển cấp', 400);
+  }
+
+  // Update assigned staff if provided
+  const updateData = { status: 'investigating' };
+  if (payload.assignedStaffIds && Array.isArray(payload.assignedStaffIds) && payload.assignedStaffIds.length > 0) {
+    updateData.assignedStaffIds = payload.assignedStaffIds;
+  }
+
+  const updated = await incidentRepo.updateById(id, updateData);
+
+  await notifyIncident(updated, {
+    title: 'Sự cố được mở lại',
+    content: `Sự cố ${updated.incidentType} đã được mở lại để xử lý tiếp.`,
+    emailSubject: `Sự cố được mở lại: ${updated.incidentType}`,
+  });
+
+  return updated;
+};
+
 module.exports = {
   createIncident,
   listIncidents,
@@ -947,4 +982,5 @@ module.exports = {
   updateIncidentResolution,
   exportIncidents,
   getAssignmentConflicts,
+  reopenIncident,
 };

@@ -9,6 +9,10 @@ const Bed = require('../models/bed');
 const Room = require('../models/room');
 const CareAppointment = require('../models/careAppointment');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
+const bedRepo = require('../repositories/bedRepository');
+const roomRepo = require('../repositories/roomRepository');
+const walletService = require('./walletService');
+const paymentRepo = require('../repositories/paymentRepository');
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -593,11 +597,31 @@ const adminListAdmissions = async (query, user) => {
     data.map((admission) => getLatestInvoiceForResident(admission.residentId?._id || admission.residentId))
   );
 
+  const outstandingAmounts = await Promise.all(
+    data.map(async (admission) => {
+      const residentId = admission.residentId?._id || admission.residentId;
+      if (!residentId) return 0;
+      const unpaidInvoices = await invoiceRepo.findUnpaidByResidentId(residentId);
+      const invoiceOutstandingAmounts = await Promise.all(
+        unpaidInvoices.map(async (inv) => {
+          if (String(inv.status).toUpperCase() !== 'PARTIALLY_PAID') {
+            return Number(inv.totalAmount || 0);
+          }
+          const payments = await paymentRepo.findByInvoiceId(inv._id);
+          const paidAmount = payments.reduce((paymentSum, payment) => paymentSum + Number(payment.amount || 0), 0);
+          return Math.max(0, Number(inv.totalAmount || 0) - paidAmount);
+        })
+      );
+      return invoiceOutstandingAmounts.reduce((sum, amount) => sum + amount, 0);
+    })
+  );
+
   return {
     data: data.map((a, index) => {
       const formatted = formatAdmission(a, { includeFamily: true });
       formatted.latestInvoice = latestInvoices[index] || null;
       formatted.latestInvoiceStatus = formatted.latestInvoice?.status?.toString().toLowerCase?.() || null;
+      formatted.outstandingAmount = outstandingAmounts[index] || 0;
       return formatted;
     }),
     total,
@@ -621,6 +645,18 @@ const adminGetAdmission = async (admissionId, user) => {
   const formatted = formatAdmission(admission, { includeFamily: true });
   formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
   formatted.latestInvoice = await getLatestInvoiceForResident(admission.residentId?._id || admission.residentId);
+  const unpaidInvoices = await invoiceRepo.findUnpaidByResidentId(admission.residentId?._id || admission.residentId);
+  const unpaidOutstandingAmounts = await Promise.all(
+    unpaidInvoices.map(async (inv) => {
+      if (String(inv.status).toUpperCase() !== 'PARTIALLY_PAID') {
+        return Number(inv.totalAmount || 0);
+      }
+      const payments = await paymentRepo.findByInvoiceId(inv._id);
+      const paidAmount = payments.reduce((paymentSum, payment) => paymentSum + Number(payment.amount || 0), 0);
+      return Math.max(0, Number(inv.totalAmount || 0) - paidAmount);
+    })
+  );
+  formatted.outstandingAmount = unpaidOutstandingAmounts.reduce((sum, amount) => sum + amount, 0);
   return { admission: formatted };
 };
 
@@ -1395,6 +1431,7 @@ const cancelAdmissionContract = async (admin, admissionId, body, req) => {
     contractStatus: 'cancelled',
     contractCancelledAt: new Date(),
     contractCancellationReason: cancellationReason,
+    status: 'new_request',
   });
 
   await createAuditLog({
@@ -1404,12 +1441,82 @@ const cancelAdmissionContract = async (admin, admissionId, body, req) => {
     module: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status, contractNumber: admission.contractNumber, contractStatus: admission.contractStatus || 'active' },
-    afterData: { requestCode: updated.requestCode, status: updated.status, contractNumber: updated.contractNumber, contractStatus: updated.contractStatus, cancellationReason },
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      contractNumber: admission.contractNumber,
+      contractStatus: admission.contractStatus || 'active',
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      contractNumber: updated.contractNumber,
+      contractStatus: updated.contractStatus,
+      cancellationReason,
+    },
     req,
   });
 
   return { message: 'Hủy hợp đồng thành công.', admission: formatAdmission(updated) };
+};
+
+const resolveMonthlyPackagePrice = async (packageRef) => {
+  if (!packageRef) return 0;
+  if (typeof packageRef === 'object' && packageRef.monthlyPrice != null) {
+    return Number(packageRef.monthlyPrice) || 0;
+  }
+
+  const pkg = await servicePackageRepo.findById(packageRef);
+  return Number(pkg?.monthlyPrice) || 0;
+};
+
+const getRemainingContractMonths = (admission) => {
+  const contractStartDate = admission?.contractStartDate ? new Date(admission.contractStartDate) : null;
+  const contractEndDate = admission?.contractEndDate ? new Date(admission.contractEndDate) : null;
+  if (!contractEndDate) return 0;
+
+  const now = new Date();
+  const periodStart = contractStartDate && contractStartDate > now ? contractStartDate : now;
+  const remainingMs = contractEndDate.getTime() - periodStart.getTime();
+  if (remainingMs <= 0) return 0;
+
+  const remainingDays = remainingMs / (1000 * 60 * 60 * 24);
+  return Math.max(0, remainingDays / 30);
+};
+
+const createChangePackageAdjustmentInvoice = async ({ residentId, familyAccountId, billingPeriodStart, billingPeriodEnd, careServiceCost, admin }) => {
+  if (!careServiceCost || careServiceCost === 0) return null;
+
+  const invoice = await invoiceRepo.create({
+    invoiceNumber: `INV-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}-${Math.floor(Math.random() * 9000) + 1000}`,
+    residentId,
+    familyAccountId,
+    billingPeriodStart,
+    billingPeriodEnd,
+    roomCost: 0,
+    medicationCost: 0,
+    careServiceCost,
+    otherCost: 0,
+    totalAmount: careServiceCost,
+    total: careServiceCost,
+    type: 'SERVICE',
+    status: 'ISSUED',
+    dueDate: billingPeriodEnd || billingPeriodStart,
+    issuedAt: new Date(),
+    createdAt: new Date(),
+  });
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'CREATE_ADMISSION_PACKAGE_CHANGE_ADJUSTMENT_INVOICE',
+    module: 'billing',
+    targetEntityType: 'Invoice',
+    targetEntityId: invoice._id,
+    afterData: invoice.toObject(),
+  });
+
+  return invoice;
 };
 
 const changeContractServicePackage = async (admin, admissionId, body, req) => {
@@ -1427,6 +1534,25 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
   if (!servicePackage.isActive) throw new ServiceError('Gói dịch vụ này đã ngừng hoạt động.', 400);
 
   const residentId = admission.residentId?._id || admission.residentId;
+  const resident = residentId ? await Resident.findById(residentId) : null;
+  if (resident?.roomId) {
+    const room = await Room.findById(resident.roomId);
+    if (room) {
+      const pkgTier = servicePackage.tier || 'standard';
+      const allowedTypes = servicePackage.allowedRoomTypes?.length
+        ? servicePackage.allowedRoomTypes
+        : (pkgTier === 'vip' ? ['icu', 'isolation'] : pkgTier === 'premium' ? ['premium'] : ['standard']);
+
+      if (!allowedTypes.includes(room.roomType)) {
+        const typeNames = { standard: 'Standard', premium: 'Premium', icu: 'ICU', isolation: 'Isolation' };
+        const allowedStr = allowedTypes.map((t) => typeNames[t] || t).join(' / ');
+        throw new ServiceError(
+          `Không thể đổi gói sang '${servicePackage.name}' vì phòng hiện tại (${room.roomType}) không phù hợp. Vui lòng đổi phòng sang loại ${allowedStr} trước khi đổi gói.`,
+          400
+        );
+      }
+    }
+  }
   const residentInvoices = residentId
     ? await invoiceRepo.findByResidentId(residentId, { sort: { issuedAt: -1 }, limit: 100 })
     : [];
@@ -1435,10 +1561,6 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
     && Number(invoice.careServiceCost || 0) > 0
     && invoice.status !== 'CANCELLED'
   );
-  const paidInvoice = contractInvoices.find((invoice) => ['PAID', 'PARTIALLY_PAID'].includes(invoice.status));
-  if (paidInvoice) {
-    throw new ServiceError('Không thể đổi gói vì hóa đơn dịch vụ đã được thanh toán.', 400);
-  }
 
   const invoicesToCancel = contractInvoices.filter((invoice) => ['DRAFT', 'ISSUED'].includes(invoice.status));
   for (const invoice of invoicesToCancel) {
@@ -1446,6 +1568,35 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
       status: 'CANCELLED',
       cancellationReason: 'Đã hủy do thay đổi gói dịch vụ.',
     });
+  }
+
+  const previousPackageMonthlyPrice = await resolveMonthlyPackagePrice(admission.servicePackageId);
+  const newPackageMonthlyPrice = Number(servicePackage.monthlyPrice) || 0;
+  const remainingMonths = getRemainingContractMonths(admission);
+  const previousRemainingAmount = previousPackageMonthlyPrice * remainingMonths;
+  const newRemainingAmount = newPackageMonthlyPrice * remainingMonths;
+  const priceDelta = newRemainingAmount - previousRemainingAmount;
+
+  const familyAccountId = admission.familyAccountId?._id || admission.familyAccountId || null;
+  const adjustmentInvoice = priceDelta > 0
+    ? await createChangePackageAdjustmentInvoice({
+        residentId,
+        familyAccountId,
+        billingPeriodStart: new Date(),
+        billingPeriodEnd: admission.contractEndDate ? new Date(admission.contractEndDate) : new Date(),
+        careServiceCost: priceDelta,
+        admin,
+      })
+    : null;
+
+  if (priceDelta < 0) {
+    const refundAmount = Math.abs(priceDelta);
+    await walletService.refundToWallet(
+      familyAccountId,
+      refundAmount,
+      'Hoàn tiền phần chênh lệch do đổi gói dịch vụ.',
+      adjustmentInvoice?._id || null
+    );
   }
 
   const previousPackage = admission.servicePackageId;
@@ -1466,17 +1617,36 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
     module: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, servicePackageId: previousPackage, assignedServicePackage: previousPackageName },
+    beforeData: {
+      requestCode: admission.requestCode,
+      servicePackageId: previousPackage,
+      assignedServicePackage: previousPackageName,
+      previousPackageMonthlyPrice,
+      newPackageMonthlyPrice,
+      remainingMonths,
+      priceDelta,
+    },
     afterData: {
       requestCode: updated.requestCode,
       servicePackageId: servicePackage._id,
       assignedServicePackage: servicePackage.name,
       cancelledInvoiceIds: invoicesToCancel.map((invoice) => invoice._id),
+      adjustmentInvoiceId: adjustmentInvoice?._id || null,
+      priceDelta,
     },
     req,
   });
 
-  return { message: 'Đổi gói dịch vụ thành công.', admission: formatAdmission(updated) };
+  return {
+    message: 'Đổi gói dịch vụ thành công.',
+    admission: formatAdmission(updated),
+    adjustment: {
+      action: priceDelta > 0 ? 'upgrade' : priceDelta < 0 ? 'downgrade' : 'no-change',
+      priceDelta,
+      remainingMonths,
+      invoiceId: adjustmentInvoice?._id || null,
+    },
+  };
 };
 
 /**
@@ -1488,9 +1658,8 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
  * @returns {object} { message, admission }
  */
 const extendAdmissionContract = async (admin, admissionId, body) => {
-  const { contractEndDate } = body;
+  const { contractStartDate, contractEndDate, servicePackageId, assignedBedId } = body;
 
-  // Validate input
   if (!contractEndDate) {
     throw { statusCode: 400, message: 'contractEndDate is required' };
   }
@@ -1500,24 +1669,204 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
     throw { statusCode: 400, message: 'Invalid contractEndDate format' };
   }
 
-  // Find admission
-  const admission = await admissionRepo.findByIdForAdmin(admissionId);
-  if (!admission) {
-    throw { statusCode: 404, message: 'Admission not found' };
+  // Validate contractStartDate if provided
+  let newStartDate = null;
+  if (contractStartDate) {
+    newStartDate = new Date(contractStartDate);
+    if (isNaN(newStartDate.getTime())) {
+      throw { statusCode: 400, message: 'Invalid contractStartDate format' };
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (newStartDate < today) {
+      throw { statusCode: 400, message: 'Contract start date cannot be in the past' };
+    }
   }
 
-  // Verify current date is before new end date
   const now = new Date();
   if (newEndDate <= now) {
     throw { statusCode: 400, message: 'New contract end date must be in the future' };
   }
 
-  // Update contract end date
-  const oldEndDate = admission.contractEndDate;
-  admission.contractEndDate = newEndDate;
-  const updated = await admission.save();
+  const admission = await admissionRepo.findByIdForAdmin(admissionId);
+  if (!admission) {
+    throw { statusCode: 404, message: 'Admission not found' };
+  }
 
-  // Log action
+  const oldEndDate = admission.contractEndDate;
+  const oldServicePackageId = admission.servicePackageId;
+  const updateData = {
+    contractEndDate: newEndDate,
+  };
+
+  let selectedPackage = null;
+  if (servicePackageId) {
+    const pkg = await servicePackageRepo.findById(servicePackageId);
+    if (!pkg) {
+      throw { statusCode: 404, message: 'Service package not found' };
+    }
+    if (!pkg.isActive) {
+      throw { statusCode: 400, message: 'Service package is not active' };
+    }
+    selectedPackage = pkg;
+    updateData.servicePackageId = pkg._id;
+    updateData.assignedServicePackage = pkg.name;
+  } else if (admission.servicePackageId) {
+    selectedPackage = await servicePackageRepo.findById(admission.servicePackageId);
+  }
+
+  let targetBed = null;
+  let targetRoomId = null;
+  const residentId = admission.residentId?._id || admission.residentId || null;
+  const resident = residentId ? await Resident.findById(residentId) : null;
+  const currentBedId = admission.assignedBedId?._id || admission.assignedBedId || resident?.bedId || null;
+  const currentRoomId = admission.assignedRoomId?._id || admission.assignedRoomId || resident?.roomId || null;
+  const desiredBedId = assignedBedId || currentBedId;
+
+  if (desiredBedId) {
+    targetBed = await Bed.findById(desiredBedId);
+    if (!targetBed) {
+      throw { statusCode: 404, message: 'Bed not found' };
+    }
+
+    const bedAssignedToResident = targetBed.assignedResidentId?.toString?.() || null;
+    const isSameResidentBed = residentId && bedAssignedToResident && bedAssignedToResident === residentId.toString();
+    if (targetBed.status !== 'available' && !isSameResidentBed) {
+      throw { statusCode: 400, message: 'Bed is not available' };
+    }
+
+    targetRoomId = targetBed.roomId;
+    if (selectedPackage) {
+      const pkgTier = selectedPackage.tier || 'standard';
+      const allowedTypes = selectedPackage.allowedRoomTypes?.length
+        ? selectedPackage.allowedRoomTypes
+        : (pkgTier === 'vip' ? ['icu', 'isolation'] : pkgTier === 'premium' ? ['premium'] : ['standard']);
+
+      const room = await Room.findById(targetRoomId);
+      if (room && !allowedTypes.includes(room.roomType)) {
+        const typeNames = { standard: 'Standard', premium: 'Premium', icu: 'ICU', isolation: 'Isolation' };
+        const allowedStr = allowedTypes.map((t) => typeNames[t] || t).join(' / ');
+        throw { statusCode: 400, message: `Không thể chọn phòng này cho gói '${selectedPackage.name}': chỉ được chọn loại ${allowedStr}.` };
+      }
+    }
+    updateData.assignedBedId = targetBed._id;
+    updateData.assignedRoomId = targetRoomId;
+  } else if (currentRoomId) {
+    updateData.assignedRoomId = currentRoomId;
+  }
+
+  if (newStartDate) {
+    updateData.contractStartDate = newStartDate;
+  }
+
+  if (admission.contractStatus === 'cancelled') {
+    updateData.contractStatus = 'active';
+  }
+  if (admission.status === 'new_request' || admission.status === 'pending') {
+    updateData.status = 'contracting';
+  }
+
+  const updated = await admissionRepo.updateAdmission(admissionId, updateData);
+
+  let residentWasCreated = false;
+  let residentToReturn = resident;
+  if (residentId) {
+    residentToReturn = await Resident.findById(residentId);
+    if (residentToReturn) {
+      residentToReturn.residencyStatus = 'admitted';
+      residentToReturn.admittedAt = residentToReturn.admittedAt || new Date();
+      if (updateData.servicePackageId || admission.assignedServicePackage) {
+        residentToReturn.servicePackage = updateData.assignedServicePackage || admission.assignedServicePackage || residentToReturn.servicePackage;
+      }
+      if (targetBed) {
+        residentToReturn.bedId = targetBed._id;
+      }
+      if (targetRoomId) {
+        residentToReturn.roomId = targetRoomId;
+      }
+      await residentToReturn.save();
+    }
+  }
+
+  if (!residentToReturn) {
+    const residentCode = await generateResidentCode();
+    const applicant = admission.applicant || {};
+    residentToReturn = await Resident.create({
+      residentCode,
+      fullName: applicant.fullName || 'Unknown',
+      dateOfBirth: applicant.dateOfBirth,
+      gender: applicant.gender || 'unknown',
+      citizenId: applicant.citizenId,
+      bloodType: applicant.bloodType || 'unknown',
+      personalAddress: applicant.personalAddress,
+      allergies: applicant.allergies || [],
+      chronicConditions: applicant.chronicConditions || [],
+      initialHealthCondition: applicant.initialHealthCondition,
+      bedId: targetBed?._id || null,
+      roomId: targetRoomId || null,
+      residencyStatus: 'admitted',
+      admittedAt: new Date(),
+      servicePackage: updateData.assignedServicePackage || admission.assignedServicePackage || null,
+      familyPortalAccountIds: admission.familyAccountId ? [admission.familyAccountId] : [],
+      avatarUrl: applicant.avatarUrl,
+      phone: applicant.phone,
+    });
+    residentWasCreated = true;
+  }
+
+  if (targetBed) {
+    const oldAssignedBedId = resident?.bedId || admission.assignedBedId?._id || admission.assignedBedId || null;
+    const oldAssignedRoomId = resident?.roomId || admission.assignedRoomId?._id || admission.assignedRoomId || null;
+
+    if (oldAssignedBedId && oldAssignedBedId.toString() !== targetBed._id.toString()) {
+      await bedRepo.releaseBed(oldAssignedBedId, new Date());
+    }
+
+    await bedRepo.occupyBed(targetBed._id, residentToReturn._id, new Date());
+
+    if (oldAssignedRoomId && oldAssignedRoomId.toString() !== targetRoomId?.toString()) {
+      await roomRepo.adjustOccupiedCount(oldAssignedRoomId, -1);
+    }
+    if (targetRoomId) {
+      await roomRepo.adjustOccupiedCount(targetRoomId, 1);
+    }
+  }
+
+  if (residentToReturn) {
+    const admissionResidentId = admission.residentId?._id || admission.residentId || null;
+    if (!admissionResidentId || admissionResidentId.toString() !== residentToReturn._id.toString()) {
+      updateData.residentId = residentToReturn._id;
+    }
+
+    if ((!residentId && residentWasCreated) || (!admissionResidentId && residentToReturn)) {
+      updateData.status = 'checked_in';
+    }
+
+    await admissionRepo.updateAdmission(admissionId, updateData);
+  }
+
+  const beforeData = {
+    contractStartDate: admission.contractStartDate?.toISOString?.(),
+    contractEndDate: oldEndDate?.toISOString?.(),
+    servicePackageId: oldServicePackageId,
+    status: admission.status,
+    contractStatus: admission.contractStatus,
+  };
+  if (assignedBedId) {
+    beforeData.assignedBedId = admission.assignedBedId;
+  }
+
+  const afterData = {
+    contractStartDate: updated.contractStartDate?.toISOString?.(),
+    contractEndDate: newEndDate.toISOString(),
+    servicePackageId: updated.servicePackageId,
+    contractStatus: updated.contractStatus,
+    status: updated.status,
+  };
+  if (assignedBedId) {
+    afterData.assignedBedId = updated.assignedBedId;
+  }
+
   await createAuditLog({
     actorUserId: admin._id,
     actorRole: admin.role,
@@ -1525,8 +1874,8 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
     module: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { contractEndDate: oldEndDate?.toISOString?.() },
-    afterData: { contractEndDate: newEndDate.toISOString() },
+    beforeData,
+    afterData,
   });
 
   return {

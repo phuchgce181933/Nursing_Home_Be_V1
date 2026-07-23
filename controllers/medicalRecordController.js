@@ -1,16 +1,39 @@
 const medicalRecordService = require('../services/medicalRecordService');
 
+const parseJsonField = (value) => {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
 const recordVitals = async (req, res) => {
   try {
     console.log('[medicalRecordController] recordVitals called');
     console.log('[medicalRecordController] residentId:', req.params.residentId);
     console.log('[medicalRecordController] request body keys:', Object.keys(req.body));
     console.log('[medicalRecordController] selectedServices in body:', req.body.selectedServices);
-    
+
+    const body = {
+      ...req.body,
+      physicalExamination: parseJsonField(req.body.physicalExamination),
+      laboratoryTestResults: parseJsonField(req.body.laboratoryTestResults),
+      urinalysisResults: parseJsonField(req.body.urinalysisResults),
+      ecgResults: parseJsonField(req.body.ecgResults),
+      imagingResults: parseJsonField(req.body.imagingResults),
+      cognitiveFunction: parseJsonField(req.body.cognitiveFunction),
+      functionalStatus: parseJsonField(req.body.functionalStatus),
+      fallRisk: parseJsonField(req.body.fallRisk),
+      nutritionalStatus: parseJsonField(req.body.nutritionalStatus),
+      selectedServices: parseJsonField(req.body.selectedServices),
+    };
+
     const result = await medicalRecordService.recordMedicalRecord(
       req.user,
       req.params.residentId,
-      req.body,
+      body,
       req
     );
     console.log('[medicalRecordController] recordMedicalRecord returned successfully');

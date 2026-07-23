@@ -6,6 +6,7 @@ const {
   adminGetResident,
   adminUpdatePersonalInfo,
   adminUpdateFamilyInfo,
+  adminReleaseResident,
 } = require('../controllers/residentController');
 const { protect, authorize } = require('../middleware/auth');
 const multer = require('multer');
@@ -178,6 +179,30 @@ router.get('/', adminManager, adminListResidents);
  *         description: Resident not found
  */
 router.get('/:residentId', adminManager, adminGetResident);
+
+/**
+ * @swagger
+ * /api/admin/residents/{residentId}/release:
+ *   patch:
+ *     summary: Release resident room/bed assignment (Admin)
+ *     tags: [Admin - Resident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Resident room/bed assignment released
+ *       400:
+ *         description: Invalid operation
+ *       404:
+ *         description: Resident not found
+ */
+router.patch('/:residentId/release', adminOnly, adminReleaseResident);
 
 /**
  * @swagger

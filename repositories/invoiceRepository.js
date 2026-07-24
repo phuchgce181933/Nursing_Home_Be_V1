@@ -4,6 +4,8 @@ const create = async (data) => Invoice.create(data);
 
 const findById = async (id) => Invoice.findById(id).populate('residentId familyAccountId');
 
+const findByPayosOrderCode = async (orderCode) => Invoice.find({ payosOrderCode: Number(orderCode) });
+
 const updateById = async (id, update) =>
   Invoice.findByIdAndUpdate(id, update, { new: true });
 
@@ -18,6 +20,7 @@ const countAll = async (filter) => Invoice.countDocuments(filter);
 module.exports = {
   create,
   findById,
+  findByPayosOrderCode,
   updateById,
   findByResidentId,
   findAll,

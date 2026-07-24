@@ -55,6 +55,9 @@ const collectErrors = (checks) => {
   return errors.length ? errors.join('; ') : null;
 };
 
+// Escapes regex metacharacters so user-supplied search text is safe to embed in `new RegExp()`.
+const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 module.exports = {
   validateFullName,
   validateEmail,
@@ -63,4 +66,5 @@ module.exports = {
   validatePassword,
   validateDateOfBirth,
   collectErrors,
+  escapeRegex,
 };

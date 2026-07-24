@@ -194,11 +194,13 @@ const generateWalletTopupUrl = async (req, res) => {
   }
 };
 
+// Client-supplied "status" is never trusted directly — the real payment status is always
+// re-verified server-to-server with PayOS before the wallet is credited.
 const confirmWalletTopup = async (req, res) => {
   try {
-    const { topupId, status } = req.body;
-    if (topupId && status === 'PAID') {
-      await walletService.confirmTopup(req.user._id, topupId, topupId);
+    const { topupId } = req.body;
+    if (topupId) {
+      await walletService.verifyAndConfirmTopup(req.user._id, topupId);
     }
     const walletBalance = await walletService.getWalletBalance(req.user);
     res.json({ success: true, message: 'Kiểm tra trạng thái nạp tiền', data: walletBalance });

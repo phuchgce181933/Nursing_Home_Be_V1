@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const OtpSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: false },
   phone: { type: String, required: true },
   code: { type: String, required: true },
   purpose: { type: String, required: true },

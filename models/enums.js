@@ -1,4 +1,4 @@
-const ROLES = ['admin', 'doctor', 'nurse', 'caregiver', 'pharmacist', 'family', 'system'];
+const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'caregiver', 'pharmacist', 'family', 'system'];
 const NON_ASSIGNABLE_ROLES = ['admin'];
 const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'caregiver'];
 const CARE_TASK_ASSIGNEE_ROLES = ['nurse', 'doctor', 'caregiver'];
@@ -55,6 +55,7 @@ const NOTIFICATION_CATEGORIES = ['incident', 'health', 'appointment', 'activity'
 const DELIVERY_CHANNELS = ['in_app', 'email', 'sms', 'push'];
 const SUPPORT_REQUEST_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
 const FACILITY_TOUR_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled'];
+const RESIDENT_VISIT_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'];
 const SERVICE_PACKAGE_TIERS = ['basic', 'standard', 'premium', 'vip'];
 
 const LEAVE_REQUEST_TYPES = ['annual', 'sick', 'emergency', 'unpaid', 'other'];
@@ -100,6 +101,7 @@ module.exports = {
   DELIVERY_CHANNELS,
   SUPPORT_REQUEST_STATUSES,
   FACILITY_TOUR_STATUSES,
+  RESIDENT_VISIT_STATUSES,
   SERVICE_PACKAGE_TIERS,
   LEAVE_REQUEST_TYPES,
   LEAVE_REQUEST_STATUSES,

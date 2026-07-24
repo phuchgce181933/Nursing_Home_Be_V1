@@ -18,9 +18,15 @@ const auditLogger = require('./middleware/auditLogger');
 
 const app = express();
 
-// Configure CORS to allow requests from frontend
+// Configure CORS to allow requests from frontend. CORS_ORIGINS is a comma-separated list of
+// additional allowed origins (e.g. the deployed web app's domain) layered on top of the local
+// dev defaults, so a single deploy config doesn't have to hardcode/replace this list in code.
+const extraOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:8081'],
+  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:8081', ...extraOrigins],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -75,10 +81,15 @@ app.use('/api/residents', require('./routes/residents'));
 app.use('/api/leave-requests', require('./routes/leaveRequests'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
+app.use('/api/resident-visits', require('./routes/staffResidentVisits'));
+app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
 // expose conversations router at root path as well for legacy or direct calls
 app.use('/conversations', require('./routes/conversations'));
+// canonical mount: works for every authenticated role (fixes doctor/nurse 404s that
+// happened when the frontend derived the API prefix from the current URL segment)
+app.use('/api/conversations', require('./routes/conversations'));
 app.use('/api/payos', require('./routes/payos'));
 app.use('/payos', require('./routes/payos'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
@@ -95,6 +106,7 @@ app.use('/api/caregiver/hygiene-activities', require('./routes/caregiverHygieneA
 app.use('/api/caregiver/daily-behaviors', require('./routes/caregiverDailyBehaviors'));
 app.use('/api/caregiver/diet-plans', require('./routes/caregiverDietPlans'));
 app.use('/api/caregiver/rehabilitation-schedules', require('./routes/caregiverRehabilitationSchedules'));
+app.use('/api/staff/assigned-residents', require('./routes/staffAssignedResidents'));
 
 app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
 app.use('/api/medications', require('./routes/scheduleRoutes'));
@@ -162,6 +174,9 @@ app.use((req, res) => {
 // global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ message: 'Internal server error' });
+  res.status(err.statusCode || 500).json({
+    message: err.message || 'Internal server error',
+    errorCode: err.errorCode,
+  });
 });
 module.exports = app;

@@ -52,7 +52,7 @@ const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {},
 const verifyOtp = async ({ userId, otpId, code, purpose = 'wallet_payment' }) => {
   const otp = await Otp.findById(otpId);
   if (!otp) throw new ServiceError('OTP not found or expired', 400);
-  if (String(otp.userId) !== String(userId)) throw new ServiceError('OTP does not belong to user', 403);
+  if (userId && otp.userId && String(otp.userId) !== String(userId)) throw new ServiceError('OTP does not belong to user', 403);
   if (otp.purpose !== purpose) throw new ServiceError('OTP purpose mismatch', 400);
   if (otp.used) throw new ServiceError('OTP already used', 400);
   if (otp.attempts >= MAX_ATTEMPTS) throw new ServiceError('Too many attempts', 400);

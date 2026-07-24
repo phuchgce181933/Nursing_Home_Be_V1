@@ -228,6 +228,19 @@ const updateDrugAllergies = async (req, res) => {
   }
 };
 
+// UC-132: Doctor/Nurse export of a resident's health report (CSV).
+const downloadResidentReport = async (req, res) => {
+  try {
+    const familyPortalService = require('../services/familyPortalService');
+    const { csv, filename } = await familyPortalService.staffDownloadReport(req.user, req.params.residentId, req.query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send('﻿' + csv);
+  } catch (err) {
+    sendApiError(res, err);
+  }
+};
+
 const adminCreateResident = async (req, res) => {
   try {
     const result = await residentService.adminCreateResident(req.user, req.body, req);
@@ -311,6 +324,7 @@ module.exports = {
   updatePreExistingConditions,
   getDrugAllergies,
   updateDrugAllergies,
+  downloadResidentReport,
   getResidentFamilyInfo,
   addEmergencyContact,
   replaceEmergencyContacts,

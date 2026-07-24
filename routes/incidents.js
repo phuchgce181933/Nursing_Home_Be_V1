@@ -10,7 +10,7 @@ const {
 } = require('../controllers/incidentController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('doctor', 'nurse', 'admin'));
+router.use(protect, authorize('doctor', 'nurse', 'admin', 'caregiver'));
 
 /**
  * @swagger

@@ -219,6 +219,44 @@ router.put('/:id/confirm', protect, authorize(...STAFF_SHIFT_ROLES), ctrl.confir
 
 /**
  * @swagger
+ * /api/shifts/{id}/check-in:
+ *   put:
+ *     tags: [Shifts]
+ *     summary: Check in to a confirmed shift (assigned staff only)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Checked in }
+ *       400: { description: Not in confirmed status, or already checked in }
+ *       403: { description: Admin/manager or non-assigned staff }
+ */
+router.put('/:id/check-in', protect, authorize(...STAFF_SHIFT_ROLES), ctrl.checkInShift);
+
+/**
+ * @swagger
+ * /api/shifts/{id}/check-out:
+ *   put:
+ *     tags: [Shifts]
+ *     summary: Check out of a shift (must have checked in first)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Checked out }
+ *       400: { description: Not checked in yet, or already checked out }
+ *       403: { description: Admin/manager or non-assigned staff }
+ */
+router.put('/:id/check-out', protect, authorize(...STAFF_SHIFT_ROLES), ctrl.checkOutShift);
+
+/**
+ * @swagger
  * /api/shifts/{id}/cancel:
  *   put:
  *     tags: [Shifts]

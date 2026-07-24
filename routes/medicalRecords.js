@@ -4,7 +4,7 @@ const { recordVitals, getHistory } = require('../controllers/medicalRecordContro
 const { protect, authorize } = require('../middleware/auth');
 
 const STAFF_ROLES = ['admin', 'doctor', 'nurse'];
-const VIEW_ROLES = ['admin', 'doctor', 'nurse', 'family'];
+const VIEW_ROLES = ['admin', 'doctor', 'nurse', 'family', 'caregiver'];
 
 /**
  * @swagger
@@ -87,7 +87,7 @@ const VIEW_ROLES = ['admin', 'doctor', 'nurse', 'family'];
  *       404:
  *         description: Resident not found
  */
-router.post('/', protect, authorize('doctor', 'nurse'), recordVitals);
+router.post('/', protect, authorize('doctor', 'nurse', 'caregiver'), recordVitals);
 
 /**
  * @swagger

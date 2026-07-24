@@ -89,6 +89,10 @@ const validatePayload = (body, isUpdate = false) => {
     assertFieldOneOf('completionStatus', row.completionStatus, COMPLETION_STATUSES);
   }
 
+  if (row.notes !== undefined && String(row.notes).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: 'notes', min: 0, max: 500 } });
+  }
+
   return row;
 };
 

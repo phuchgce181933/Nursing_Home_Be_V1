@@ -3,7 +3,7 @@ const ServiceError = require('./serviceError');
 const careAppointmentRepo = require('../repositories/careAppointmentRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const residentRepo = require('../repositories/residentRepository');
-const notificationRepo = require('../repositories/notificationRepository');
+const notificationService = require('./notificationService');
 const { createAuditLog } = require('../utils/auditLog');
 const CareAppointment = require('../models/careAppointment');
 const shiftRepo = require('../repositories/shiftRepository');
@@ -569,7 +569,7 @@ const sendReminder = async (user, id, req) => {
     deliveryChannels: ['in_app'],
   }));
 
-  await notificationRepo.insertMany(notifications);
+  await notificationService.createMany(notifications);
 
   await createAuditLog({
     actorUserId: user._id,

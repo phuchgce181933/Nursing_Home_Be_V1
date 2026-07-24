@@ -6,10 +6,50 @@ const MedicationDispense = require('../models/medicationDispense');
 const Resident = require('../models/resident');
 const Room = require('../models/room');
 const StaffProfile = require('../models/staffProfile');
+const User = require('../models/user');
+const notificationService = require('../services/notificationService');
 const { generateSchedulesForItem } = require('../services/scheduleGeneratorService');
 
 const MISSED_REASONS = ['refused', 'asleep', 'vomiting', 'hospitalized', 'other'];
-const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+const ONE_HOUR_MS = 60 * 60 * 1000;
+
+// Notify the prescribing doctor whenever a nurse marks a dose taken/late/missed.
+// Best-effort: a notification failure must never block the medication record itself.
+const notifyDoctorOfSchedule = async (schedule, prescription, eventLabel) => {
+  try {
+    const doctorId = prescription?.doctorId;
+    if (!doctorId) return;
+
+    const [doctor, resident] = await Promise.all([
+      User.findById(doctorId).select('_id'),
+      Resident.findById(schedule.residentId).select('fullName'),
+    ]);
+    if (!doctor) return;
+
+    const residentName = resident?.fullName || 'bệnh nhân';
+    const timeStr = schedule.scheduledTime.toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+
+    let content = `${residentName} đã ${eventLabel} thuốc ${schedule.medicationName} (lịch ${timeStr}).`;
+    if (schedule.notes) content += ` Ghi chú: ${schedule.notes}`;
+    if (schedule.missedReason) content += ` Lý do: ${schedule.missedReason}`;
+
+    await notificationService.createMany([{
+      recipientUserId: doctor._id,
+      category: 'health',
+      title: 'Cập nhật dùng thuốc',
+      content,
+      targetEntityType: 'MedicationSchedule',
+      targetEntityId: schedule._id,
+      deliveryChannels: ['in_app'],
+    }]);
+  } catch (err) {
+    console.error('[Medication] Doctor notification failed (non-blocking):', err.message);
+  }
+};
 
 // ── Scope helpers ─────────────────────────────────────────────────────────────
 
@@ -410,6 +450,8 @@ const getDailySchedule = async (req, res) => {
         markedBy: s.markedBy || null,
         markedAt: s.markedAt || null,
         actualTimeTaken: s.actualTimeTaken || null,
+        administrationTiming: s.administrationTiming || null,
+        missedReason: s.missedReason || null,
         notes: s.notes || null,
       });
     }
@@ -497,7 +539,9 @@ const markTaken = async (req, res) => {
       return res.status(400).json({ success: false, message: 'actualTimeTaken must be a valid ISO date' });
     }
 
-    const late = takenAt.getTime() - schedule.scheduledTime.getTime() > TWO_HOURS_MS;
+    const diffMs = takenAt.getTime() - schedule.scheduledTime.getTime();
+    const late = diffMs > ONE_HOUR_MS;
+    schedule.administrationTiming = diffMs < 0 ? 'early' : late ? 'late' : 'on_time';
     schedule.status = late ? 'LATE_TAKEN' : 'TAKEN';
     schedule.markedBy = req.user._id;
     schedule.markedAt = new Date();
@@ -505,6 +549,12 @@ const markTaken = async (req, res) => {
     if (notes !== undefined) schedule.notes = notes;
 
     await schedule.save();
+
+    const takenEventLabel =
+      schedule.administrationTiming === 'early' ? 'dùng thuốc sớm'
+        : schedule.administrationTiming === 'late' ? 'dùng thuốc muộn'
+        : 'dùng thuốc';
+    await notifyDoctorOfSchedule(schedule, prescription, takenEventLabel);
 
     // Auto-create MedicationDispense to deduct inventory — compute quantity from prescription item dosage
     if (medicationId) {
@@ -587,6 +637,7 @@ const markMissed = async (req, res) => {
     await schedule.save();
 
     const prescription = await Prescription.findById(schedule.prescriptionId);
+    await notifyDoctorOfSchedule(schedule, prescription, 'bỏ lỡ liều');
     await maybeCompletePrescriptionItem(prescription, schedule.prescriptionItemId, req.user._id);
 
     await schedule.populate('markedBy', 'fullName role');

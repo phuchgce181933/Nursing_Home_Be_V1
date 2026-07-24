@@ -74,6 +74,13 @@ const validateIntakePayload = (body, isUpdate = false) => {
     assertFieldOneOf('intakeStatus', row.intakeStatus, INTAKE_STATUSES);
   }
 
+  if (row.notes !== undefined && String(row.notes).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: 'notes', min: 0, max: 500 } });
+  }
+  if (row.plannedMealName !== undefined && String(row.plannedMealName).trim().length > 200) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: 'plannedMealName', min: 0, max: 200 } });
+  }
+
   const status = row.intakeStatus;
   if (status === 'partial' || (isUpdate && row.portionPercent !== undefined)) {
     const pct = row.portionPercent;

@@ -25,36 +25,41 @@ const submitSupportRequest = async (user, payload /*, req */) => {
   return doc;
 };
 
+const isStaffRole = (role) => role === 'admin' || role === 'manager';
+
 const listSupportRequests = async (user, query) => {
   const page = Number(query.page) || 1;
   const limit = Math.min(Number(query.limit) || 20, 100);
   const filter = {};
-  // family users only see their own requests; admin can see all or filter by familyAccountId
-  if (user.role === 'family') {
+  // family users only see their own requests; staff can see all or filter by familyAccountId
+  if (!isStaffRole(user.role)) {
     filter.familyAccountId = new mongoose.Types.ObjectId(user._id || user.id);
-  } else if (user.role === 'admin' && query.familyAccountId) {
+  } else if (query.familyAccountId) {
     filter.familyAccountId = new mongoose.Types.ObjectId(query.familyAccountId);
   }
 
   if (query.status) filter.status = query.status;
 
   const total = await supportRequestRepo.count(filter);
-  const populate = user.role === 'admin' ? FAMILY_POPULATE : null;
-  const items = await supportRequestRepo.find({ filter, skip: (page - 1) * limit, limit, populate });
+  const populate = isStaffRole(user.role) ? FAMILY_POPULATE : undefined;
+  const items = await supportRequestRepo.find(filter, { page, limit, populate });
 
   return { page, limit, total, items };
 };
 
-const getSupportRequest = async (user, requestId) => {
-  let doc;
-  const populate = user.role === 'admin' ? FAMILY_POPULATE : FAMILY_POPULATE; // show family info for both roles
-  if (user.role === 'admin') {
-    doc = await supportRequestRepo.findById(requestId, populate);
-  } else {
-    doc = await supportRequestRepo.findOne({ _id: requestId, familyAccountId: new mongoose.Types.ObjectId(user._id || user.id) }, populate);
+const assertRequestAccess = (doc, user) => {
+  const isOwner = String(doc.familyAccountId) === String(user._id || user.id);
+  if (!isOwner && !isStaffRole(user.role)) {
+    throw { statusCode: 403, message: 'Forbidden' };
   }
+};
 
+const getSupportRequest = async (user, requestId) => {
+  const doc = await supportRequestRepo.findDocById(requestId);
   if (!doc) throw { statusCode: 404, message: 'Support request not found' };
+  assertRequestAccess(doc, user);
+
+  await doc.populate(FAMILY_POPULATE);
   return doc;
 };
 
@@ -62,13 +67,9 @@ const closeSupportRequest = async (user, requestId, body /*, req */) => {
   const action = body && body.action ? body.action : 'close';
   if (!['close', 'cancel'].includes(action)) throw { statusCode: 400, message: 'Invalid action' };
 
-  const doc = await supportRequestRepo.findByIdRaw(requestId);
+  const doc = await supportRequestRepo.findDocById(requestId);
   if (!doc) throw { statusCode: 404, message: 'Support request not found' };
-
-  // ensure family can only close their own requests
-  if (user.role === 'family' && String(doc.familyAccountId) !== String(user._id || user.id)) {
-    throw { statusCode: 403, message: 'Forbidden' };
-  }
+  assertRequestAccess(doc, user);
 
   if (doc.status === 'closed' || doc.status === 'resolved') {
     throw { statusCode: 400, message: 'Request already closed' };
@@ -76,10 +77,34 @@ const closeSupportRequest = async (user, requestId, body /*, req */) => {
 
   doc.status = action === 'cancel' ? 'closed' : 'resolved';
   doc.closedAt = new Date();
-  await supportRequestRepo.save(doc);
+  await doc.save();
 
-  const populated = await supportRequestRepo.findById(doc._id, FAMILY_POPULATE);
-  return populated;
+  await doc.populate(FAMILY_POPULATE);
+  return doc;
+};
+
+const addMessage = async (user, requestId, body) => {
+  const text = body?.text?.trim();
+  if (!text) throw { statusCode: 400, message: 'text is required' };
+
+  const doc = await supportRequestRepo.findDocById(requestId);
+  if (!doc) throw { statusCode: 404, message: 'Support request not found' };
+  assertRequestAccess(doc, user);
+
+  doc.messages.push({
+    senderId: user._id || user.id,
+    senderRole: user.role,
+    text,
+    sentAt: new Date(),
+  });
+
+  if (isStaffRole(user.role) && doc.status === 'open') {
+    doc.status = 'in_progress';
+  }
+
+  await doc.save();
+  await doc.populate(FAMILY_POPULATE);
+  return doc;
 };
 
 module.exports = {
@@ -87,4 +112,5 @@ module.exports = {
   listSupportRequests,
   getSupportRequest,
   closeSupportRequest,
+  addMessage,
 };

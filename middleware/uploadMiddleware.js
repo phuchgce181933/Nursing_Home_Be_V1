@@ -130,4 +130,39 @@ const uploadAvatarAndCertifications = (req, res, next) => {
   });
 };
 
-module.exports = { uploadAvatar, uploadAvatarAndCertifications, uploadToCloudinary, uploadRawFileToCloudinary };
+const uploadResidentPhotos = (req, res, next) => {
+  const handler = upload.array('photos', 10);
+
+  handler(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ message: err.message });
+    }
+    if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+
+    try {
+      if (req.files?.length) {
+        assertCloudinaryReady();
+        const photos = [];
+        for (const file of req.files) {
+          if (!ALLOWED_IMAGE_MIMES.includes(file.mimetype)) {
+            return res.status(400).json({ message: 'Photos must be image files (jpg, png, webp)' });
+          }
+          const result = await uploadImageBuffer(file.buffer, {
+            folder: 'nursing-home/resident-photos',
+            mimeType: file.mimetype,
+          });
+          photos.push({ url: result.secure_url, publicId: result.public_id });
+        }
+        req.body.uploadedPhotos = photos;
+      }
+
+      return next();
+    } catch (error) {
+      return res.status(500).json({ message: 'Upload failed: ' + handleUploadError(error) });
+    }
+  });
+};
+
+module.exports = { uploadAvatar, uploadAvatarAndCertifications, uploadResidentPhotos, uploadToCloudinary, uploadRawFileToCloudinary };

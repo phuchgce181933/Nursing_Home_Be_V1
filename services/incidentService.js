@@ -3,7 +3,7 @@ const Resident = require('../models/resident');
 const StaffProfile = require('../models/staffProfile');
 const User = require('../models/user');
 const incidentRepo = require('../repositories/incidentRepository');
-const notificationRepo = require('../repositories/notificationRepository');
+const notificationService = require('./notificationService');
 const mailService = require('./mailService');
 const ServiceError = require('./serviceError');
 
@@ -190,7 +190,7 @@ const sendNotifications = async (incident, recipients, options = {}) => {
     deliveryChannels: buildDeliveryChannels,
   });
 
-  await notificationRepo.insertMany(notificationDocs);
+  await notificationService.createMany(notificationDocs);
 
   const emailRecipients = recipients.filter((recipient) => Boolean(recipient.email));
   const smsRecipients = recipients.filter((recipient) => Boolean(recipient.phone));
@@ -253,10 +253,31 @@ const notifyIncident = async (incident, options) => {
   }
 };
 
+const MAX_TEXT_LENGTH = 500;
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000; // allow small clock-skew, but block clearly future-dated incidents
+
+const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
+  if (value && value.length > max) {
+    throw new ServiceError(`${fieldName} must be at most ${max} characters`, 400);
+  }
+};
+
 const createIncident = async (currentUser, payload) => {
   if (!payload?.incidentType?.trim()) throw new ServiceError('incidentType is required', 400);
   if (!payload?.description?.trim()) throw new ServiceError('description is required', 400);
   if (!payload?.incidentAt) throw new ServiceError('incidentAt is required', 400);
+
+  const incidentAtDate = new Date(payload.incidentAt);
+  if (Number.isNaN(incidentAtDate.getTime())) {
+    throw new ServiceError('incidentAt is invalid', 400);
+  }
+  if (incidentAtDate.getTime() > Date.now() + MAX_FUTURE_SKEW_MS) {
+    throw new ServiceError('incidentAt cannot be in the future', 400);
+  }
+
+  assertMaxLength(payload.incidentType.trim(), 'incidentType', 200);
+  assertMaxLength(payload.description.trim(), 'description');
+  assertMaxLength(payload.location?.trim(), 'location', 200);
 
   const resident = await getResidentForIncident(payload.residentId);
   const staffProfile = await getStaffProfileByUserId(currentUser._id);
@@ -269,7 +290,7 @@ const createIncident = async (currentUser, payload) => {
     reportedByUserId: currentUser._id,
     incidentType: payload.incidentType.trim(),
     severity: payload.severity || 'medium',
-    incidentAt: new Date(payload.incidentAt),
+    incidentAt: incidentAtDate,
     location: payload.location?.trim() || '',
     description: payload.description.trim(),
     status: 'open',

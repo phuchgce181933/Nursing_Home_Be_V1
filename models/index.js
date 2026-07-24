@@ -51,6 +51,7 @@ const ContraindicationRule = require('./ContraindicationRule');
 const DrugInteraction = require('./DrugInteraction');
 const ElderlyDosageGuideline = require('./ElderlyDosageGuideline');
 const FamilyWallet = require('./familyWallet');
+const PushToken = require('./pushToken');
 
 module.exports = {
   User,
@@ -106,4 +107,5 @@ module.exports = {
   DrugInteraction,
   ElderlyDosageGuideline,
   FamilyWallet,
+  PushToken,
 };

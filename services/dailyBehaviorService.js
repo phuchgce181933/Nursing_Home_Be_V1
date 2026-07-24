@@ -110,6 +110,9 @@ const validatePayload = (body, isUpdate = false) => {
   if (row.notes !== undefined && String(row.notes).trim().length < 5) {
     throw apiErr(CODES.NOTES_TOO_SHORT, { statusCode: 400, params: { min: 5 } });
   }
+  if (row.notes !== undefined && String(row.notes).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: 'notes', min: 5, max: 500 } });
+  }
 
   const category = row.observationCategory;
   if (!isUpdate && category === 'mood' && !row.moodLevel) {
@@ -225,11 +228,18 @@ const updateRecord = async (userId, id, body) => {
     throw apiErr(CODES.MOOD_LEVEL_REQUIRED, { statusCode: 400 });
   }
 
+  // Keep the same invariant createRecord enforces: an 'abnormal' observation can never end up with
+  // severity 'normal', whether category or severity (or neither) is the field actually being changed.
+  let severity = body.severity !== undefined ? body.severity : record.severity;
+  if (category === 'abnormal' && severity === 'normal') {
+    severity = 'mild';
+  }
+
   const update = {};
   if (body.observationCategory !== undefined) update.observationCategory = body.observationCategory;
   if (body.moodLevel !== undefined) update.moodLevel = body.moodLevel || undefined;
   if (body.behaviorType !== undefined) update.behaviorType = body.behaviorType || undefined;
-  if (body.severity !== undefined) update.severity = body.severity;
+  if (severity !== record.severity) update.severity = severity;
   if (body.notes !== undefined) update.notes = String(body.notes).trim();
 
   if (body.observedAt !== undefined || body.workDate !== undefined) {

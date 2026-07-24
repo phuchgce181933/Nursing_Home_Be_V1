@@ -99,6 +99,57 @@ const markInvoiceAsPaid = async (invoiceId) => {
   return updatedInvoice;
 };
 
+// Persist the PayOS orderCode created for this invoice's checkout so we can later verify the
+// real payment status with PayOS instead of trusting a client-supplied "status" query param.
+const storeInvoicePayosOrderCode = async (invoiceId, orderCode) => {
+  if (!invoiceId || !orderCode) return;
+  const ids = Array.isArray(invoiceId) ? invoiceId : [invoiceId];
+  await Promise.all(ids.map((id) => invoiceRepo.updateById(id, { payosOrderCode: Number(orderCode) })));
+};
+
+// Called from the (signature-verified) PayOS webhook: the webhook payload itself already IS the
+// verified confirmation, so this looks invoices up by the orderCode PayOS reports and marks them
+// paid directly, without a further PayOS API round-trip.
+const confirmInvoicesByOrderCode = async (orderCode) => {
+  const invoices = await invoiceRepo.findByPayosOrderCode(orderCode);
+  const paid = [];
+  for (const invoice of invoices) {
+    if (invoice.status === 'PAID') continue;
+    const updated = await markInvoiceAsPaid(invoice._id);
+    paid.push(updated);
+  }
+  return paid;
+};
+
+// Verify the real payment status with PayOS (server-to-server) before marking an invoice paid.
+// This is the safe counterpart to the old handleReturn behaviour, which trusted the return-URL
+// query string directly.
+const verifyAndMarkInvoicePaid = async (invoiceId) => {
+  const invoice = await invoiceRepo.findById(invoiceId);
+  if (!invoice) return { status: 'NOT_FOUND' };
+  if (invoice.status === 'PAID') return { status: 'PAID', invoice };
+
+  if (!invoice.payosOrderCode) {
+    // No checkout was ever created through the tracked flow — nothing to verify against.
+    return { status: 'PENDING' };
+  }
+
+  let paymentData;
+  try {
+    paymentData = await getPayosPaymentStatus(invoice.payosOrderCode);
+  } catch (err) {
+    console.warn('[verifyAndMarkInvoicePaid] PayOS API error:', err.message);
+    return { status: 'PENDING' };
+  }
+
+  const payosStatus = String(paymentData.status || 'PENDING').toUpperCase();
+  if (payosStatus === 'PAID') {
+    const updated = await markInvoiceAsPaid(invoiceId);
+    return { status: 'PAID', invoice: updated };
+  }
+  return { status: payosStatus };
+};
+
 const buildPayosChecksum = ({ clientId, apiKey, checksumKey, invoiceNumber, amount }) => {
   const payload = `${clientId}|${invoiceNumber}|${amount}|${apiKey}|${checksumKey}`;
   return crypto.createHash('sha256').update(payload, 'utf8').digest('hex');
@@ -203,11 +254,18 @@ const buildInvoiceFilter = (query) => {
 };
 
 const getPayosCredentials = () => {
+  const { PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY, PAYOS_PARTNER_CODE } = process.env;
+  if (!PAYOS_CLIENT_ID || !PAYOS_API_KEY || !PAYOS_CHECKSUM_KEY) {
+    // No hardcoded fallback on purpose — a previous version of this code fell back to real
+    // credentials that ended up committed to the repo. Fail fast instead of silently reusing
+    // (now-untrusted) leaked keys.
+    throw new ServiceError('PayOS is not configured: set PAYOS_CLIENT_ID, PAYOS_API_KEY, and PAYOS_CHECKSUM_KEY', 500);
+  }
   return {
-    clientId: process.env.PAYOS_CLIENT_ID || '2077ca41-ed8b-46b4-b653-e952e07b62a8',
-    apiKey: process.env.PAYOS_API_KEY || 'a55c117a-2218-4cc9-8afd-348e46f5178d',
-    checksumKey: process.env.PAYOS_CHECKSUM_KEY || '2928b277a4b208bd9725946d9b5098013948863a43931e59ce5da5765dabccee',
-    partnerCode: process.env.PAYOS_PARTNER_CODE,
+    clientId: PAYOS_CLIENT_ID,
+    apiKey: PAYOS_API_KEY,
+    checksumKey: PAYOS_CHECKSUM_KEY,
+    partnerCode: PAYOS_PARTNER_CODE,
   };
 };
 
@@ -742,7 +800,19 @@ const adminGetInvoice = async (invoiceId) => {
   return invoice;
 };
 
-const listInvoicesByResident = async (residentId) => {
+const listInvoicesByResident = async (user, residentId) => {
+  if (user && !['doctor', 'nurse', 'admin'].includes(user.role)) {
+    if (user.role === 'family') {
+      const familyResidentIds = await familyPortalRepo.getFamilyResidentIds(user._id);
+      if (!familyResidentIds.includes(String(residentId))) {
+        throw new ServiceError('Access denied: not authorized to view invoices for this resident', 403);
+      }
+    } else if (user.role === 'resident') {
+      if (String(user.residentId || user._id) !== String(residentId)) {
+        throw new ServiceError('Access denied: not authorized to view invoices for this resident', 403);
+      }
+    }
+  }
   const filter = { residentId: new Types.ObjectId(residentId) };
   const invoices = await invoiceRepo.findAll(filter, { sort: { createdAt: -1 } });
   return invoices || [];
@@ -823,6 +893,9 @@ const batchPayment = async (user, residentId, invoiceIds, body, req) => {
     };
 
     const payosData = await createPayosPaymentRequest({ invoice: combinedInvoice, req });
+    if (payosData.orderCode) {
+      await storeInvoicePayosOrderCode(invoiceIds, payosData.orderCode);
+    }
     return {
       totalPaid: amount,
       invoiceCount: invoices.length,
@@ -902,4 +975,7 @@ module.exports = {
   adminGetInvoice,
   listInvoicesByResident,
   batchPayment,
+  storeInvoicePayosOrderCode,
+  verifyAndMarkInvoicePaid,
+  confirmInvoicesByOrderCode,
 };

@@ -1,14 +1,22 @@
 const cron = require('node-cron');
-const { autoCancelUnconfirmedPublishedShifts } = require('../services/shiftService');
+const {
+  autoCancelUnconfirmedPublishedShifts,
+  autoCancelUncompletedConfirmedShifts,
+} = require('../services/shiftService');
 
 let started = false;
 
 const runAutoCancel = async () => {
-  const { cancelled, skipped } = await autoCancelUnconfirmedPublishedShifts();
+  const unconfirmed = await autoCancelUnconfirmedPublishedShifts();
+  const missedCompletion = await autoCancelUncompletedConfirmedShifts();
+  const cancelled = unconfirmed.cancelled + missedCompletion.cancelled;
+  const skipped = unconfirmed.skipped + missedCompletion.skipped;
   if (cancelled > 0 || skipped > 0) {
-    console.log(`[shiftAutoCancelJob] cancelled=${cancelled} skipped=${skipped}`);
+    console.log(
+      `[shiftAutoCancelJob] unconfirmedCancelled=${unconfirmed.cancelled} missedCompletionCancelled=${missedCompletion.cancelled} skipped=${skipped}`
+    );
   }
-  return { cancelled, skipped };
+  return { cancelled, skipped, unconfirmed, missedCompletion };
 };
 
 const startShiftAutoCancelJob = () => {
@@ -26,7 +34,7 @@ const startShiftAutoCancelJob = () => {
   );
 
   console.log(
-    '[shiftAutoCancelJob] Scheduled auto-cancel for unconfirmed published shifts (every 5 min, 30 min grace)'
+    '[shiftAutoCancelJob] Scheduled auto-cancel for unconfirmed published shifts and missed completion (every 5 min)'
   );
 };
 

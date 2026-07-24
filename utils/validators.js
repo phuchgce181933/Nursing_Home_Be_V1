@@ -53,7 +53,7 @@ const validateDateOfBirth = (dob) => {
 const STAFF_DOB_GENDERS = ['male', 'female'];
 
 const validateStaffDateOfBirth = (dob, { gender } = {}) => {
-  if (!dob) return null;
+  if (!dob) return 'dateOfBirth is required';
   const d = new Date(dob);
   if (isNaN(d.getTime())) return 'dateOfBirth is not a valid date';
   if (d > new Date()) return 'dateOfBirth cannot be in the future';

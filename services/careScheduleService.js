@@ -19,6 +19,11 @@ const {
 const { triggerReadinessSyncForWorkDate } = require('./readinessSyncService');
 const { assertAssignableStaffProfile, residentCoversStaffArea } = require('../utils/staffAssignment');
 const { assertResidentAssignedToStaffProfile } = require('./assignedResidentService');
+const {
+  assertNoClinicalAppointmentAtTime,
+  assertStaffDutyMinGap,
+  assertBatchStaffDutyMinGap,
+} = require('../utils/careTaskAssignmentValidation');
 
 const SCHEDULE_TEMPLATES = [
   {
@@ -388,7 +393,7 @@ const validateEntryForPublish = async (entry, workDateStr) => {
     });
   }
 
-  await assertAssignableStaffProfile(staffProfile);
+  const assigneeRole = await assertAssignableStaffProfile(staffProfile);
   if (!['published', 'confirmed'].includes(shift.status)) {
     throw apiErr(CODES.CARE_SCHEDULE_ENTRY_SHIFT_STATUS_INVALID, { statusCode: 400 });
   }
@@ -416,6 +421,15 @@ const validateEntryForPublish = async (entry, workDateStr) => {
     if (scheduledAt < nowVN()) {
       throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_PAST, { statusCode: 400 });
     }
+    await assertNoClinicalAppointmentAtTime(
+      staffProfile._id,
+      assigneeRole,
+      scheduledAt,
+      CODES.CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS
+    );
+    await assertStaffDutyMinGap(staffProfile._id, new Date(`${workDateStr}T00:00:00.000Z`), entry.scheduledTime, {
+      errorCode: CODES.CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE,
+    });
   } catch (err) {
     if (err instanceof ApiError) throw err;
     throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_INVALID, { statusCode: 400 });
@@ -462,6 +476,8 @@ const publishSchedule = async (id, actorUserId) => {
     const validated = await validateEntryForPublish(entry, workDateStr);
     validatedEntries.push({ entry, ...validated });
   }
+
+  assertBatchStaffDutyMinGap(validatedEntries);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

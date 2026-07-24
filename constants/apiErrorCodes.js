@@ -102,6 +102,8 @@ const CODES = {
   CARE_TASK_RESIDENT_OUTSIDE_AREA: 'CARE_TASK_RESIDENT_OUTSIDE_AREA',
   CARE_TASK_STATUS_TRANSITION_INVALID: 'CARE_TASK_STATUS_TRANSITION_INVALID',
   CARE_TASK_DELETE_PENDING_ONLY: 'CARE_TASK_DELETE_PENDING_ONLY',
+  CARE_TASK_APPOINTMENT_BLOCKS: 'CARE_TASK_APPOINTMENT_BLOCKS',
+  CARE_TASK_TIME_TOO_CLOSE: 'CARE_TASK_TIME_TOO_CLOSE',
 
   // Leave
   LEAVE_NOT_FOUND: 'LEAVE_NOT_FOUND',
@@ -144,6 +146,9 @@ const CODES = {
   SHIFT_PUBLISH_DRAFT_ONLY: 'SHIFT_PUBLISH_DRAFT_ONLY',
   SHIFT_PUBLISH_CONFLICT: 'SHIFT_PUBLISH_CONFLICT',
   SHIFT_CONFIRM_PUBLISHED_ONLY: 'SHIFT_CONFIRM_PUBLISHED_ONLY',
+  SHIFT_COMPLETE_CONFIRMED_ONLY: 'SHIFT_COMPLETE_CONFIRMED_ONLY',
+  SHIFT_COMPLETE_NOT_ENDED: 'SHIFT_COMPLETE_NOT_ENDED',
+  SHIFT_COMPLETE_WINDOW_CLOSED: 'SHIFT_COMPLETE_WINDOW_CLOSED',
   SHIFT_EDIT_STATUS_INVALID: 'SHIFT_EDIT_STATUS_INVALID',
   SHIFT_EDIT_TOO_LATE: 'SHIFT_EDIT_TOO_LATE',
   SHIFT_NO_CHANGES: 'SHIFT_NO_CHANGES',
@@ -218,6 +223,7 @@ const CODES = {
   DISH_INGREDIENTS_INVALID: 'DISH_INGREDIENTS_INVALID',
   DISH_NOT_FOUND: 'DISH_NOT_FOUND',
   DISH_INACTIVE: 'DISH_INACTIVE',
+  DISH_IN_USE: 'DISH_IN_USE',
 
   // Care schedules
   CARE_SCHEDULE_WORK_DATE_INVALID: 'CARE_SCHEDULE_WORK_DATE_INVALID',
@@ -245,6 +251,8 @@ const CODES = {
   CARE_SCHEDULE_ENTRY_SOURCE_INVALID: 'CARE_SCHEDULE_ENTRY_SOURCE_INVALID',
   CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID: 'CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID',
   CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID: 'CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID',
+  CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS: 'CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS',
+  CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE: 'CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE',
 
   // Resident (main)
   RESIDENT_ID_REQUIRED: 'RESIDENT_ID_REQUIRED',
@@ -389,6 +397,9 @@ const ERROR_MESSAGES = {
   [CODES.CARE_TASK_RESIDENT_OUTSIDE_AREA]: 'Resident is outside staff assigned area',
   [CODES.CARE_TASK_STATUS_TRANSITION_INVALID]: 'Cannot change status from {{from}} to {{to}}',
   [CODES.CARE_TASK_DELETE_PENDING_ONLY]: 'Only pending tasks can be deleted',
+  [CODES.CARE_TASK_APPOINTMENT_BLOCKS]: 'Staff has a clinical appointment at this time ({{from}}–{{to}})',
+  [CODES.CARE_TASK_TIME_TOO_CLOSE]:
+    'Duties for the same staff must be at least {{minGapMinutes}} minutes apart (conflicts with {{conflictTime}})',
 
   [CODES.LEAVE_NOT_FOUND]: 'Leave request not found',
   [CODES.LEAVE_INVALID_STATUS]: 'Invalid leave request status',
@@ -432,6 +443,9 @@ const ERROR_MESSAGES = {
   [CODES.SHIFT_PUBLISH_DRAFT_ONLY]: 'Only draft shifts can be published (current: {{status}})',
   [CODES.SHIFT_PUBLISH_CONFLICT]: 'Cannot publish: blocking conflicts remain',
   [CODES.SHIFT_CONFIRM_PUBLISHED_ONLY]: 'Only published shifts can be confirmed (current: {{status}})',
+  [CODES.SHIFT_COMPLETE_CONFIRMED_ONLY]: 'Only confirmed shifts can be marked completed (current: {{status}})',
+  [CODES.SHIFT_COMPLETE_NOT_ENDED]: 'Shift has not ended yet',
+  [CODES.SHIFT_COMPLETE_WINDOW_CLOSED]: 'Completion window closed (15 minutes after shift end)',
   [CODES.SHIFT_EDIT_STATUS_INVALID]: "Cannot edit shift in status '{{status}}'",
   [CODES.SHIFT_EDIT_TOO_LATE]: 'Cannot edit shift less than 2 hours before start',
   [CODES.SHIFT_NO_CHANGES]: 'No changes detected',
@@ -510,6 +524,7 @@ const ERROR_MESSAGES = {
   [CODES.DISH_INGREDIENTS_INVALID]: 'Ingredients cannot contain special characters',
   [CODES.DISH_NOT_FOUND]: 'Dish not found',
   [CODES.DISH_INACTIVE]: 'Dish is inactive',
+  [CODES.DISH_IN_USE]: 'Cannot delete or deactivate a dish that is already scheduled in a meal plan',
 
   [CODES.CARE_SCHEDULE_WORK_DATE_INVALID]: 'workDate must be YYYY-MM-DD',
   [CODES.CARE_SCHEDULE_PAST_DATE]: 'Cannot create care schedule for a past date',
@@ -536,6 +551,10 @@ const ERROR_MESSAGES = {
   [CODES.CARE_SCHEDULE_ENTRY_SOURCE_INVALID]: 'entries[{{index}}].source must be one of: {{allowed}}',
   [CODES.CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID]: 'entries[{{index}}].taskType must be one of: {{allowed}}',
   [CODES.CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID]: 'entries[{{index}}].careLevel must be one of: {{allowed}}',
+  [CODES.CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS]:
+    'Staff has a clinical appointment at this time ({{from}}–{{to}})',
+  [CODES.CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE]:
+    'Duties for the same staff must be at least {{minGapMinutes}} minutes apart (conflicts with {{conflictTime}})',
 
   [CODES.RESIDENT_ID_REQUIRED]: 'residentId is required',
   [CODES.RESIDENT_ID_INVALID]: '{{label}} is invalid',

@@ -25,6 +25,10 @@ const {
   getShiftEndDateTime,
   isShiftEnded,
 } = require('../utils/shiftTime');
+const {
+  assertNoClinicalAppointmentAtTime,
+  assertStaffDutyMinGap,
+} = require('../utils/careTaskAssignmentValidation');
 const { getTaskTypeOptions, getCareLevelOptions } = require('../utils/careTaskLabels');
 
 const AUTO_MISSED_NOTE = 'Tự động bỏ lỡ: đã hết ca làm việc.';
@@ -331,6 +335,9 @@ const assignCareTask = async (body, actorUserId) => {
   if (effectiveAt < nowVN()) {
     throw apiErr(CODES.CARE_TASK_TIME_PAST, { statusCode: 400 });
   }
+
+  await assertNoClinicalAppointmentAtTime(staffProfileId, assigneeRole, effectiveAt);
+  await assertStaffDutyMinGap(staffProfileId, workDateObj, scheduledTimeTrimmed);
 
   const resolvedShiftId = shiftMatch._id;
 

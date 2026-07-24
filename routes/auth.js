@@ -111,7 +111,7 @@ router.post('/firebase-token', protect, authorize('admin'), createFirebaseToken)
  *         multipart/form-data:
  *           schema:
  *             type: object
- *             required: [fullName, email, password, role]
+ *             required: [fullName, email, password, role, dateOfBirth]
  *             properties:
  *               fullName:
  *                 type: string

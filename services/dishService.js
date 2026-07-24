@@ -34,6 +34,14 @@ const findByNameInsensitive = async (name, excludeId) => {
   return Dish.findOne(filter).lean();
 };
 
+const isDishInMealPlan = async (dishId) => Boolean(await MealPlanEntry.exists({ dishId }));
+
+const assertDishNotInMealPlan = async (dishId) => {
+  if (await isDishInMealPlan(dishId)) {
+    throw apiErr(CODES.DISH_IN_USE, { statusCode: 409 });
+  }
+};
+
 const listDishes = async (query = {}, user = {}) => {
   const filter = {};
   const activeOnly = query.activeOnly !== 'false' && query.activeOnly !== false;
@@ -63,7 +71,24 @@ const createDish = async (body = {}, actor) => {
   const ingredients = normalizeDishIngredients(body.ingredients);
 
   const duplicate = await findByNameInsensitive(name);
-  if (duplicate) throw apiErr(CODES.DISH_NAME_DUPLICATE, { statusCode: 409, params: { name: duplicate.name } });
+  if (duplicate) {
+    const inUse = await isDishInMealPlan(duplicate._id);
+    if (!duplicate.isActive && !inUse) {
+      const revived = await Dish.findByIdAndUpdate(
+        duplicate._id,
+        {
+          name,
+          calories,
+          ingredients,
+          isActive: body.isActive !== false,
+          updatedBy: actor?._id,
+        },
+        { new: true }
+      );
+      return { ...apiSuccess(SUCCESS.DISH_CREATED), dish: formatDish(revived.toObject()) };
+    }
+    throw apiErr(CODES.DISH_NAME_DUPLICATE, { statusCode: 409, params: { name: duplicate.name } });
+  }
 
   const dish = await Dish.create({
     name,
@@ -94,6 +119,10 @@ const updateDish = async (id, body = {}, actor) => {
     dish.ingredients = normalizeDishIngredients(body.ingredients);
   }
   if (body.isActive !== undefined) {
+    const willDeactivate = body.isActive === false && dish.isActive !== false;
+    if (willDeactivate) {
+      await assertDishNotInMealPlan(dish._id);
+    }
     dish.isActive = Boolean(body.isActive);
   }
   dish.updatedBy = actor?._id;
@@ -106,13 +135,7 @@ const deleteDish = async (id, actor) => {
   const dish = await Dish.findById(id);
   if (!dish) throw apiErr(CODES.DISH_NOT_FOUND, { statusCode: 404 });
 
-  const inUse = await MealPlanEntry.exists({ dishId: dish._id });
-  if (inUse) {
-    dish.isActive = false;
-    dish.updatedBy = actor?._id;
-    await dish.save();
-    return { ...apiSuccess(SUCCESS.DISH_DEACTIVATED), dish: formatDish(dish.toObject()), deactivated: true };
-  }
+  await assertDishNotInMealPlan(dish._id);
 
   await Dish.findByIdAndDelete(id);
   return { ...apiSuccess(SUCCESS.DISH_DELETED), deleted: true, id: String(id) };

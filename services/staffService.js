@@ -277,9 +277,8 @@ const updateStaffProfile = async (id, body, currentUser) => {
     () => (fullName !== undefined ? validateFullName(fullName) : null),
     () => (phone !== undefined ? validatePhone(phone) : null),
     () => {
-      if (dateOfBirth === undefined && gender === undefined) return null;
+      if (dateOfBirth !== undefined && !dateOfBirth) return 'dateOfBirth is required';
       const effectiveDob = dateOfBirth !== undefined ? dateOfBirth : user.dateOfBirth;
-      if (!effectiveDob) return null;
       const effectiveGender = gender !== undefined ? gender : user.gender;
       return validateStaffDateOfBirth(effectiveDob, { role: user.role, gender: effectiveGender });
     },
@@ -312,7 +311,10 @@ const updateStaffProfile = async (id, body, currentUser) => {
   if (fullName !== undefined) user.fullName = fullName.trim();
   if (phone !== undefined) user.phone = phone?.trim() || undefined;
   if (gender !== undefined) user.gender = gender;
-  if (dateOfBirth !== undefined) user.dateOfBirth = dateOfBirth ? new Date(dateOfBirth) : undefined;
+  if (dateOfBirth !== undefined) {
+    if (!dateOfBirth) throw apiErr(CODES.STAFF_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'dateOfBirth is required' } });
+    user.dateOfBirth = new Date(dateOfBirth);
+  }
   if (address !== undefined) user.address = address?.trim() || undefined;
   if (avatarUrl !== undefined) user.avatarUrl = avatarUrl || undefined;
   if (avatarPublicId !== undefined) user.avatarPublicId = avatarPublicId || undefined;

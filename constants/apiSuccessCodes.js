@@ -77,6 +77,7 @@ const SUCCESS = {
   SHIFT_UPDATED: 'SHIFT_UPDATED',
   SHIFT_PUBLISHED: 'SHIFT_PUBLISHED',
   SHIFT_CONFIRMED: 'SHIFT_CONFIRMED',
+  SHIFT_COMPLETED: 'SHIFT_COMPLETED',
   SHIFT_CANCELLED: 'SHIFT_CANCELLED',
   SHIFT_DELETED: 'SHIFT_DELETED',
 };
@@ -151,6 +152,7 @@ const SUCCESS_MESSAGES = {
   [SUCCESS.SHIFT_UPDATED]: 'Shift updated successfully',
   [SUCCESS.SHIFT_PUBLISHED]: 'Shift published successfully',
   [SUCCESS.SHIFT_CONFIRMED]: 'Shift confirmed successfully',
+  [SUCCESS.SHIFT_COMPLETED]: 'Shift completed successfully',
   [SUCCESS.SHIFT_CANCELLED]: 'Shift cancelled successfully',
   [SUCCESS.SHIFT_DELETED]: 'Shift deleted successfully',
 };

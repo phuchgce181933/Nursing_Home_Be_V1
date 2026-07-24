@@ -462,7 +462,8 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
   }
 
   const data = await residentRepo.findForAssignment({ floorId, roomId, search, status: queryStatus, residentIds });
-  return { data, total: data.length };
+  const formatted = data.map((row) => formatResident(row)).filter(Boolean);
+  return { data: formatted, total: formatted.length };
 };
 
 const listResidentsForFamilyManagement = async ({ search, status, page = 1, limit = 20 }) => {

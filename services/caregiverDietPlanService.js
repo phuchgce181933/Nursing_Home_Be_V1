@@ -1,20 +1,19 @@
 const mongoose = require('mongoose');
 const { apiErr, CODES } = require('../utils/apiError');
-const MealPlanDay = require('../models/mealPlanDay');
-const MealPlanEntry = require('../models/mealPlanEntry');
 const SpecialDietDay = require('../models/specialDietDay');
 const SpecialDietEntry = require('../models/specialDietEntry');
 const assignedResidentService = require('./assignedResidentService');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
+const {
+  findPublishedMealsForResident,
+  countPublishedMealsByResidents,
+  hasAnyPublishedMealPlanDay,
+  workDateRangeFilter,
+} = require('../utils/publishedMealPlanLookup');
 const { parseWorkDate } = require('../utils/shiftTime');
 
 const MEAL_ORDER = ['breakfast', 'lunch', 'dinner'];
-
-const workDateRangeFilter = (workDateStr) => ({
-  $gte: new Date(`${workDateStr}T00:00:00.000Z`),
-  $lte: new Date(`${workDateStr}T23:59:59.999Z`),
-});
 
 const parseWorkDateStrict = (workDate) => {
   const str = String(workDate || '').trim();
@@ -59,15 +58,10 @@ const sortMeals = (entries) =>
   [...entries].sort((a, b) => MEAL_ORDER.indexOf(a.mealType) - MEAL_ORDER.indexOf(b.mealType));
 
 const loadPublishedMealsForResident = async (residentId, workDateStr, mealTimesByResident) => {
-  const day = await findLatestPublishedDay(MealPlanDay, workDateStr);
+  const { entries, day } = await findPublishedMealsForResident(residentId, workDateStr);
   if (!day) {
     return { published: false, planTitle: null, careStage: null, meals: [] };
   }
-
-  const entries = await MealPlanEntry.find({
-    mealPlanDayId: day._id,
-    residentId,
-  }).lean();
 
   const times = mealTimesByResident[String(residentId)] || {};
   const meals = sortMeals(entries).map((entry) => ({
@@ -137,26 +131,13 @@ const listDietPlansOverview = async (userId, query) => {
   const residentIds = rows.map((r) => String(r._id));
   const mealTimesMap = await mealTimeScheduleService.getPublishedTimes(workDate, residentIds);
 
-  const [mealPlanDay, specialDietDay] = await Promise.all([
-    findLatestPublishedDay(MealPlanDay, workDate),
+  const [hasPublishedMealPlanDay, specialDietDay, mealCountsByResident] = await Promise.all([
+    hasAnyPublishedMealPlanDay(workDate),
     findLatestPublishedDay(SpecialDietDay, workDate),
+    countPublishedMealsByResidents(residentIds, workDate),
   ]);
 
-  let mealCountsByResident = new Map();
   let dietCountsByResident = new Map();
-
-  if (mealPlanDay && residentIds.length) {
-    const mealEntries = await MealPlanEntry.find({
-      mealPlanDayId: mealPlanDay._id,
-      residentId: { $in: residentIds },
-    })
-      .select('residentId mealType')
-      .lean();
-    for (const entry of mealEntries) {
-      const rid = String(entry.residentId);
-      mealCountsByResident.set(rid, (mealCountsByResident.get(rid) || 0) + 1);
-    }
-  }
 
   if (specialDietDay && residentIds.length) {
     const dietEntries = await SpecialDietEntry.find({
@@ -191,9 +172,9 @@ const listDietPlansOverview = async (userId, query) => {
 
   return {
     workDate,
-    hasPublishedMealPlanDay: Boolean(mealPlanDay),
+    hasPublishedMealPlanDay,
     hasPublishedSpecialDietDay: Boolean(specialDietDay),
-    mealPlanDayTitle: mealPlanDay?.title || null,
+    mealPlanDayTitle: null,
     specialDietDayTitle: specialDietDay?.title || null,
     data,
     total: data.length,

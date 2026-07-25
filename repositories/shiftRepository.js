@@ -139,6 +139,14 @@ const findPublishedInWorkDateRange = (fromDate, toDate) =>
     .select('_id workDate startTime endTime status assignedStaffId')
     .lean();
 
+const findConfirmedInWorkDateRange = (fromDate, toDate) =>
+  Shift.find({
+    status: 'confirmed',
+    workDate: { $gte: fromDate, $lte: toDate },
+  })
+    .select('_id workDate startTime endTime status assignedStaffId')
+    .lean();
+
 module.exports = {
   create,
   findById,
@@ -154,6 +162,7 @@ module.exports = {
   findByStaffAndDateRange,
   findByDateRange,
   findPublishedInWorkDateRange,
+  findConfirmedInWorkDateRange,
   updateById,
   deleteById,
 };

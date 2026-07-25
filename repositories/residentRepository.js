@@ -1,6 +1,19 @@
 const mongoose = require('mongoose');
 const Resident = require('../models/resident');
 
+const ROOM_POPULATE = {
+  path: 'roomId',
+  select: 'roomNumber roomType floorId buildingId',
+  populate: [
+    {
+      path: 'floorId',
+      select: 'name floorNumber buildingId',
+      populate: { path: 'buildingId', select: 'code name' },
+    },
+    { path: 'buildingId', select: 'code name' },
+  ],
+};
+
 const findForAssignment = async ({
   floorId,
   floorIds,
@@ -41,8 +54,11 @@ const findForAssignment = async ({
   }
 
   return Resident.find(filter)
-    .select('residentCode fullName roomId residencyStatus dateOfBirth gender bloodType avatarUrl')
-    .populate({ path: 'roomId', select: 'roomNumber floorId roomType' })
+    .select(
+      'residentCode fullName roomId bedId residencyStatus dateOfBirth gender bloodType avatarUrl allergies drugAllergies chronicConditions'
+    )
+    .populate(ROOM_POPULATE)
+    .populate({ path: 'bedId', select: 'bedCode bedType status' })
     .sort({ fullName: 1 })
     .limit(Math.min(limit, 500))
     .lean();
@@ -113,7 +129,14 @@ const findAll = async (filter, { sort, skip, limit }) =>
     .sort(sort)
     .skip(skip)
     .limit(limit)
-    .populate('roomId', 'roomCode name')
+    .populate({
+      path: 'roomId',
+      select: 'roomCode roomNumber name roomType floorId buildingId',
+      populate: {
+        path: 'floorId',
+        select: 'name floorNumber buildingId',
+      },
+    })
     .populate('bedId', 'bedCode')
     .populate('familyPortalAccountIds', 'fullName email phone');
 
@@ -203,19 +226,6 @@ const assertValidObjectId = (id, label = 'id') => {
     return false;
   }
   return true;
-};
-
-const ROOM_POPULATE = {
-  path: 'roomId',
-  select: 'roomNumber roomType floorId buildingId',
-  populate: [
-    {
-      path: 'floorId',
-      select: 'name floorNumber buildingId',
-      populate: { path: 'buildingId', select: 'code name' },
-    },
-    { path: 'buildingId', select: 'code name' },
-  ],
 };
 
 const resolveRoomIds = async ({ buildingId, floorId, roomId } = {}) => {
@@ -639,6 +649,18 @@ const updateDrugAllergies = async (residentId, payload) =>
     .select('residentCode fullName drugAllergies updatedAt')
     .lean();
 
+const countAdmittedInRoom = async (roomId) =>
+  Resident.countDocuments({ roomId, residencyStatus: 'admitted' });
+
+const countAdmittedByRoomIds = async (roomIds) => {
+  if (!Array.isArray(roomIds) || roomIds.length === 0) return new Map();
+  const rows = await Resident.aggregate([
+    { $match: { roomId: { $in: roomIds }, residencyStatus: 'admitted' } },
+    { $group: { _id: '$roomId', count: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), row.count]));
+};
+
 module.exports = {
   findForAssignment,
   findForFamilyManagement,
@@ -652,6 +674,8 @@ module.exports = {
   updateById,
   findByIdWithDetail,
   findByIdForTransfer,
+  countAdmittedInRoom,
+  countAdmittedByRoomIds,
   updateRoomAssignment,
   addEmergencyContact,
   replaceEmergencyContacts,

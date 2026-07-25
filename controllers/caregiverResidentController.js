@@ -22,7 +22,20 @@ const getResident = (req, res) =>
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
+const listResidentActivities = (req, res) =>
+  svc
+    .listAssignedResidentActivities(req.user._id, {
+      status: req.query.status,
+      from: req.query.from,
+      to: req.query.to,
+      page: req.query.page,
+      limit: req.query.limit,
+    })
+    .then((result) => res.json({ success: true, ...result }))
+    .catch((err) => sendApiError(res, err));
+
 module.exports = {
   listResidents,
   getResident,
+  listResidentActivities,
 };

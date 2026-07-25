@@ -7,6 +7,8 @@ const {
   rejectAdmission,
   assignServicePackage,
   createAdmissionContract,
+  cancelAdmissionContract,
+  changeContractServicePackage,
   checkInResident,
   extendAdmissionContract,
 } = require('../controllers/admissionController');
@@ -302,6 +304,9 @@ router.patch('/:admissionId/assign-service-package', protect, authorize('admin')
  *         description: Admission not found
  */
 router.patch('/:admissionId/create-contract', protect, authorize('admin'), createAdmissionContract);
+
+router.patch('/:admissionId/cancel-contract', protect, authorize('admin'), cancelAdmissionContract);
+router.patch('/:admissionId/change-contract-service-package', protect, authorize('admin'), changeContractServicePackage);
 
 /**
  * @swagger

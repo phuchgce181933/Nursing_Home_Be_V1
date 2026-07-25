@@ -130,6 +130,24 @@ const createAdmissionContract = async (req, res) => {
   }
 };
 
+const cancelAdmissionContract = async (req, res) => {
+  try {
+    const result = await admissionService.cancelAdmissionContract(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const changeContractServicePackage = async (req, res) => {
+  try {
+    const result = await admissionService.changeContractServicePackage(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 // ── UC-6.26: Check-in Resident ─────────────────────────────────────────────────
 const checkInResident = async (req, res) => {
   try {
@@ -164,6 +182,8 @@ module.exports = {
   evaluateAdmissionEligibility,
   assignServicePackage,
   createAdmissionContract,
+  cancelAdmissionContract,
+  changeContractServicePackage,
   checkInResident,
   extendAdmissionContract,
 };

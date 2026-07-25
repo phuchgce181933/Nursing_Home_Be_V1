@@ -29,6 +29,8 @@ const confirmShift = (req, res) => respond(res, svc.confirmShift(req.params.id, 
 const checkInShift = (req, res) => respond(res, svc.checkInShift(req.params.id, req.user));
 const checkOutShift = (req, res) => respond(res, svc.checkOutShift(req.params.id, req.user));
 
+const completeShift = (req, res) => respond(res, svc.completeShift(req.params.id, req.user));
+
 const updateShift = (req, res) => {
   const isAdmin = req.user.role === 'admin';
   svc
@@ -51,6 +53,7 @@ module.exports = {
   confirmShift,
   checkInShift,
   checkOutShift,
+  completeShift,
   updateShift,
   cancelShift,
   deleteShift,

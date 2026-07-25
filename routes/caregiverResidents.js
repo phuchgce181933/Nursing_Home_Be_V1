@@ -33,6 +33,7 @@ const CAREGIVER_ROLES = ['caregiver'];
  *         description: Assigned admitted residents
  */
 router.get('/', protect, authorize(...CAREGIVER_ROLES), ctrl.listResidents);
+router.get('/activities', protect, authorize(...CAREGIVER_ROLES), ctrl.listResidentActivities);
 
 /**
  * @swagger

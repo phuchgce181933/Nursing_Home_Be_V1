@@ -9,6 +9,7 @@ const servicePackageSchema = new Schema(
     name: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
     tier: { type: String, enum: SERVICE_PACKAGE_TIERS, default: 'standard', index: true },
+    allowedRoomTypes: [{ type: String, enum: ['standard', 'premium', 'icu', 'isolation'] }],
     services: [{ type: String, trim: true }],
     monthlyPrice: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true, index: true },

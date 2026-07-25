@@ -175,7 +175,7 @@ router.post('/firebase-token', protect, authorize('admin'), createFirebaseToken)
  *         multipart/form-data:
  *           schema:
  *             type: object
- *             required: [fullName, email, password, role]
+ *             required: [fullName, email, password, role, dateOfBirth]
  *             properties:
  *               fullName:
  *                 type: string
@@ -275,7 +275,7 @@ router.post('/create-staff', protect, authorize('admin'), uploadAvatarAndCertifi
  *       200:
  *         description: Staff list retrieved
  */
-router.get('/staff', protect, authorize('admin'), listStaffAccounts);
+router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
 
 /**
  * @swagger

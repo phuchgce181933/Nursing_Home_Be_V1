@@ -3,6 +3,7 @@ const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiEr
 const mealTimeScheduleDayRepo = require('../repositories/mealTimeScheduleDayRepository');
 const mealTimeScheduleEntryRepo = require('../repositories/mealTimeScheduleEntryRepository');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
+const { assertNoPublishedScheduleConflicts } = require('../utils/nutritionPublishGuards');
 const Resident = require('../models/resident');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 
@@ -253,7 +254,6 @@ const createDraft = async (body, actorUserId) => {
   if (!entriesInput.length) throw apiErr(CODES.MEAL_ENTRIES_REQUIRED, { statusCode: 400 });
 
   const entries = entriesInput.map((entry, index) => validateEntry(entry, index));
-  assertEntryTimesFromNow(entries, workDate);
 
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
   if (residentIds.length < 1) {
@@ -305,13 +305,6 @@ const updateDraft = async (id, body, actorUserId) => {
   const hasEntries = Array.isArray(body.entries);
   const normalizedEntries = hasEntries ? body.entries.map((entry, index) => validateEntry(entry, index)) : null;
   if (hasEntries && !normalizedEntries.length) throw apiErr(CODES.MEAL_ENTRIES_EMPTY, { statusCode: 400 });
-
-  const targetWorkDateStr =
-    body.workDate !== undefined ? parseWorkDateStrict(body.workDate) : workDateToVNString(day.workDate);
-
-  if (normalizedEntries) {
-    assertEntryTimesFromNow(normalizedEntries, targetWorkDateStr);
-  }
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
@@ -434,6 +427,7 @@ const publishSchedule = async (id, actorUserId) => {
     throw apiErr(CODES.MEAL_TIME_SCHEDULE_PUBLISH_NO_RESIDENTS, { statusCode: 400 });
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
+  await assertNoPublishedScheduleConflicts(workDate, residentIds, id);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

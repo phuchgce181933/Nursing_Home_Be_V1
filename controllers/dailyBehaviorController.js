@@ -26,6 +26,22 @@ const listRecords = (req, res) =>
         page: result.page,
         limit: result.limit,
         totalPages: result.totalPages,
+        meta: result.meta,
+      })
+    )
+    .catch((err) => sendApiError(res, err));
+
+const adminListRecords = (req, res) =>
+  svc
+    .listRecordsForAdmin(req.query)
+    .then((result) =>
+      res.json({
+        success: true,
+        data: result.data,
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
       })
     )
     .catch((err) => sendApiError(res, err));
@@ -57,6 +73,7 @@ const deleteRecord = (req, res) =>
 module.exports = {
   listResidents,
   listRecords,
+  adminListRecords,
   createRecord,
   getRecord,
   updateRecord,

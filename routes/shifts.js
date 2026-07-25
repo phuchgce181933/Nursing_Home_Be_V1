@@ -4,7 +4,7 @@ const ctrl = require('../controllers/shiftController');
 const { protect, authorize } = require('../middleware/auth');
 //lenhuthao
 const MANAGER = ['admin'];
-const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
+const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff', 'pharmacist'];
 
 /**
  * @swagger
@@ -254,6 +254,25 @@ router.put('/:id/check-in', protect, authorize(...STAFF_SHIFT_ROLES), ctrl.check
  *       403: { description: Admin/manager or non-assigned staff }
  */
 router.put('/:id/check-out', protect, authorize(...STAFF_SHIFT_ROLES), ctrl.checkOutShift);
+
+/**
+ * @swagger
+ * /api/shifts/{id}/complete:
+ *   put:
+ *     tags: [Shifts]
+ *     summary: Mark a confirmed shift as completed (assigned staff only; within 15 min after shift end)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Completed }
+ *       400: { description: Not confirmed, not ended, or window closed }
+ *       403: { description: Admin/manager or non-assigned staff }
+ */
+router.put('/:id/complete', protect, authorize(...STAFF_SHIFT_ROLES), ctrl.completeShift);
 
 /**
  * @swagger

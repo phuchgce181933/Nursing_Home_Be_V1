@@ -73,8 +73,9 @@ const listPrescriptions = async (user, query) => {
       const latestInvoice = invoices[0];
       // Normalize invoice status to lowercase for frontend
       const status = (latestInvoice.status || 'unpaid').toLowerCase();
-      paymentStatus = status === 'paid' ? 'paid' : 
-                     status === 'partially_paid' ? 'partially_paid' : 'unpaid';
+      paymentStatus = status === 'paid' ? 'paid' :
+             status === 'partially_paid' ? 'partially_paid' :
+             status === 'cancelled' ? 'cancelled' : 'unpaid';
       invoiceStatus = paymentStatus;
     }
     

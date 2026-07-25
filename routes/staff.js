@@ -197,6 +197,7 @@ router.get('/:id', protect, authorize('admin'), getStaffProfile);
  *               dateOfBirth:
  *                 type: string
  *                 format: date
+ *                 description: Required. Staff must be at least 18 years old.
  *               address:
  *                 type: string
  *               specialty:

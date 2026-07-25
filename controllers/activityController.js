@@ -15,9 +15,15 @@ const listActivities = async (req, res) => {
     // Nurses can only see activities where they are assigned as organizers
     if (req.user) {
       const userRole = String(req.user.role || '').toLowerCase();
-      const isNurse = userRole.includes('nurse') || userRole.includes('y tá') || userRole.includes('điều dưỡng');
-      if (isNurse) {
-        query.organizerStaffId = req.user._id.toString();
+      const isStaffLikeRole = userRole.includes('nurse')
+        || userRole.includes('y tá')
+        || userRole.includes('điều dưỡng')
+        || userRole.includes('caregiver')
+        || userRole.includes('hộ lý')
+        || userRole.includes('doctor')
+        || userRole.includes('bác sĩ');
+      if (isStaffLikeRole) {
+        query.organizerStaffIds = req.user._id.toString();
       }
     }
     const result = await activityService.listActivities(query);

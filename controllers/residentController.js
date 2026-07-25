@@ -268,6 +268,15 @@ const adminGetResident = async (req, res) => {
   }
 };
 
+const adminReleaseResident = async (req, res) => {
+  try {
+    const result = await residentService.adminReleaseResident(req.user, req.params.residentId, req);
+    res.json(result);
+  } catch (err) {
+    sendApiError(res, err);
+  }
+};
+
 const adminUpdatePersonalInfo = async (req, res) => {
   try {
     const result = await residentService.adminUpdatePersonalInfo(
@@ -333,6 +342,7 @@ module.exports = {
   adminCreateResident,
   adminListResidents,
   adminGetResident,
+  adminReleaseResident,
   adminUpdatePersonalInfo,
   adminUpdateFamilyInfo,
   adminUploadAvatar,

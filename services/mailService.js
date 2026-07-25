@@ -48,21 +48,51 @@ const sendIncidentNotificationEmail = async ({
   incident,
   subject,
   message,
+  assignedStaffNames,
+  residentName,
 }) => {
   if (!to) return;
+
+  const severityTranslate = {
+    low: 'Thấp',
+    medium: 'Trung bình',
+    high: 'Cao',
+    critical: 'Nghiêm trọng',
+  };
+
+  const statusTranslate = {
+    open: 'Đang mở',
+    investigating: 'Đang điều tra',
+    resolved: 'Đã giải quyết',
+    closed: 'Đã đóng',
+  };
 
   await transporter.sendMail({
     from: process.env.MAIL_USER,
     to,
     subject,
     html: `
-      <h2>${subject}</h2>
-      <p>Xin chào ${recipientName || 'bạn'},</p>
-      <p>${message}</p>
-      <p><strong>Loại sự cố:</strong> ${incident.incidentType}</p>
-      <p><strong>Mức độ:</strong> ${incident.severity}</p>
-      <p><strong>Thời gian:</strong> ${new Date(incident.incidentAt).toLocaleString('vi-VN')}</p>
-      <p><strong>Mô tả:</strong> ${incident.description}</p>
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h2 style="color: #d9534f;">${subject}</h2>
+        <p>Xin chào ${recipientName || 'bạn'},</p>
+        <p>${message}</p>
+        
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p><strong>📋 Chi tiết sự cố:</strong></p>
+          <p><strong>Loại sự cố:</strong> ${incident.incidentType}</p>
+          <p><strong>Bệnh nhân:</strong> ${residentName || 'N/A'}</p>
+          <p><strong>Mức độ:</strong> ${severityTranslate[incident.severity] || incident.severity}</p>
+          <p><strong>Trạng thái:</strong> ${statusTranslate[incident.status] || incident.status}</p>
+          <p><strong>Thời gian:</strong> ${new Date(incident.incidentAt).toLocaleString('vi-VN')}</p>
+          ${incident.location ? `<p><strong>Địa điểm:</strong> ${incident.location}</p>` : ''}
+          <p><strong>Mô tả:</strong> ${incident.description}</p>
+          ${assignedStaffNames ? `<p><strong>👨‍⚕️ Nhân viên xử lý:</strong> ${assignedStaffNames}</p>` : ''}
+        </div>
+        
+        <p style="color: #666; font-size: 12px; margin-top: 30px;">
+          Đây là thông báo tự động từ hệ thống. Vui lòng không trả lời email này.
+        </p>
+      </div>
     `,
   });
 };

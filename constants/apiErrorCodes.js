@@ -104,6 +104,8 @@ const CODES = {
   CARE_TASK_RESIDENT_OUTSIDE_AREA: 'CARE_TASK_RESIDENT_OUTSIDE_AREA',
   CARE_TASK_STATUS_TRANSITION_INVALID: 'CARE_TASK_STATUS_TRANSITION_INVALID',
   CARE_TASK_DELETE_PENDING_ONLY: 'CARE_TASK_DELETE_PENDING_ONLY',
+  CARE_TASK_APPOINTMENT_BLOCKS: 'CARE_TASK_APPOINTMENT_BLOCKS',
+  CARE_TASK_TIME_TOO_CLOSE: 'CARE_TASK_TIME_TOO_CLOSE',
 
   // Leave
   LEAVE_NOT_FOUND: 'LEAVE_NOT_FOUND',
@@ -131,6 +133,11 @@ const CODES = {
   SHIFT_PAST_DATE: 'SHIFT_PAST_DATE',
   SHIFT_TIME_INVALID: 'SHIFT_TIME_INVALID',
   SHIFT_TIME_UNRESOLVABLE: 'SHIFT_TIME_UNRESOLVABLE',
+  SHIFT_FLEXIBLE_TIME_REQUIRED: 'SHIFT_FLEXIBLE_TIME_REQUIRED',
+  SHIFT_FLEXIBLE_TIME_FORMAT: 'SHIFT_FLEXIBLE_TIME_FORMAT',
+  SHIFT_FLEXIBLE_END_BEFORE_START: 'SHIFT_FLEXIBLE_END_BEFORE_START',
+  SHIFT_FLEXIBLE_DURATION_MIN: 'SHIFT_FLEXIBLE_DURATION_MIN',
+  SHIFT_FLEXIBLE_DURATION_MAX: 'SHIFT_FLEXIBLE_DURATION_MAX',
   SHIFT_STAFF_BANNED: 'SHIFT_STAFF_BANNED',
   SHIFT_STAFF_INACTIVE: 'SHIFT_STAFF_INACTIVE',
   SHIFT_ADMIN_NOT_ASSIGNABLE: 'SHIFT_ADMIN_NOT_ASSIGNABLE',
@@ -145,6 +152,9 @@ const CODES = {
   SHIFT_PUBLISH_DRAFT_ONLY: 'SHIFT_PUBLISH_DRAFT_ONLY',
   SHIFT_PUBLISH_CONFLICT: 'SHIFT_PUBLISH_CONFLICT',
   SHIFT_CONFIRM_PUBLISHED_ONLY: 'SHIFT_CONFIRM_PUBLISHED_ONLY',
+  SHIFT_COMPLETE_CONFIRMED_ONLY: 'SHIFT_COMPLETE_CONFIRMED_ONLY',
+  SHIFT_COMPLETE_NOT_ENDED: 'SHIFT_COMPLETE_NOT_ENDED',
+  SHIFT_COMPLETE_WINDOW_CLOSED: 'SHIFT_COMPLETE_WINDOW_CLOSED',
   SHIFT_EDIT_STATUS_INVALID: 'SHIFT_EDIT_STATUS_INVALID',
   SHIFT_EDIT_TOO_LATE: 'SHIFT_EDIT_TOO_LATE',
   SHIFT_NO_CHANGES: 'SHIFT_NO_CHANGES',
@@ -155,6 +165,9 @@ const CODES = {
   BEHAVIOR_RECORD_NOT_FOUND: 'BEHAVIOR_RECORD_NOT_FOUND',
   HYGIENE_RECORD_NOT_FOUND: 'HYGIENE_RECORD_NOT_FOUND',
   MEAL_INTAKE_RECORD_NOT_FOUND: 'MEAL_INTAKE_RECORD_NOT_FOUND',
+  MEAL_INTAKE_SHIFT_WINDOW_CLOSED: 'MEAL_INTAKE_SHIFT_WINDOW_CLOSED',
+  HYGIENE_SHIFT_WINDOW_CLOSED: 'HYGIENE_SHIFT_WINDOW_CLOSED',
+  BEHAVIOR_SHIFT_WINDOW_CLOSED: 'BEHAVIOR_SHIFT_WINDOW_CLOSED',
 
   // Meal plans / meal time / special diet
   MEAL_WORK_DATE_INVALID: 'MEAL_WORK_DATE_INVALID',
@@ -191,6 +204,7 @@ const CODES = {
   MEAL_SPECIAL_DIET_PUBLISH_PAST_DATE: 'MEAL_SPECIAL_DIET_PUBLISH_PAST_DATE',
   MEAL_SPECIAL_DIET_PUBLISH_EMPTY: 'MEAL_SPECIAL_DIET_PUBLISH_EMPTY',
   MEAL_SPECIAL_DIET_PUBLISH_NO_RESIDENTS: 'MEAL_SPECIAL_DIET_PUBLISH_NO_RESIDENTS',
+  MEAL_SPECIAL_DIET_PUBLISH_DUPLICATE_RESIDENT: 'MEAL_SPECIAL_DIET_PUBLISH_DUPLICATE_RESIDENT',
   MEAL_ENTRY_DIET_TYPE_INVALID: 'MEAL_ENTRY_DIET_TYPE_INVALID',
   MEAL_ENTRY_EFFECTIVE_TIME_INVALID: 'MEAL_ENTRY_EFFECTIVE_TIME_INVALID',
   MEAL_ENTRY_EFFECTIVE_TIME_PAST_TODAY: 'MEAL_ENTRY_EFFECTIVE_TIME_PAST_TODAY',
@@ -200,11 +214,22 @@ const CODES = {
   MEAL_TIME_SCHEDULE_PUBLISH_PAST_DATE: 'MEAL_TIME_SCHEDULE_PUBLISH_PAST_DATE',
   MEAL_TIME_SCHEDULE_PUBLISH_EMPTY: 'MEAL_TIME_SCHEDULE_PUBLISH_EMPTY',
   MEAL_TIME_SCHEDULE_PUBLISH_NO_RESIDENTS: 'MEAL_TIME_SCHEDULE_PUBLISH_NO_RESIDENTS',
+  MEAL_TIME_SCHEDULE_PUBLISH_DUPLICATE_RESIDENT: 'MEAL_TIME_SCHEDULE_PUBLISH_DUPLICATE_RESIDENT',
   MEAL_TIME_SCHEDULE_NO_RESIDENTS: 'MEAL_TIME_SCHEDULE_NO_RESIDENTS',
   MEAL_TIME_SCHEDULE_RESIDENTS_MISMATCH: 'MEAL_TIME_SCHEDULE_RESIDENTS_MISMATCH',
   MEAL_RESIDENT_NO_MEAL_TIME_IN_SCHEDULE: 'MEAL_RESIDENT_NO_MEAL_TIME_IN_SCHEDULE',
   MEAL_TIME_ENTRY_TIME_INVALID: 'MEAL_TIME_ENTRY_TIME_INVALID',
   MEAL_TIME_ENTRY_TIME_PAST_TODAY: 'MEAL_TIME_ENTRY_TIME_PAST_TODAY',
+
+  // Dish catalog
+  DISH_NAME_REQUIRED: 'DISH_NAME_REQUIRED',
+  DISH_NAME_INVALID: 'DISH_NAME_INVALID',
+  DISH_NAME_DUPLICATE: 'DISH_NAME_DUPLICATE',
+  DISH_CALORIES_INVALID: 'DISH_CALORIES_INVALID',
+  DISH_INGREDIENTS_INVALID: 'DISH_INGREDIENTS_INVALID',
+  DISH_NOT_FOUND: 'DISH_NOT_FOUND',
+  DISH_INACTIVE: 'DISH_INACTIVE',
+  DISH_IN_USE: 'DISH_IN_USE',
 
   // Care schedules
   CARE_SCHEDULE_WORK_DATE_INVALID: 'CARE_SCHEDULE_WORK_DATE_INVALID',
@@ -232,6 +257,8 @@ const CODES = {
   CARE_SCHEDULE_ENTRY_SOURCE_INVALID: 'CARE_SCHEDULE_ENTRY_SOURCE_INVALID',
   CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID: 'CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID',
   CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID: 'CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID',
+  CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS: 'CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS',
+  CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE: 'CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE',
 
   // Resident (main)
   RESIDENT_ID_REQUIRED: 'RESIDENT_ID_REQUIRED',
@@ -245,6 +272,8 @@ const CODES = {
   RESIDENT_FULL_NAME_REQUIRED: 'RESIDENT_FULL_NAME_REQUIRED',
   RESIDENT_EMERGENCY_CONTACT_PRIMARY_LIMIT: 'RESIDENT_EMERGENCY_CONTACT_PRIMARY_LIMIT',
   RESIDENT_EMERGENCY_CONTACT_CANNOT_DELETE_PRIMARY: 'RESIDENT_EMERGENCY_CONTACT_CANNOT_DELETE_PRIMARY',
+  RESIDENT_EMERGENCY_CONTACT_DUPLICATE: 'RESIDENT_EMERGENCY_CONTACT_DUPLICATE',
+  RESIDENT_EMERGENCY_CONTACT_EMAIL_DUPLICATE: 'RESIDENT_EMERGENCY_CONTACT_EMAIL_DUPLICATE',
   RESIDENT_LOCATION_ID_REQUIRED: 'RESIDENT_LOCATION_ID_REQUIRED',
   RESIDENT_LOCATION_ID_INVALID: 'RESIDENT_LOCATION_ID_INVALID',
   RESIDENT_TRANSFER_NOT_ADMITTED: 'RESIDENT_TRANSFER_NOT_ADMITTED',
@@ -262,6 +291,7 @@ const CODES = {
   RESIDENT_BLOOD_TYPE_INVALID: 'RESIDENT_BLOOD_TYPE_INVALID',
   RESIDENT_MEDICAL_HISTORY_REQUIRED: 'RESIDENT_MEDICAL_HISTORY_REQUIRED',
   RESIDENT_DRUG_ALLERGIES_REQUIRED: 'RESIDENT_DRUG_ALLERGIES_REQUIRED',
+  RESIDENT_DRUG_ALLERGIES_FORBIDDEN: 'RESIDENT_DRUG_ALLERGIES_FORBIDDEN',
   RESIDENT_FILE_REQUIRED: 'RESIDENT_FILE_REQUIRED',
   RESIDENT_FILE_TYPE_UNSUPPORTED: 'RESIDENT_FILE_TYPE_UNSUPPORTED',
   RESIDENT_FILE_TOO_LARGE: 'RESIDENT_FILE_TOO_LARGE',
@@ -378,6 +408,9 @@ const ERROR_MESSAGES = {
   [CODES.CARE_TASK_RESIDENT_OUTSIDE_AREA]: 'Resident is outside staff assigned area',
   [CODES.CARE_TASK_STATUS_TRANSITION_INVALID]: 'Cannot change status from {{from}} to {{to}}',
   [CODES.CARE_TASK_DELETE_PENDING_ONLY]: 'Only pending tasks can be deleted',
+  [CODES.CARE_TASK_APPOINTMENT_BLOCKS]: 'Staff has a clinical appointment at this time ({{from}}–{{to}})',
+  [CODES.CARE_TASK_TIME_TOO_CLOSE]:
+    'Duties for the same staff must be at least {{minGapMinutes}} minutes apart (conflicts with {{conflictTime}})',
 
   [CODES.LEAVE_NOT_FOUND]: 'Leave request not found',
   [CODES.LEAVE_INVALID_STATUS]: 'Invalid leave request status',
@@ -404,6 +437,12 @@ const ERROR_MESSAGES = {
   [CODES.SHIFT_TIME_INVALID]:
     'startTime/endTime may only be used with flexible (SPLIT) shift templates',
   [CODES.SHIFT_TIME_UNRESOLVABLE]: 'Could not resolve shift time window',
+  [CODES.SHIFT_FLEXIBLE_TIME_REQUIRED]: 'startTime and endTime are required for split shifts',
+  [CODES.SHIFT_FLEXIBLE_TIME_FORMAT]: 'Split shift times must use HH:mm format',
+  [CODES.SHIFT_FLEXIBLE_END_BEFORE_START]:
+    'End time must be after start time (split shift on the same day)',
+  [CODES.SHIFT_FLEXIBLE_DURATION_MIN]: 'Split shift must be at least {{minHours}} hour(s)',
+  [CODES.SHIFT_FLEXIBLE_DURATION_MAX]: 'Split shift cannot exceed {{maxHours}} hour(s)',
   [CODES.SHIFT_STAFF_BANNED]: 'Cannot assign shift to a banned staff account',
   [CODES.SHIFT_STAFF_INACTIVE]: 'Cannot assign shift to an inactive staff account',
   [CODES.SHIFT_ADMIN_NOT_ASSIGNABLE]: 'Cannot assign shifts to admin or manager accounts',
@@ -419,6 +458,9 @@ const ERROR_MESSAGES = {
   [CODES.SHIFT_PUBLISH_DRAFT_ONLY]: 'Only draft shifts can be published (current: {{status}})',
   [CODES.SHIFT_PUBLISH_CONFLICT]: 'Cannot publish: blocking conflicts remain',
   [CODES.SHIFT_CONFIRM_PUBLISHED_ONLY]: 'Only published shifts can be confirmed (current: {{status}})',
+  [CODES.SHIFT_COMPLETE_CONFIRMED_ONLY]: 'Only confirmed shifts can be marked completed (current: {{status}})',
+  [CODES.SHIFT_COMPLETE_NOT_ENDED]: 'Shift has not ended yet',
+  [CODES.SHIFT_COMPLETE_WINDOW_CLOSED]: 'Completion window closed (15 minutes after shift end)',
   [CODES.SHIFT_EDIT_STATUS_INVALID]: "Cannot edit shift in status '{{status}}'",
   [CODES.SHIFT_EDIT_TOO_LATE]: 'Cannot edit shift less than 2 hours before start',
   [CODES.SHIFT_NO_CHANGES]: 'No changes detected',
@@ -430,6 +472,12 @@ const ERROR_MESSAGES = {
   [CODES.BEHAVIOR_RECORD_NOT_FOUND]: 'Behavior record not found',
   [CODES.HYGIENE_RECORD_NOT_FOUND]: 'Hygiene activity record not found',
   [CODES.MEAL_INTAKE_RECORD_NOT_FOUND]: 'Meal intake record not found',
+  [CODES.MEAL_INTAKE_SHIFT_WINDOW_CLOSED]:
+    'Recording or editing meal intake is only allowed during your shift or within 30 minutes after it ends',
+  [CODES.HYGIENE_SHIFT_WINDOW_CLOSED]:
+    'Recording or editing hygiene activities is only allowed during your shift or within 30 minutes after it ends',
+  [CODES.BEHAVIOR_SHIFT_WINDOW_CLOSED]:
+    'Recording or editing daily behavior observations is only allowed during your shift or within 30 minutes after it ends',
 
   [CODES.MEAL_WORK_DATE_INVALID]: 'workDate must be YYYY-MM-DD',
   [CODES.MEAL_OBJECT_ID_INVALID]: '{{label}} is invalid',
@@ -465,6 +513,8 @@ const ERROR_MESSAGES = {
   [CODES.MEAL_SPECIAL_DIET_PUBLISH_PAST_DATE]: 'Cannot publish special diet plan for a past date',
   [CODES.MEAL_SPECIAL_DIET_PUBLISH_EMPTY]: 'Cannot publish an empty special diet plan',
   [CODES.MEAL_SPECIAL_DIET_PUBLISH_NO_RESIDENTS]: 'Special diet plan must have at least one resident before publish',
+  [CODES.MEAL_SPECIAL_DIET_PUBLISH_DUPLICATE_RESIDENT]:
+    'Some residents already have a published special diet for this date: {{residents}}',
   [CODES.MEAL_ENTRY_DIET_TYPE_INVALID]: 'entries[{{index}}].dietType must be one of: {{allowed}}',
   [CODES.MEAL_ENTRY_EFFECTIVE_TIME_INVALID]: 'entries[{{index}}].effectiveTime must be HH:mm',
   [CODES.MEAL_ENTRY_EFFECTIVE_TIME_PAST_TODAY]: 'entries[{{index}}].effectiveTime must be from now onward for today',
@@ -474,11 +524,22 @@ const ERROR_MESSAGES = {
   [CODES.MEAL_TIME_SCHEDULE_PUBLISH_PAST_DATE]: 'Cannot publish meal time schedule for a past date',
   [CODES.MEAL_TIME_SCHEDULE_PUBLISH_EMPTY]: 'Cannot publish an empty meal time schedule',
   [CODES.MEAL_TIME_SCHEDULE_PUBLISH_NO_RESIDENTS]: 'Meal time schedule must have at least one resident before publish',
+  [CODES.MEAL_TIME_SCHEDULE_PUBLISH_DUPLICATE_RESIDENT]:
+    'Some residents already have a published meal time schedule for this date: {{residents}}',
   [CODES.MEAL_TIME_SCHEDULE_NO_RESIDENTS]: 'Meal time schedule must include at least one resident',
   [CODES.MEAL_TIME_SCHEDULE_RESIDENTS_MISMATCH]: 'Some meal plan residents are not in the selected meal time schedule',
   [CODES.MEAL_RESIDENT_NO_MEAL_TIME_IN_SCHEDULE]: 'Resident has no {{mealType}} time in the selected meal time schedule',
   [CODES.MEAL_TIME_ENTRY_TIME_INVALID]: 'entries[{{index}}].{{field}} must be HH:mm',
   [CODES.MEAL_TIME_ENTRY_TIME_PAST_TODAY]: 'entries[{{index}}].{{field}} must be from now onward for today',
+
+  [CODES.DISH_NAME_REQUIRED]: 'Dish name is required',
+  [CODES.DISH_NAME_INVALID]: 'Dish name cannot contain numbers or special characters',
+  [CODES.DISH_NAME_DUPLICATE]: 'A dish named "{{name}}" already exists',
+  [CODES.DISH_CALORIES_INVALID]: 'calories must be a non-negative integer',
+  [CODES.DISH_INGREDIENTS_INVALID]: 'Ingredients cannot contain special characters',
+  [CODES.DISH_NOT_FOUND]: 'Dish not found',
+  [CODES.DISH_INACTIVE]: 'Dish is inactive',
+  [CODES.DISH_IN_USE]: 'Cannot delete or deactivate a dish that is already scheduled in a meal plan',
 
   [CODES.CARE_SCHEDULE_WORK_DATE_INVALID]: 'workDate must be YYYY-MM-DD',
   [CODES.CARE_SCHEDULE_PAST_DATE]: 'Cannot create care schedule for a past date',
@@ -505,6 +566,10 @@ const ERROR_MESSAGES = {
   [CODES.CARE_SCHEDULE_ENTRY_SOURCE_INVALID]: 'entries[{{index}}].source must be one of: {{allowed}}',
   [CODES.CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID]: 'entries[{{index}}].taskType must be one of: {{allowed}}',
   [CODES.CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID]: 'entries[{{index}}].careLevel must be one of: {{allowed}}',
+  [CODES.CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS]:
+    'Staff has a clinical appointment at this time ({{from}}–{{to}})',
+  [CODES.CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE]:
+    'Duties for the same staff must be at least {{minGapMinutes}} minutes apart (conflicts with {{conflictTime}})',
 
   [CODES.RESIDENT_ID_REQUIRED]: 'residentId is required',
   [CODES.RESIDENT_ID_INVALID]: '{{label}} is invalid',
@@ -517,6 +582,8 @@ const ERROR_MESSAGES = {
   [CODES.RESIDENT_FULL_NAME_REQUIRED]: 'fullName is required',
   [CODES.RESIDENT_EMERGENCY_CONTACT_PRIMARY_LIMIT]: 'At most one emergency contact can be marked primary',
   [CODES.RESIDENT_EMERGENCY_CONTACT_CANNOT_DELETE_PRIMARY]: 'Cannot delete the primary emergency contact without assigning another',
+  [CODES.RESIDENT_EMERGENCY_CONTACT_DUPLICATE]: 'Phone number {{phone}} is already used by another emergency contact ("{{fullName}}") for this resident',
+  [CODES.RESIDENT_EMERGENCY_CONTACT_EMAIL_DUPLICATE]: 'Email {{email}} is already used by another emergency contact ("{{fullName}}") for this resident',
   [CODES.RESIDENT_LOCATION_ID_REQUIRED]: 'buildingId, floorId or roomId is required',
   [CODES.RESIDENT_LOCATION_ID_INVALID]: '{{label}} is invalid',
   [CODES.RESIDENT_TRANSFER_NOT_ADMITTED]: 'Only admitted residents can be transferred',
@@ -526,7 +593,7 @@ const ERROR_MESSAGES = {
   [CODES.RESIDENT_TRANSFER_ROOM_CLOSED]: 'Target room is closed',
   [CODES.RESIDENT_TRANSFER_ROOM_FULL]: 'Target room is full',
   [CODES.RESIDENT_TRANSFER_BED_NOT_FOUND]: 'Target bed not found',
-  [CODES.RESIDENT_TRANSFER_BED_MISMATCH]: 'targetBedId does not belong to targetRoomId',
+  [CODES.RESIDENT_TRANSFER_BED_MISMATCH]: 'Target bed does not belong to the selected room',
   [CODES.RESIDENT_TRANSFER_BED_UNAVAILABLE]: 'Target bed is not available',
   [CODES.RESIDENT_TRANSFER_SAME_BED]: 'Resident is already on this bed',
   [CODES.RESIDENT_HEALTH_CONDITION_REQUIRED]: 'initialHealthCondition is required',
@@ -534,6 +601,7 @@ const ERROR_MESSAGES = {
   [CODES.RESIDENT_BLOOD_TYPE_INVALID]: 'bloodType must be one of: {{allowed}}',
   [CODES.RESIDENT_MEDICAL_HISTORY_REQUIRED]: 'Provide chronicConditions and/or medicalHistory',
   [CODES.RESIDENT_DRUG_ALLERGIES_REQUIRED]: 'drugAllergies is required (array, may be empty)',
+  [CODES.RESIDENT_DRUG_ALLERGIES_FORBIDDEN]: 'Only doctors can update drug allergies',
   [CODES.RESIDENT_FILE_REQUIRED]: 'No file uploaded',
   [CODES.RESIDENT_FILE_TYPE_UNSUPPORTED]: 'Unsupported file type',
   [CODES.RESIDENT_FILE_TOO_LARGE]: 'File too large',

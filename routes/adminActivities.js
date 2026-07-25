@@ -123,7 +123,7 @@ router.post('/', protect, authorize('admin'), createActivity);
  *       403:
  *         description: Access forbidden
  */
-router.get('/', protect, authorize('admin', 'doctor', 'nurse', 'family'), listActivities);
+router.get('/', protect, authorize('admin', 'doctor', 'nurse', 'caregiver', 'family'), listActivities);
 
 /**
  * @swagger
@@ -185,7 +185,7 @@ router.get('/statistics', protect, authorize('admin'), getActivityStatistics);
 router.delete('/bulk', protect, authorize('admin'), bulkDeleteActivities);
 router.patch('/bulk/status', protect, authorize('admin'), bulkUpdateActivityStatus);
 
-router.get('/:activityId', protect, authorize('admin', 'doctor', 'nurse', 'family'), getActivity);
+router.get('/:activityId', protect, authorize('admin', 'doctor', 'nurse', 'caregiver', 'family'), getActivity);
 
 /**
  * @swagger

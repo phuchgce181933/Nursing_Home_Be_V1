@@ -3,6 +3,7 @@ const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiEr
 const specialDietDayRepo = require('../repositories/specialDietDayRepository');
 const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
+const { assertNoPublishedSpecialDietConflicts } = require('../utils/nutritionPublishGuards');
 const Resident = require('../models/resident');
 const ServicePackage = require('../models/servicePackage');
 const Admission = require('../models/admission');
@@ -406,6 +407,7 @@ const publishPlan = async (id, actorUserId) => {
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
   await assertResidentsEligibleForSpecialDiet(residentIds);
+  await assertNoPublishedSpecialDietConflicts(workDate, residentIds, id);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

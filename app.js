@@ -85,6 +85,7 @@ app.use('/api/resident-visits', require('./routes/staffResidentVisits'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
+app.use('/api/conversations', require('./routes/conversations'));
 // expose conversations router at root path as well for legacy or direct calls
 app.use('/conversations', require('./routes/conversations'));
 // canonical mount: works for every authenticated role (fixes doctor/nurse 404s that
@@ -93,12 +94,13 @@ app.use('/api/conversations', require('./routes/conversations'));
 app.use('/api/payos', require('./routes/payos'));
 app.use('/payos', require('./routes/payos'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
-
+app.use('/api/consultation-requests', require('./routes/consultationRequest'));
+app.use('/api/admin/consultation-requests', require('./routes/adminConsultationRequests'));
 
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));
+app.use('/api/nurse/nutrition', require('./routes/nutritionCoverage'));
 app.use('/api/nurse/special-diets', require('./routes/specialDiets'));
 app.use('/api/nurse/meal-time-schedules', require('./routes/mealTimeSchedules'));
-app.use('/api/nurse/nutrition-reports', require('./routes/nutritionReports'));
 app.use('/api/caregiver/meal-intake-notes', require('./routes/caregiverMealIntakeNotes'));
 app.use('/api/caregiver/residents', require('./routes/caregiverResidents'));
 app.use('/api/caregiver/care-tasks', require('./routes/caregiverCareTasks'));
@@ -115,6 +117,7 @@ app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/medical', require('./routes/medicalServicePackages'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
 // Clinical services and billing
+app.use('/api/nutrition/dishes', require('./routes/dishes'));
 app.use('/api/clinical/services', require('./routes/clinicalServices'));
 app.use('/api/clinical/charges', require('./routes/medicalCharges'));
 app.use('/api/clinical/invoices', require('./routes/invoices'));
@@ -172,11 +175,10 @@ app.use((req, res) => {
 });
 
 // global error handler
+const { sendApiError } = require('./utils/apiErrorResponse');
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(err.statusCode || 500).json({
-    message: err.message || 'Internal server error',
-    errorCode: err.errorCode,
-  });
+  console.error(err && err.stack ? err.stack : err);
+  // Use standardized API error formatter which handles ServiceError and ApiError
+  return sendApiError(res, err);
 });
 module.exports = app;

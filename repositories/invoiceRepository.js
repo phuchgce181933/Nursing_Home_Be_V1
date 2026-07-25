@@ -17,6 +17,9 @@ const findAll = async (filter, { sort = { issuedAt: -1 }, skip = 0, limit = 50 }
 
 const countAll = async (filter) => Invoice.countDocuments(filter);
 
+const findUnpaidByResidentId = async (residentId, { sort = { issuedAt: -1 }, skip = 0, limit = 0 } = {}) =>
+  Invoice.find({ residentId, status: { $in: ['DRAFT', 'ISSUED', 'PARTIALLY_PAID'] } }).sort(sort).skip(skip).limit(limit);
+
 module.exports = {
   create,
   findById,
@@ -25,4 +28,5 @@ module.exports = {
   findByResidentId,
   findAll,
   countAll,
+  findUnpaidByResidentId,
 };

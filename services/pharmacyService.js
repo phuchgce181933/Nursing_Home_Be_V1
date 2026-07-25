@@ -119,11 +119,13 @@ const createMedication = async (user, body, req) => {
 
 	if (!/^[A-Za-z]/.test(name)) throw new ServiceError('name must start with a letter', 400);
 
-	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel < 0)) {
-		throw new ServiceError('minStockLevel must be a non-negative number', 400);
+	const minStockLevel = Number(body.minStockLevel);
+	if (body.minStockLevel == null || Number.isNaN(minStockLevel) || minStockLevel <= 1000) {
+		throw new ServiceError('minStockLevel must be greater than 1000', 400);
 	}
 
 	const medicationCode = body.medicationCode ? String(body.medicationCode).trim() : await generateMedicationCode();
+
 	const existingCode = await medicationRepo.findByCode(medicationCode);
 	if (existingCode) throw new ServiceError('medicationCode already exists', 409);
 
@@ -158,8 +160,8 @@ const updateMedication = async (user, medicationId, body, req) => {
 	const medication = await medicationRepo.findById(medicationId);
 	if (!medication) throw new ServiceError('Medication not found', 404);
 
-	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel < 0)) {
-		throw new ServiceError('minStockLevel must be a non-negative number', 400);
+	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel <= 1000)) {
+		throw new ServiceError('minStockLevel must be greater than 1000', 400);
 	}
 
 	const updateData = { updatedBy: user._id };
@@ -197,7 +199,6 @@ const listMedications = async (query) => {
 	} else if (query.isActive === 'false' || query.isActive === false) {
 		filter.isActive = false;
 	}
-	// any other value (e.g. "all", undefined) means no filter — all statuses
 
 	if (query.search) {
 		const term = String(query.search).trim();
@@ -438,6 +439,13 @@ const createStock = async (user, body, req) => {
 	const expiryDate = parseOptionalDate(body.expiryDate, 'expiryDate');
 	const receivedDate = parseOptionalDate(body.receivedDate, 'receivedDate') || new Date();
 
+	if (expiryDate && receivedDate) {
+		const minExpiry = new Date(receivedDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+		if (expiryDate <= minExpiry) {
+			throw new ServiceError('Ngày hết hạn phải lớn hơn 12 tháng kể từ ngày nhập thuốc', 400);
+		}
+	}
+
 	const stock = await medicationStockRepo.create({
 		medicationId: medication._id,
 		supplierId,
@@ -493,6 +501,15 @@ const updateStock = async (user, stockId, body, req) => {
 	if (body.costPerUnit !== undefined) updateData.costPerUnit = body.costPerUnit;
 	if (body.notes !== undefined) updateData.notes = String(body.notes || '').trim();
 	if (supplierId) updateData.supplierId = supplierId;
+
+	const finalExpiry = updateData.expiryDate !== undefined ? updateData.expiryDate : stock.expiryDate;
+	const finalReceived = updateData.receivedDate !== undefined ? updateData.receivedDate : stock.receivedDate;
+	if (finalExpiry && finalReceived) {
+		const minExpiry = new Date(finalReceived.getTime() + 365 * 24 * 60 * 60 * 1000);
+		if (finalExpiry <= minExpiry) {
+			throw new ServiceError('Ngày hết hạn phải lớn hơn 12 tháng kể từ ngày nhập thuốc', 400);
+		}
+	}
 
 	const updated = await medicationStockRepo.updateById(stockId, updateData);
 
@@ -651,14 +668,16 @@ const getLowStockAlerts = async (query) => {
 };
 
 const trackExpiry = async (query) => {
-	const withinDays = query.withinDays ? parseInt(query.withinDays, 10) : 30;
-	if (Number.isNaN(withinDays) || withinDays <= 0) {
+	const hasWithinDays = query && query.withinDays !== undefined && query.withinDays !== null && query.withinDays !== '';
+	const withinDays = hasWithinDays ? parseInt(query.withinDays, 10) : null;
+	if (hasWithinDays && (Number.isNaN(withinDays) || withinDays <= 0)) {
 		throw new ServiceError('withinDays must be a positive number', 400);
 	}
 
 	const now = new Date();
-	const toDate = new Date(now.getTime() + withinDays * 24 * 60 * 60 * 1000);
-	const data = await medicationStockRepo.findExpiring(now, toDate);
+	const toDate = withinDays ? new Date(now.getTime() + withinDays * 24 * 60 * 60 * 1000) : undefined;
+	const fromDate = withinDays ? now : undefined;
+	const data = await medicationStockRepo.findExpiring(fromDate, toDate);
 
 	return { data, withinDays };
 };
@@ -716,7 +735,7 @@ const getReportSummary = async (query) => {
 		medicationRepo.countAll({ isActive: true }),
 		supplierRepo.countAll({ isActive: true }),
 		getLowStockAlerts({}),
-		trackExpiry({ withinDays: 30 }),
+		trackExpiry({ withinDays: 365 }),
 		getUsageStats({ from: fromDate, to: toDate }),
 	]);
 

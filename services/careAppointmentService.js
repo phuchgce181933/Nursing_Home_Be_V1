@@ -34,6 +34,9 @@ const idOf = (ref) => (ref && ref._id ? ref._id.toString() : ref ? ref.toString(
 
 const assertAppointmentAccess = (appointment, user, staffProfile) => {
   if (!RESTRICTED_ROLES.includes(user.role)) return;
+  if (!staffProfile || !staffProfile._id) {
+    throw new ServiceError('Không tìm thấy hồ sơ nhân viên cho tài khoản này', 404);
+  }
   const myId = staffProfile._id.toString();
   const doctorMatch = user.role === 'doctor' && idOf(appointment.doctorStaffId) === myId;
   const nurseMatch = user.role === 'nurse' && idOf(appointment.nurseStaffId) === myId;
@@ -141,6 +144,59 @@ const validateStaffAvailability = async (staffProfileId, roleCategory, startAt, 
       409
     );
   }
+
+  // 3. Kiểm tra trùng lịch với Nhiệm vụ chăm sóc (CareTask) cùng ngày
+  const CareTask = require('../models/careTask');
+  const dayStart = new Date(dateStr + 'T00:00:00+07:00');
+  const dayEnd = new Date(dateStr + 'T23:59:59+07:00');
+  const tasksOnDate = await CareTask.find({
+    staffProfileId,
+    status: { $in: ['pending', 'in_progress'] },
+    workDate: { $gte: dayStart, $lte: dayEnd },
+  }).populate('residentId', 'fullName');
+
+  for (const task of tasksOnDate) {
+    if (task.scheduledTime) {
+      const taskTime = new Date(`${dateStr}T${task.scheduledTime}:00+07:00`);
+      if (taskTime >= startAt && taskTime < endAt) {
+        const residentName = task.residentId?.fullName || 'cư dân';
+        const roleLabel = roleCategory === 'doctor' ? 'Bác sĩ' : 'Y tá';
+        throw new ServiceError(
+          `${roleLabel} đã có nhiệm vụ chăm sóc cho ${residentName} vào lúc ${task.scheduledTime} trùng với khung giờ khám này.`,
+          409
+        );
+      }
+    }
+  }
+};
+
+const validateClinicalExamConstraints = (start, end, appointmentType) => {
+  // 1. End time must be after start time and within 24 hours duration
+  const diffMs = end.getTime() - start.getTime();
+  if (diffMs <= 0) {
+    throw new ServiceError('Thời gian kết thúc phải sau thời gian bắt đầu.', 400);
+  }
+  if (diffMs > 24 * 60 * 60 * 1000) {
+    throw new ServiceError('Khoảng thời gian khám (từ lúc bắt đầu đến lúc kết thúc) không được vượt quá 24 giờ.', 400);
+  }
+
+  // 2. Start date and end date must be the exact same calendar day
+  if (start.toDateString() !== end.toDateString()) {
+    throw new ServiceError('Ngày bắt đầu và ngày kết thúc của lịch khám phải là cùng một ngày.', 400);
+  }
+
+  // 3. Fixed hours (8:00 AM to 4:00 PM)
+  const startHour = start.getHours();
+  const startMin = start.getMinutes();
+  const endHour = end.getHours();
+  const endMin = end.getMinutes();
+
+  if (startHour < 8 || (startHour === 16 && startMin > 0) || startHour > 16) {
+    throw new ServiceError('Thời gian bắt đầu khám phải nằm trong khoảng từ 8h00 sáng đến 16h00 chiều.', 400);
+  }
+  if (endHour < 8 || (endHour === 16 && endMin > 0) || endHour > 16) {
+    throw new ServiceError('Thời gian kết thúc khám phải nằm trong khoảng từ 8h00 sáng đến 16h00 chiều.', 400);
+  }
 };
 
 const createAppointment = async (user, body, req) => {
@@ -158,6 +214,7 @@ const createAppointment = async (user, body, req) => {
   const start = new Date(scheduledStartAt);
   const end = new Date(scheduledEndAt);
   validateAppointmentWindow(start, end);
+  validateClinicalExamConstraints(start, end, appointmentType);
   if (start < new Date()) throw new ServiceError('scheduledStartAt cannot be in the past', 400);
 
   if (doctorStaffId) {
@@ -246,7 +303,7 @@ const getMyAppointments = async (user, query) => {
 
   const { pageNum, limitNum, skip } = parsePagination(query);
   const [data, total] = await Promise.all([
-    careAppointmentRepo.findAppointmentsWithPopulate(filter, { sort: { scheduledStartAt: 1 }, skip, limit: limitNum }),
+    careAppointmentRepo.findAppointmentsWithPopulate(filter, { sort: { scheduledStartAt: -1 }, skip, limit: limitNum }),
     careAppointmentRepo.countDocuments(filter),
   ]);
 
@@ -312,7 +369,9 @@ const updateAppointment = async (user, staffProfile, id, body, req) => {
 
   const start = body.scheduledStartAt ? new Date(body.scheduledStartAt) : appointment.scheduledStartAt;
   const end = body.scheduledEndAt ? new Date(body.scheduledEndAt) : appointment.scheduledEndAt;
+  const apptType = body.appointmentType || appointment.appointmentType;
   validateAppointmentWindow(start, end);
+  validateClinicalExamConstraints(start, end, apptType);
   // Only block when the start time is actually being moved into the past —
   // resaving an unchanged (already-past) time (e.g. editing notes only) is allowed.
   if (start.getTime() !== appointment.scheduledStartAt.getTime() && start < new Date()) {
@@ -409,6 +468,12 @@ const updateStatus = async (user, staffProfile, id, body, req) => {
   const appointment = await careAppointmentRepo.findById(id);
   if (!appointment) throw new ServiceError('Appointment not found', 404);
   assertAppointmentAccess(appointment, user, staffProfile);
+
+  if (appointment.appointmentType === 'Khám lâm sàng đầu vào' && ['in_progress', 'completed'].includes(status)) {
+    if (!appointment.doctorStaffId || !appointment.nurseStaffId) {
+      throw new ServiceError('Yêu cầu chỉ định bắt buộc phải đủ cả bác sĩ và y tá trước khi thực hiện khám.', 400);
+    }
+  }
 
   const allowedNext = STATUS_TRANSITIONS[appointment.status];
   if (!allowedNext.includes(status)) {

@@ -30,6 +30,9 @@ const {
   getShiftEndDateTime,
   addDaysToDateStr,
   isPastUnconfirmedCancelDeadline,
+  isShiftEnded,
+  isWithinPostShiftCompleteWindow,
+  isPastPostShiftCompleteDeadline,
   formatTimeVN,
 } = require('../utils/shiftTime');
 const { isAssignableRole } = require('../utils/staffAssignment');
@@ -45,7 +48,7 @@ const raiseShiftErr = (code, { statusCode = 400, params, conflicts } = {}) => {
 };
 
 const MANAGER_ROLES = ['admin'];
-const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
+const STAFF_SHIFT_ROLES = ['doctor', 'nurse', 'caregiver', 'staff', 'pharmacist'];
 
 const isShiftManager = (role) => MANAGER_ROLES.includes(role);
 
@@ -646,6 +649,40 @@ const checkOutShift = async (id, actorUser) => {
   return shiftRepo.updateById(id, { checkOutTime: new Date() });
 };
 
+const completeShift = async (id, actorUser) => {
+  const shift = await shiftRepo.findById(id);
+  if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
+  if (shift.status !== 'confirmed') {
+    throw apiErr(CODES.SHIFT_COMPLETE_CONFIRMED_ONLY, { statusCode: 400, params: { status: shift.status } });
+  }
+
+  await assertActorMayConfirmShift(shift, actorUser);
+
+  const workDateStr = workDateToVNString(shift.workDate);
+  const now = nowVN();
+  if (!isShiftEnded(workDateStr, shift.startTime, shift.endTime, now)) {
+    throw apiErr(CODES.SHIFT_COMPLETE_NOT_ENDED, { statusCode: 400 });
+  }
+  if (!isWithinPostShiftCompleteWindow(workDateStr, shift.startTime, shift.endTime, now)) {
+    throw apiErr(CODES.SHIFT_COMPLETE_WINDOW_CLOSED, { statusCode: 400 });
+  }
+
+  const actorUserId = actorUser._id || actorUser;
+  const logEntry = {
+    changedBy: actorUserId,
+    fieldsChanged: ['status'],
+    oldValues: { status: 'confirmed' },
+    newValues: { status: 'completed' },
+    reason: 'Completed',
+  };
+  const updated = await shiftRepo.updateById(id, {
+    status: 'completed',
+    $push: { changeLog: logEntry },
+  });
+  triggerReadinessSyncForWorkDate(shift.workDate);
+  return updated;
+};
+
 const updateShift = async (id, body, actorUser, isAdmin = false, req = null) => {
   const actorUserId = actorUser._id;
   const shift = await shiftRepo.findById(id);
@@ -793,6 +830,9 @@ const updateShift = async (id, body, actorUser, isAdmin = false, req = null) => 
 const AUTO_CANCEL_REASON =
   'Auto-cancelled: not confirmed within 30 minutes of shift start';
 
+const AUTO_CANCEL_MISSED_COMPLETION_REASON =
+  'Auto-cancelled: completion not confirmed within 15 minutes of shift end';
+
 const cancelShiftAsSystem = async (shift, reason = AUTO_CANCEL_REASON) => {
   const logEntry = {
     changedBy: null,
@@ -840,6 +880,43 @@ const autoCancelUnconfirmedPublishedShifts = async () => {
     }
 
     await cancelShiftAsSystem(shift);
+    cancelled += 1;
+  }
+
+  return { cancelled, skipped };
+};
+
+const autoCancelUncompletedConfirmedShifts = async () => {
+  const fromStr = addDaysToDateStr(todayVN(), -1);
+  const toStr = addDaysToDateStr(todayVN(), 1);
+  const fromDate = new Date(`${fromStr}T00:00:00.000Z`);
+  const toDate = new Date(`${toStr}T23:59:59.999Z`);
+  const shifts = await shiftRepo.findConfirmedInWorkDateRange(fromDate, toDate);
+  const now = nowVN();
+  let cancelled = 0;
+  let skipped = 0;
+
+  for (const shift of shifts) {
+    const workDateStr = workDateToVNString(shift.workDate);
+    let pastDeadline = false;
+    try {
+      pastDeadline = isPastPostShiftCompleteDeadline(workDateStr, shift.startTime, shift.endTime, now);
+    } catch {
+      continue;
+    }
+    if (!pastDeadline) continue;
+
+    try {
+      await assertNoActiveCareTasksForShift(shift._id);
+    } catch (err) {
+      skipped += 1;
+      console.warn(
+        `[shiftService] Auto-cancel missed completion skipped shift ${shift._id}: ${err.message}`
+      );
+      continue;
+    }
+
+    await cancelShiftAsSystem(shift, AUTO_CANCEL_MISSED_COMPLETION_REASON);
     cancelled += 1;
   }
 
@@ -922,7 +999,10 @@ const listShifts = async (filter = {}, options = {}, actorUser = null) => {
   const page = parseInt(options.page) || 1;
   const limit = parseInt(options.limit) || 20;
   const skip = (page - 1) * limit;
-  const [rows, total] = await Promise.all([shiftRepo.findAll(query, { skip, limit }), shiftRepo.countAll(query)]);
+  const [rows, total] = await Promise.all([
+    shiftRepo.findAll(query, { skip, limit, sort: { createdAt: -1 } }),
+    shiftRepo.countAll(query),
+  ]);
   const data = rows.map(enrichShift);
   const totalHours = Math.round(data.reduce((sum, s) => sum + (s.totalHours || 0), 0) * 100) / 100;
   return { data, total, totalHours, page, limit, totalPages: Math.ceil(total / limit) };
@@ -1006,6 +1086,7 @@ module.exports = {
   confirmShift,
   checkInShift,
   checkOutShift,
+  completeShift,
   updateShift,
   cancelShift,
   deleteShift,
@@ -1016,4 +1097,5 @@ module.exports = {
   checkConflicts,
   previewConflicts,
   autoCancelUnconfirmedPublishedShifts,
+  autoCancelUncompletedConfirmedShifts,
 };

@@ -1,12 +1,14 @@
+const { apiErr, CODES } = require('./apiError');
+
 const NIGHT_START_MINUTES = 18 * 60; // 18:00 — typical night-shift start
 
 /** Roles allowed per shift template type (roleCategory or User.role). */
 const ALLOWED_ROLES_BY_SHIFT_TYPE = {
-  morning: ['doctor', 'nurse', 'caregiver', 'staff'],
-  afternoon: ['doctor', 'nurse', 'caregiver', 'staff'],
-  night: ['doctor', 'nurse', 'caregiver', 'staff'],
+  morning: ['doctor', 'nurse', 'caregiver', 'staff', 'pharmacist'],
+  afternoon: ['doctor', 'nurse', 'caregiver', 'staff', 'pharmacist'],
+  night: ['doctor', 'nurse', 'caregiver', 'staff', 'pharmacist'],
   on_call: ['doctor', 'nurse'],
-  custom: ['doctor', 'nurse', 'caregiver', 'staff'],
+  custom: ['doctor', 'nurse', 'caregiver', 'staff', 'pharmacist'],
 };
 
 const FLEXIBLE_SHIFT_MIN_HOURS = 1;
@@ -260,28 +262,28 @@ const computeFreeTimeSlots = (existingShifts, { minHours, maxHours, minStartMinu
 
 const validateFlexibleShiftTimes = (startTime, endTime) => {
   if (!startTime || !endTime) {
-    throw Object.assign(new Error('startTime và endTime là bắt buộc cho ca gãy'), { status: 400 });
+    throw apiErr(CODES.SHIFT_FLEXIBLE_TIME_REQUIRED, { statusCode: 400 });
   }
   if (!TIME_HHMM_REGEX.test(startTime) || !TIME_HHMM_REGEX.test(endTime)) {
-    throw Object.assign(new Error('Giờ ca gãy phải có định dạng HH:mm'), { status: 400 });
+    throw apiErr(CODES.SHIFT_FLEXIBLE_TIME_FORMAT, { statusCode: 400 });
   }
   const start = toMinutes(startTime);
   const end = toMinutes(endTime);
   if (end <= start) {
-    throw Object.assign(new Error('Giờ kết thúc phải sau giờ bắt đầu (ca gãy trong cùng ngày)'), { status: 400 });
+    throw apiErr(CODES.SHIFT_FLEXIBLE_END_BEFORE_START, { statusCode: 400 });
   }
   const hours = (end - start) / 60;
   if (hours < FLEXIBLE_SHIFT_MIN_HOURS) {
-    throw Object.assign(
-      new Error(`Ca gãy phải có thời lượng tối thiểu ${FLEXIBLE_SHIFT_MIN_HOURS} giờ`),
-      { status: 400 }
-    );
+    throw apiErr(CODES.SHIFT_FLEXIBLE_DURATION_MIN, {
+      statusCode: 400,
+      params: { minHours: FLEXIBLE_SHIFT_MIN_HOURS },
+    });
   }
   if (hours > FLEXIBLE_SHIFT_MAX_HOURS) {
-    throw Object.assign(
-      new Error(`Ca gãy không được vượt quá ${FLEXIBLE_SHIFT_MAX_HOURS} giờ`),
-      { status: 400 }
-    );
+    throw apiErr(CODES.SHIFT_FLEXIBLE_DURATION_MAX, {
+      statusCode: 400,
+      params: { maxHours: FLEXIBLE_SHIFT_MAX_HOURS },
+    });
   }
   return { startTime, endTime, totalHours: Math.round(hours * 100) / 100 };
 };

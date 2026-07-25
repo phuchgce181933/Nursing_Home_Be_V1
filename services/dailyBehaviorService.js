@@ -11,6 +11,10 @@ const {
   SEVERITY_LEVELS,
 } = require('../models/dailyBehaviorRecord');
 const { parseWorkDate, todayVN, workDateToVNString, VN_TZ } = require('../utils/shiftTime');
+const {
+  getCaregiverRecordingWindow,
+  assertCaregiverRecordingWindowOpen,
+} = require('../utils/mealIntakeShiftWindow');
 
 const parseWorkDateStrict = (workDate) => {
   const str = String(workDate || '').trim();
@@ -158,6 +162,44 @@ const listRecords = async (userId, query) => {
   const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
   const skip = (page - 1) * limit;
 
+  let meta = { canMutate: false };
+  if (query.workDate) {
+    const wd = parseWorkDateStrict(query.workDate);
+    const { canMutate } = await getCaregiverRecordingWindow(profile._id, wd);
+    meta = { canMutate };
+  }
+
+  const [data, total] = await Promise.all([
+    dailyBehaviorRepo.findAll(filter, { skip, limit, sort: { observedAt: -1 } }),
+    dailyBehaviorRepo.countAll(filter),
+  ]);
+
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1, meta };
+};
+
+const listRecordsForAdmin = async (query) => {
+  const filter = {};
+  if (query.residentId) {
+    assertValidObjectId(query.residentId, 'residentId');
+    filter.residentId = query.residentId;
+  }
+  if (query.observationCategory) {
+    assertFieldOneOf('observationCategory', query.observationCategory, OBSERVATION_CATEGORIES);
+    filter.observationCategory = query.observationCategory;
+  }
+  if (query.severity) {
+    assertFieldOneOf('severity', query.severity, SEVERITY_LEVELS);
+    filter.severity = query.severity;
+  }
+  if (query.workDate) {
+    const wd = parseWorkDateStrict(query.workDate);
+    filter.workDate = workDateToDate(wd);
+  }
+
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
+  const skip = (page - 1) * limit;
+
   const [data, total] = await Promise.all([
     dailyBehaviorRepo.findAll(filter, { skip, limit, sort: { observedAt: -1 } }),
     dailyBehaviorRepo.countAll(filter),
@@ -171,6 +213,11 @@ const createRecord = async (userId, body) => {
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, body.residentId);
+  await assertCaregiverRecordingWindowOpen(
+    profile._id,
+    workDate,
+    CODES.BEHAVIOR_SHIFT_WINDOW_CLOSED
+  );
 
   const category = body.observationCategory;
   if (category === 'mood' && !body.moodLevel) {
@@ -220,6 +267,11 @@ const updateRecord = async (userId, id, body) => {
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  await assertCaregiverRecordingWindowOpen(
+    profile._id,
+    workDateToVNString(record.workDate),
+    CODES.BEHAVIOR_SHIFT_WINDOW_CLOSED
+  );
   validatePayload(body, true);
 
   const category = body.observationCategory ?? record.observationCategory;
@@ -259,6 +311,11 @@ const deleteRecord = async (userId, id) => {
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
   await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  await assertCaregiverRecordingWindowOpen(
+    profile._id,
+    workDateToVNString(record.workDate),
+    CODES.BEHAVIOR_SHIFT_WINDOW_CLOSED
+  );
   await dailyBehaviorRepo.deleteById(id);
   return { ...apiSuccess(SUCCESS.BEHAVIOR_RECORD_DELETED), deleted: true, id };
 };
@@ -270,6 +327,7 @@ module.exports = {
   SEVERITY_LEVELS,
   listAssignedResidents,
   listRecords,
+  listRecordsForAdmin,
   createRecord,
   getRecord,
   updateRecord,

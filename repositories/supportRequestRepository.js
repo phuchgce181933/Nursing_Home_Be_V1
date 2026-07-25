@@ -8,9 +8,11 @@ const count = async (filter) => {
   return SupportRequest.countDocuments(filter);
 };
 
-const find = async (filter, { page = 1, limit = 20, sort = { createdAt: -1 } } = {}) => {
+const find = async (filter, { page = 1, limit = 20, sort = { createdAt: -1 }, populate } = {}) => {
   const skip = (page - 1) * limit;
-  return SupportRequest.find(filter).sort(sort).skip(skip).limit(limit).lean();
+  let query = SupportRequest.find(filter).sort(sort).skip(skip).limit(limit);
+  if (populate) query = query.populate(populate);
+  return query.lean();
 };
 
 const findById = async (id) => {

@@ -59,7 +59,7 @@ router.post('/drafts', protect, authorize(...NURSE_ROLES), ctrl.createDraft);
  *     responses:
  *       200: { description: Success }
  */
-router.get('/', protect, authorize(...NURSE_ROLES), ctrl.listPlans);
+router.get('/', protect, authorize('nurse', 'caregiver'), ctrl.listPlans);
 
 /**
  * @swagger
@@ -71,7 +71,7 @@ router.get('/', protect, authorize(...NURSE_ROLES), ctrl.listPlans);
  *     responses:
  *       200: { description: Success }
  */
-router.get('/:id', protect, authorize(...NURSE_ROLES), ctrl.getPlan);
+router.get('/:id', protect, authorize('nurse', 'caregiver'), ctrl.getPlan);
 
 /**
  * @swagger

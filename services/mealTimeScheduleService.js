@@ -95,11 +95,25 @@ const validateEntry = (entry, index) => {
     });
   }
 
+  const breakfastTime = normalizeTimeField(row.breakfastTime || DEFAULT_MEAL_TIMES.breakfast, 'breakfastTime', index);
+  const lunchTime = normalizeTimeField(row.lunchTime || DEFAULT_MEAL_TIMES.lunch, 'lunchTime', index);
+  const dinnerTime = normalizeTimeField(row.dinnerTime || DEFAULT_MEAL_TIMES.dinner, 'dinnerTime', index);
+  if (!(toMinutes(breakfastTime) < toMinutes(lunchTime) && toMinutes(lunchTime) < toMinutes(dinnerTime))) {
+    throw apiErr(CODES.MEAL_TIME_ENTRY_TIME_INVALID, {
+      statusCode: 400,
+      message: `entries[${index}]: breakfastTime must be before lunchTime, which must be before dinnerTime`,
+      params: { index, field: 'mealTimeOrder' },
+    });
+  }
+  if (row.notes && String(row.notes).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: `entries[${index}].notes`, min: 0, max: 500 } });
+  }
+
   return {
     residentId: String(row.residentId),
-    breakfastTime: normalizeTimeField(row.breakfastTime || DEFAULT_MEAL_TIMES.breakfast, 'breakfastTime', index),
-    lunchTime: normalizeTimeField(row.lunchTime || DEFAULT_MEAL_TIMES.lunch, 'lunchTime', index),
-    dinnerTime: normalizeTimeField(row.dinnerTime || DEFAULT_MEAL_TIMES.dinner, 'dinnerTime', index),
+    breakfastTime,
+    lunchTime,
+    dinnerTime,
     notes: row.notes?.trim(),
     source: row.source || 'manual',
     templateKey: row.templateKey?.trim(),

@@ -76,6 +76,9 @@ const collectErrors = (checks) => {
   return errors.length ? errors.join('; ') : null;
 };
 
+// Escapes regex metacharacters so user-supplied search text is safe to embed in `new RegExp()`.
+const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const ROLES_REQUIRING_CERT = ['doctor', 'nurse'];
 const CERTIFICATE_MAX_AGE_YEARS = 5;
 
@@ -123,6 +126,7 @@ module.exports = {
   validateStaffDateOfBirth,
   validateStaffCertifications,
   collectErrors,
+  escapeRegex,
   ROLES_REQUIRING_CERT,
   CERTIFICATE_MAX_AGE_YEARS,
 };

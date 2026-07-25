@@ -39,8 +39,12 @@ const invoiceSchema = new Schema(
     paymentPlan: { type: String, enum: ['FULL', 'HALF_NOW'], default: 'FULL' },
     prescriptionId: { type: Types.ObjectId, ref: 'Prescription' },
     dueDate: { type: Date },
+
+    // Set when a PayOS checkout is created for this invoice; used to verify the real payment
+    // status with PayOS before marking the invoice paid (never trust client-supplied status alone).
+    payosOrderCode: { type: Number, index: true },
     issuedAt: { type: Date, default: Date.now, index: true },
-    
+
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
   },

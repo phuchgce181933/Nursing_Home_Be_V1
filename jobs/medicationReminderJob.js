@@ -3,6 +3,7 @@ const MedicationSchedule = require('../models/MedicationSchedule');
 const Notification = require('../models/notification');
 const Resident = require('../models/resident');
 const User = require('../models/user');
+const notificationService = require('../services/notificationService');
 
 // Fetch all active nurse user IDs (cached per job run — not module-level to stay fresh)
 const getNurseIds = async () => {
@@ -65,7 +66,7 @@ const runUpcomingReminders = async () => {
     }
   }
 
-  if (notifications.length) await Notification.insertMany(notifications);
+  if (notifications.length) await notificationService.createMany(notifications);
 };
 
 /**
@@ -106,7 +107,7 @@ const runOverdueCheck = async () => {
     }
   }
 
-  if (notifications.length) await Notification.insertMany(notifications);
+  if (notifications.length) await notificationService.createMany(notifications);
 };
 
 const initMedicationJobs = () => {

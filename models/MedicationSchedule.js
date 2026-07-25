@@ -17,6 +17,7 @@ const medicationScheduleSchema = new Schema(
     markedBy: { type: Types.ObjectId, ref: 'User' },
     markedAt: { type: Date },
     actualTimeTaken: { type: Date },
+    administrationTiming: { type: String, enum: ['early', 'on_time', 'late'] },
     missedReason: { type: String, trim: true },
     notes: { type: String, trim: true },
   },

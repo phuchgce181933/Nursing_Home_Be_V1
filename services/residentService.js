@@ -50,6 +50,44 @@ const normalizeStringArray = (value) => {
   return [String(value).trim()].filter(Boolean);
 };
 
+const STRING_LIST_MAX_ITEMS = 30;
+const STRING_LIST_ITEM_MIN_LENGTH = 2;
+const STRING_LIST_ITEM_MAX_LENGTH = 200;
+
+// Dedupe case-insensitively while keeping the first-seen casing.
+const dedupeStringArray = (arr) => {
+  if (!arr) return arr;
+  const seen = new Set();
+  const result = [];
+  for (const item of arr) {
+    const key = item.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+  return result;
+};
+
+const assertStringArrayBounds = (arr, fieldName) => {
+  if (!arr) return arr;
+  if (arr.length > STRING_LIST_MAX_ITEMS) {
+    throw apiErr(CODES.RESIDENT_LIST_TOO_MANY_ITEMS, {
+      statusCode: 400,
+      params: { field: fieldName, max: STRING_LIST_MAX_ITEMS },
+    });
+  }
+  for (const item of arr) {
+    if (item.length < STRING_LIST_ITEM_MIN_LENGTH || item.length > STRING_LIST_ITEM_MAX_LENGTH) {
+      throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, {
+        statusCode: 400,
+        params: { field: fieldName, min: STRING_LIST_ITEM_MIN_LENGTH, max: STRING_LIST_ITEM_MAX_LENGTH },
+      });
+    }
+  }
+  return dedupeStringArray(arr);
+};
+
 const contactPhoneKey = (contact) => String(contact?.phone || '').replace(/\D/g, '');
 
 const contactEmailKey = (contact) => {
@@ -1037,6 +1075,9 @@ const recordInitialHealth = async (residentIdOrCode, body) => {
   if (description.length < 10) {
     throw apiErr(CODES.RESIDENT_HEALTH_CONDITION_TOO_SHORT, { statusCode: 400, params: { min: 10 } });
   }
+  if (description.length > 500) {
+    throw apiErr(CODES.RESIDENT_HEALTH_CONDITION_TOO_LONG, { statusCode: 400, params: { max: 500 } });
+  }
 
   const update = { initialHealthCondition: description };
   const bloodType =
@@ -1078,8 +1119,8 @@ const updatePreExistingConditions = async (residentIdOrCode, body) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const { chronicConditions: chronic, medicalHistory: history } = parsePreExistingBody(body);
   const update = {};
-  if (chronic !== undefined) update.chronicConditions = chronic;
-  if (history !== undefined) update.medicalHistory = history;
+  if (chronic !== undefined) update.chronicConditions = assertStringArrayBounds(chronic, 'chronicConditions');
+  if (history !== undefined) update.medicalHistory = assertStringArrayBounds(history, 'medicalHistory');
   if (Object.keys(update).length === 0) {
     throw apiErr(CODES.RESIDENT_MEDICAL_HISTORY_REQUIRED, { statusCode: 400 });
   }
@@ -1108,7 +1149,8 @@ const updateDrugAllergies = async (residentIdOrCode, body) => {
   if (parsed === undefined) {
     throw apiErr(CODES.RESIDENT_DRUG_ALLERGIES_REQUIRED, { statusCode: 400 });
   }
-  const updated = await residentRepo.updateDrugAllergies(residentId, { drugAllergies: parsed });
+  const bounded = assertStringArrayBounds(parsed, 'drugAllergies');
+  const updated = await residentRepo.updateDrugAllergies(residentId, { drugAllergies: bounded });
   if (!updated) throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500 });
   return {
     ...apiSuccess(SUCCESS.RESIDENT_ALLERGIES_SAVED),
@@ -1150,8 +1192,8 @@ const adminCreateResident = async (user, body, req) => {
     insuranceNumber: body.insuranceNumber ? String(body.insuranceNumber).trim() : undefined,
     bloodType: body.bloodType || 'unknown',
     personalAddress: body.personalAddress ? String(body.personalAddress).trim() : undefined,
-    allergies: normalizeStringArray(body.allergies) || [],
-    chronicConditions: normalizeStringArray(body.chronicConditions) || [],
+    allergies: assertStringArrayBounds(normalizeStringArray(body.allergies), 'allergies') || [],
+    chronicConditions: assertStringArrayBounds(normalizeStringArray(body.chronicConditions), 'chronicConditions') || [],
     initialHealthCondition: body.initialHealthCondition ? String(body.initialHealthCondition).trim() : undefined,
     residencyStatus: body.residencyStatus || 'pending',
     admittedAt: parseOptionalDate(body.admittedAt, 'admittedAt'),
@@ -1250,9 +1292,9 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
   if (body.personalAddress !== undefined) update.personalAddress = String(body.personalAddress || '').trim() || undefined;
   if (body.avatarUrl !== undefined) update.avatarUrl = String(body.avatarUrl || '').trim() || undefined;
   const allergies = normalizeStringArray(body.allergies);
-  if (allergies !== undefined) update.allergies = allergies;
+  if (allergies !== undefined) update.allergies = assertStringArrayBounds(allergies, 'allergies');
   const chronicConditions = normalizeStringArray(body.chronicConditions);
-  if (chronicConditions !== undefined) update.chronicConditions = chronicConditions;
+  if (chronicConditions !== undefined) update.chronicConditions = assertStringArrayBounds(chronicConditions, 'chronicConditions');
   if (body.initialHealthCondition !== undefined) update.initialHealthCondition = String(body.initialHealthCondition || '').trim() || undefined;
   if (Object.keys(update).length === 0) throw apiErr(CODES.RESIDENT_PERSONAL_INFO_NO_FIELDS, { statusCode: 400 });
   const before = await residentRepo.findByIdForAdmin(residentId);

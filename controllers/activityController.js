@@ -98,7 +98,16 @@ const setParticipantList = async (req, res) => {
 
 const registerResident = async (req, res) => {
   try {
-    const result = await activityService.registerResident(req.params.activityId, req.body.residentId);
+    const result = await activityService.registerResident(req.params.activityId, req.body.residentId, req.user);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const unregisterResident = async (req, res) => {
+  try {
+    const result = await activityService.unregisterResident(req.params.activityId, req.body.residentId, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -143,6 +152,7 @@ module.exports = {
   updateActivityStatus,
   setParticipantList,
   registerResident,
+  unregisterResident,
   recordParticipationResult,
   getActivityStatistics,
   getActivityStatisticsById,

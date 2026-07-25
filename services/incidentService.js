@@ -3,7 +3,7 @@ const Resident = require('../models/resident');
 const StaffProfile = require('../models/staffProfile');
 const User = require('../models/user');
 const incidentRepo = require('../repositories/incidentRepository');
-const notificationRepo = require('../repositories/notificationRepository');
+const notificationService = require('./notificationService');
 const mailService = require('./mailService');
 const ServiceError = require('./serviceError');
 const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
@@ -503,7 +503,7 @@ const sendNotifications = async (incident, recipients, options = {}) => {
     deliveryChannels: buildDeliveryChannels,
   });
 
-  await notificationRepo.insertMany(notificationDocs);
+  await notificationService.createMany(notificationDocs);
 
   const emailRecipients = recipients.filter((recipient) => Boolean(recipient.email));
   const smsRecipients = recipients.filter((recipient) => Boolean(recipient.phone));
@@ -587,6 +587,15 @@ const notifyIncident = async (incident, options) => {
   }
 };
 
+const MAX_TEXT_LENGTH = 500;
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000; // allow small clock-skew, but block clearly future-dated incidents
+
+const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
+  if (value && value.length > max) {
+    throw new ServiceError(`${fieldName} must be at most ${max} characters`, 400);
+  }
+};
+
 const createIncident = async (currentUser, payload) => {
   console.log('[DEBUG] === START createIncident ===');
   console.log('[DEBUG] currentUser:', { _id: currentUser._id, role: currentUser.role, email: currentUser.email });
@@ -596,13 +605,25 @@ const createIncident = async (currentUser, payload) => {
   if (!payload?.description?.trim()) throw new ServiceError('description is required', 400);
   if (!payload?.incidentAt) throw new ServiceError('incidentAt is required', 400);
 
+  const incidentAtDate = new Date(payload.incidentAt);
+  if (Number.isNaN(incidentAtDate.getTime())) {
+    throw new ServiceError('incidentAt is invalid', 400);
+  }
+  if (incidentAtDate.getTime() > Date.now() + MAX_FUTURE_SKEW_MS) {
+    throw new ServiceError('incidentAt cannot be in the future', 400);
+  }
+
+  assertMaxLength(payload.incidentType.trim(), 'incidentType', 200);
+  assertMaxLength(payload.description.trim(), 'description');
+  assertMaxLength(payload.location?.trim(), 'location', 200);
+
   try {
     const residentIds = normalizeResidentIds(payload.residentIds?.length ? payload.residentIds : payload.residentId || []);
     console.log('[DEBUG] normalizeResidentIds result:', residentIds);
-    
+
     const residents = await getResidentsForIncident(residentIds);
     console.log('[DEBUG] residents found:', residents.length);
-    
+
     // Try to get staff profile, but don't fail if not found (admin users won't have one)
     let staffProfile = null;
     try {
@@ -612,7 +633,7 @@ const createIncident = async (currentUser, payload) => {
       console.log('[DEBUG] Staff profile not available (role may not be assignable):', err.message);
       console.log('[DEBUG] Continuing with reportedByStaffId = null');
     }
-    
+
     const shouldAssignHandlers = String(currentUser.role || '').toLowerCase() === 'admin';
     const assignedStaffIds = shouldAssignHandlers ? normalizeAssignedStaffIds(payload.assignedStaffIds) : [];
     console.log('[DEBUG] assignedStaffIds from payload (User IDs):', assignedStaffIds);
@@ -661,7 +682,7 @@ const createIncident = async (currentUser, payload) => {
     reportedByUserId: currentUser._id,
     incidentType: payload.incidentType.trim(),
     severity: payload.severity || 'medium',
-    incidentAt: new Date(payload.incidentAt),
+    incidentAt: incidentAtDate,
     location: payload.location?.trim() || '',
     description: payload.description.trim(),
     status: 'open',

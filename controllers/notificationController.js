@@ -46,16 +46,19 @@ const updateSettings = async (req, res) => {
   }
 };
 
+const MAX_BULK_IDS = 500;
+
 const markRead = async (req, res) => {
   try {
     const { id } = req.params;
     if (id === 'bulk') {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: 'ids required' });
-      await notificationService.markManyAsRead(ids);
+      if (ids.length > MAX_BULK_IDS) return res.status(400).json({ message: `A maximum of ${MAX_BULK_IDS} ids can be processed at once` });
+      await notificationService.markManyAsRead(ids, req.user._id);
       return res.json({ success: true });
     }
-    const notif = await notificationService.markAsRead(id);
+    const notif = await notificationService.markAsRead(id, req.user._id);
     if (!notif) return res.status(404).json({ message: 'Notification not found' });
     return res.json(notif);
   } catch (err) {
@@ -70,10 +73,11 @@ const deleteNotification = async (req, res) => {
     if (id === 'bulk') {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: 'ids required' });
-      await notificationService.deleteMany(ids);
+      if (ids.length > MAX_BULK_IDS) return res.status(400).json({ message: `A maximum of ${MAX_BULK_IDS} ids can be processed at once` });
+      await notificationService.deleteMany(ids, req.user._id);
       return res.json({ success: true });
     }
-    const deleted = await notificationService.deleteById(id);
+    const deleted = await notificationService.deleteById(id, req.user._id);
     if (!deleted) return res.status(404).json({ message: 'Notification not found' });
     return res.json({ success: true });
   } catch (err) {

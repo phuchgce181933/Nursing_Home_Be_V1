@@ -1,5 +1,5 @@
 const careAppointmentRepo = require('../repositories/careAppointmentRepository');
-const notificationRepo = require('../repositories/notificationRepository');
+const notificationService = require('./notificationService');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 
@@ -68,7 +68,7 @@ const processReminders = async () => {
         deliveryChannels: ['in_app'],
       }));
 
-      await notificationRepo.insertMany(notifications);
+      await notificationService.createMany(notifications);
 
       console.log(
         `[ReminderScheduler] Sent ${notifications.length} reminder(s) for appointment ${appointment._id}`

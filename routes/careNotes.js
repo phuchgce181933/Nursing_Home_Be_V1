@@ -11,7 +11,7 @@ const {
 } = require('../controllers/careNoteController');
 const { protect, authorize } = require('../middleware/auth');
 
-const STAFF_ROLES = ['admin', 'doctor', 'nurse'];
+const STAFF_ROLES = ['admin', 'nurse'];
 
 /**
  * @swagger
@@ -94,7 +94,7 @@ const STAFF_ROLES = ['admin', 'doctor', 'nurse'];
  *       404:
  *         description: Resident không tồn tại
  */
-router.post('/', protect, authorize('doctor', 'nurse'), createNote);
+router.post('/', protect, authorize('nurse'), createNote);
 
 /**
  * @swagger
@@ -214,7 +214,7 @@ router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
  *       200:
  *         description: Danh sách ghi chú chăm sóc của y tá đang đăng nhập
  */
-router.get('/my-notes', protect, authorize('doctor', 'nurse'), getMyNotes);
+router.get('/my-notes', protect, authorize('nurse'), getMyNotes);
 
 /**
  * @swagger
@@ -341,7 +341,7 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
  *       404:
  *         description: Không tìm thấy ghi chú
  */
-router.put('/:id', protect, authorize('doctor', 'nurse'), updateNote);
+router.put('/:id', protect, authorize('nurse'), updateNote);
 
 /**
  * @swagger
@@ -365,6 +365,6 @@ router.put('/:id', protect, authorize('doctor', 'nurse'), updateNote);
  *       404:
  *         description: Không tìm thấy ghi chú
  */
-router.delete('/:id', protect, authorize('doctor', 'nurse'), deleteNote);
+router.delete('/:id', protect, authorize('nurse'), deleteNote);
 
 module.exports = router;

@@ -626,6 +626,29 @@ const confirmShift = async (id, actorUser) => {
   return updated;
 };
 
+const checkInShift = async (id, actorUser) => {
+  const shift = await shiftRepo.findById(id);
+  if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
+  if (shift.status !== 'confirmed')
+    throw apiErr(CODES.SHIFT_CHECKIN_CONFIRMED_ONLY, { statusCode: 400, params: { status: shift.status } });
+  if (shift.checkInTime) throw apiErr(CODES.SHIFT_ALREADY_CHECKED_IN, { statusCode: 400 });
+
+  await assertActorMayConfirmShift(shift, actorUser);
+
+  return shiftRepo.updateById(id, { checkInTime: new Date() });
+};
+
+const checkOutShift = async (id, actorUser) => {
+  const shift = await shiftRepo.findById(id);
+  if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
+  if (!shift.checkInTime) throw apiErr(CODES.SHIFT_NOT_CHECKED_IN, { statusCode: 400 });
+  if (shift.checkOutTime) throw apiErr(CODES.SHIFT_ALREADY_CHECKED_OUT, { statusCode: 400 });
+
+  await assertActorMayConfirmShift(shift, actorUser);
+
+  return shiftRepo.updateById(id, { checkOutTime: new Date() });
+};
+
 const completeShift = async (id, actorUser) => {
   const shift = await shiftRepo.findById(id);
   if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
@@ -1061,6 +1084,8 @@ module.exports = {
   createShift,
   publishShift,
   confirmShift,
+  checkInShift,
+  checkOutShift,
   completeShift,
   updateShift,
   cancelShift,

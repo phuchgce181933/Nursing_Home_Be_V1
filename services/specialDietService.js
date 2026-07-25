@@ -98,6 +98,12 @@ const validateEntry = (entry, index) => {
   if (toMinutes(effectiveTime) === null) {
     throw apiErr(CODES.MEAL_ENTRY_EFFECTIVE_TIME_INVALID, { statusCode: 400, params: { index } });
   }
+  if (row.nutritionGoal && String(row.nutritionGoal).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: `entries[${index}].nutritionGoal`, min: 0, max: 500 } });
+  }
+  if (row.notes && String(row.notes).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: `entries[${index}].notes`, min: 0, max: 500 } });
+  }
 
   return {
     residentId: String(row.residentId),
@@ -111,6 +117,16 @@ const validateEntry = (entry, index) => {
     templateKey: row.templateKey?.trim(),
     effectiveTime,
   };
+};
+
+const assertNoDuplicateResidentEntries = (entries) => {
+  const seen = new Set();
+  for (const e of entries) {
+    if (seen.has(e.residentId)) {
+      throw apiErr(CODES.DUPLICATE_RECORD, { statusCode: 400, message: `Duplicate special diet entry for resident ${e.residentId}` });
+    }
+    seen.add(e.residentId);
+  }
 };
 
 const assertEntryTimesFromNow = (entries, workDateStr) => {
@@ -224,6 +240,8 @@ const createDraft = async (body, actorUserId) => {
   const entriesInput = Array.isArray(body.entries) ? body.entries : [];
   if (!entriesInput.length) throw apiErr(CODES.MEAL_ENTRIES_REQUIRED, { statusCode: 400 });
   const entries = entriesInput.map((entry, index) => validateEntry(entry, index));
+  assertEntryTimesFromNow(entries, workDate);
+  assertNoDuplicateResidentEntries(entries);
 
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
   if (residentIds.length < 1) {
@@ -272,6 +290,16 @@ const updateDraft = async (id, body, actorUserId) => {
   const hasEntries = Array.isArray(body.entries);
   const normalizedEntries = hasEntries ? body.entries.map((entry, index) => validateEntry(entry, index)) : null;
   if (hasEntries && !normalizedEntries.length) throw apiErr(CODES.MEAL_ENTRIES_EMPTY, { statusCode: 400 });
+
+  const targetWorkDateStr =
+    body.workDate !== undefined
+      ? parseWorkDateStrict(body.workDate)
+      : workDateToVNString(day.workDate);
+
+  if (normalizedEntries) {
+    assertEntryTimesFromNow(normalizedEntries, targetWorkDateStr);
+    assertNoDuplicateResidentEntries(normalizedEntries);
+  }
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};

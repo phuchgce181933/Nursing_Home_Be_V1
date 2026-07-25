@@ -16,6 +16,7 @@ const {
   updatePreExistingConditions,
   getDrugAllergies,
   updateDrugAllergies,
+  downloadResidentReport,
   getResidentFamilyInfo,
   addEmergencyContact,
   replaceEmergencyContacts,
@@ -489,6 +490,38 @@ router.put('/:residentId/pre-existing-conditions', protect, allStaff, updatePreE
  */
 router.get('/:residentId/drug-allergies', protect, drugAllergiesRead, getDrugAllergies);
 router.put('/:residentId/drug-allergies', protect, drugAllergiesWrite, updateDrugAllergies);
+
+/**
+ * @swagger
+ * /api/residents/{residentId}/report/download:
+ *   get:
+ *     summary: Export a resident's health report as CSV (UC-132, Doctor/Nurse)
+ *     tags: [Residents]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date
+ *     responses:
+ *       200:
+ *         description: CSV file download
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/:residentId/report/download', protect, allStaff, downloadResidentReport);
 
 /**
  * @swagger

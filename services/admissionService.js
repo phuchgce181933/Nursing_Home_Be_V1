@@ -3,6 +3,7 @@ const admissionRepo = require('../repositories/admissionRepository');
 const invoiceRepo = require('../repositories/invoiceRepository');
 const { GENDERS, BLOOD_TYPES, ADMISSION_STATUSES, ADMISSION_ELIGIBILITY_STATUSES } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
+const { validatePhone } = require('../utils/validators');
 const User = require('../models/user');
 const Resident = require('../models/resident');
 const Bed = require('../models/bed');
@@ -13,6 +14,22 @@ const bedRepo = require('../repositories/bedRepository');
 const roomRepo = require('../repositories/roomRepository');
 const walletService = require('./walletService');
 const paymentRepo = require('../repositories/paymentRepository');
+
+const MAX_TEXT_LENGTH = 500;
+const CITIZEN_ID_REGEX = /^(\d{12}|[A-Za-z0-9]{8,12})$/;
+
+const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
+  if (value && value.length > max) {
+    throw new ServiceError(`${fieldName} must be at most ${max} characters`, 400);
+  }
+};
+
+const getStartOfTodayVN = () => {
+  const vnNow = new Date(Date.now() + 7 * 60 * 60 * 1000);
+  return new Date(
+    Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth(), vnNow.getUTCDate(), 0, 0, 0, 0) - 7 * 60 * 60 * 1000
+  );
+};
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -115,14 +132,15 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
   return base;
 };
 
-const getCareAppointmentForResident = async (residentId) => {
+const getCareAppointmentForResident = async (residentId, admissionId) => {
   if (!residentId) return null;
   const CareAppointment = require('../models/careAppointment');
   try {
-    const careAppt = await CareAppointment.findOne({
-      residentId,
-      appointmentType: 'Khám lâm sàng đầu vào',
-    })
+    const careAppt = await CareAppointment.findOne(
+      admissionId
+        ? { $or: [{ admissionId }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }] }
+        : { residentId, appointmentType: 'Khám lâm sàng đầu vào' }
+    )
       .populate({
         path: 'doctorStaffId',
         populate: { path: 'userId', select: 'fullName email' }
@@ -212,6 +230,13 @@ const buildApplicant = (applicant, relationshipToRequester) => {
     throw new ServiceError(`applicant.bloodType must be one of: ${BLOOD_TYPES.join(', ')}`, 400);
   }
 
+  const citizenId = applicant.citizenId?.trim();
+  if (citizenId && !CITIZEN_ID_REGEX.test(citizenId)) {
+    throw new ServiceError('applicant.citizenId must be a 12-digit CCCD or 8-12 alphanumeric passport number', 400);
+  }
+
+  assertMaxLength(applicant.initialHealthCondition?.trim(), 'applicant.initialHealthCondition');
+
   const dateOfBirth = applicant.dateOfBirth ? new Date(applicant.dateOfBirth) : undefined;
   if (applicant.dateOfBirth && Number.isNaN(dateOfBirth?.getTime())) {
     throw new ServiceError('applicant.dateOfBirth is invalid', 400);
@@ -238,7 +263,7 @@ const buildApplicant = (applicant, relationshipToRequester) => {
     fullName,
     dateOfBirth,
     gender: applicant.gender || 'unknown',
-    citizenId: applicant.citizenId?.trim(),
+    citizenId,
     bloodType: applicant.bloodType || 'unknown',
     personalAddress: applicant.personalAddress?.trim(),
     relationshipToRequester: relationship,
@@ -349,7 +374,18 @@ const submitAdmissionRequest = async (user, body, req) => {
     if (Number.isNaN(preferredDate.getTime())) {
       throw new ServiceError('preferredAdmissionDate is invalid', 400);
     }
+    if (preferredDate < getStartOfTodayVN()) {
+      throw new ServiceError('preferredAdmissionDate must be today or in the future', 400);
+    }
   }
+
+  if (requestedByPhone) {
+    const phoneError = validatePhone(requestedByPhone.trim());
+    if (phoneError) throw new ServiceError(`requestedByPhone: ${phoneError}`, 400);
+  }
+
+  assertMaxLength(reasonForAdmission?.trim(), 'reasonForAdmission');
+  assertMaxLength(notes?.trim(), 'notes');
 
   const requestCode = await generateRequestCode();
   const admission = await admissionRepo.createAdmission({
@@ -453,7 +489,7 @@ const getAdmissionRequest = async (user, admissionId) => {
     { path: 'assignedRoomId', select: 'roomNumber' },
   ]);
   const formatted = formatAdmission(admission);
-  formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
+  formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId, admission._id);
   formatted.latestInvoice = await getLatestInvoiceForResident(admission.residentId?._id || admission.residentId);
   return { admission: formatted };
 };
@@ -480,8 +516,7 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
   const residentId = admission.residentId?._id || admission.residentId;
   if (residentId) {
     const completedAppt = await CareAppointment.findOne({
-      residentId: residentId,
-      appointmentType: 'Khám lâm sàng đầu vào',
+      $or: [{ admissionId: admission._id }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }],
       status: 'completed',
     });
     if (completedAppt) {
@@ -492,7 +527,8 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
     }
   }
 
-  const cancellationReason = body?.cancellationReason?.trim() || body?.reason?.trim() || '';
+  const cancellationReason = body?.cancellationReason?.trim() || '';
+  assertMaxLength(cancellationReason, 'cancellationReason');
 
   const updated = await admissionRepo.updateAdmission(admission._id, {
     status: 'cancelled',
@@ -643,7 +679,7 @@ const adminGetAdmission = async (admissionId, user) => {
     }
   }
   const formatted = formatAdmission(admission, { includeFamily: true });
-  formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId);
+  formatted.assignedCareAppointment = await getCareAppointmentForResident(admission.residentId?._id || admission.residentId, admission._id);
   formatted.latestInvoice = await getLatestInvoiceForResident(admission.residentId?._id || admission.residentId);
   const unpaidInvoices = await invoiceRepo.findUnpaidByResidentId(admission.residentId?._id || admission.residentId);
   const unpaidOutstandingAmounts = await Promise.all(
@@ -722,8 +758,7 @@ const approveAdmission = async (admin, admissionId, body, req) => {
   // Automatically create first Care Appointment at UC-12
   // Guard: only create if no intake appointment already exists for this resident
   const existingAppt = await CareAppointment.findOne({
-    residentId: residentId,
-    appointmentType: 'Khám lâm sàng đầu vào',
+    $or: [{ admissionId: admission._id }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }],
     status: { $ne: 'cancelled' },
   });
 
@@ -734,6 +769,7 @@ const approveAdmission = async (admin, admissionId, body, req) => {
 
     await CareAppointment.create({
       residentId: residentId,
+      admissionId: admission._id,
       scheduledStartAt: start,
       scheduledEndAt: end,
       appointmentType: 'Khám lâm sàng đầu vào',
@@ -773,10 +809,11 @@ const rejectAdmission = async (admin, admissionId, body, req) => {
     );
   }
 
-  const rejectionReason = body?.rejectionReason?.trim() || body?.reason?.trim() || '';
+  const rejectionReason = body?.rejectionReason?.trim() || '';
   if (!rejectionReason) {
     throw new ServiceError('rejectionReason is required when rejecting an admission request', 400);
   }
+  assertMaxLength(rejectionReason, 'rejectionReason');
 
   const updated = await admissionRepo.updateAdmission(admissionId, {
     status: 'cancelled',
@@ -824,6 +861,8 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
   if (!consultationNotes) {
     throw new ServiceError('consultationNotes is required', 400);
   }
+  assertMaxLength(consultationNotes, 'consultationNotes');
+  assertMaxLength(body?.notes?.trim(), 'notes');
 
   // Anti-spam: Chặn gọi lại liên tục trong vòng 30 giây
   if (admission.consultedAt) {
@@ -886,6 +925,9 @@ const scheduleInitialAssessment = async (user, admissionId, body, req) => {
   if (scheduledAt <= new Date()) {
     throw new ServiceError('scheduledAt must be a future date', 400);
   }
+
+  assertMaxLength(body?.initialAssessmentNotes?.trim(), 'initialAssessmentNotes');
+  assertMaxLength(body?.notes?.trim(), 'notes');
 
   const updateData = {
     initialAssessmentScheduledAt: scheduledAt,
@@ -991,6 +1033,9 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
   if (!assessmentResult) {
     throw new ServiceError('assessmentResult is required', 400);
   }
+  assertMaxLength(assessmentResult, 'assessmentResult');
+  assertMaxLength(body?.rejectionReason?.trim(), 'rejectionReason');
+  assertMaxLength(body?.notes?.trim(), 'notes');
 
   const updateData = {
     eligibilityStatus,
@@ -1030,8 +1075,7 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
 
         // 2. Doctor/Nurse assigned to the intake Care Appointment
         const appt = await CareAppointment.findOne({
-          residentId: residentId,
-          appointmentType: 'Khám lâm sàng đầu vào'
+          $or: [{ admissionId: admission._id }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }],
         });
         if (appt) {
           if (appt.doctorStaffId) {
@@ -1223,6 +1267,8 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
       throw new ServiceError('contractDiscountPercent must be a number between 0 and 100', 400);
     }
   }
+  assertMaxLength(body?.contractTerms?.trim(), 'contractTerms');
+  assertMaxLength(body?.notes?.trim(), 'notes');
 
   const updateData = {
     contractNumber,
@@ -1295,9 +1341,13 @@ const checkInResident = async (admin, admissionId, body, req) => {
     throw new ServiceError('Admission must have a contract before check-in', 400);
   }
 
-  // Validate bed & room if provided
+  // Validate bed & room — bedId is mandatory so no resident is checked in without a bed assignment
   let assignedBedId = body?.bedId || null;
   let assignedRoomId = body?.roomId || null;
+
+  if (!assignedBedId) {
+    throw new ServiceError('bedId is required to check in a resident', 400);
+  }
 
   if (assignedBedId) {
     const bed = await Bed.findById(assignedBedId);

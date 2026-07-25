@@ -4,9 +4,66 @@ const residentRepo = require('../repositories/residentRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const paymentService = require('./paymentService');
 const chargeService = require('./chargeService');
-const notificationRepo = require('../repositories/notificationRepository');
 const ClinicalService = require('../models/clinicalService');
 const { createAuditLog } = require('../utils/auditLog');
+const { assertResidentsAssignedToUser } = require('./assignedResidentService');
+const notificationService = require('./notificationService');
+const { BLOOD_TYPES } = require('../models/enums');
+
+const VITAL_FIELDS = [
+  'bloodPressureSystolic',
+  'bloodPressureDiastolic',
+  'pulse',
+  'temperatureCelsius',
+  'oxygenSaturation',
+  'bloodSugar',
+  'weightKg',
+  'heightCm',
+];
+
+const VITAL_RANGES = {
+  bloodPressureSystolic: { min: 60, max: 260 },
+  bloodPressureDiastolic: { min: 30, max: 160 },
+  pulse: { min: 30, max: 220 },
+  temperatureCelsius: { min: 30, max: 45 },
+  oxygenSaturation: { min: 0, max: 100 },
+  bloodSugar: { min: 20, max: 800 },
+  weightKg: { min: 1, max: 300 },
+  heightCm: { min: 30, max: 250 },
+};
+
+const assertVitalsValid = (body) => {
+  const hasAnyVital = VITAL_FIELDS.some((field) => body[field] !== undefined && body[field] !== null && body[field] !== '');
+  if (!hasAnyVital) {
+    throw new ServiceError('At least one vital sign field must be provided', 400);
+  }
+  for (const field of VITAL_FIELDS) {
+    const value = body[field];
+    if (value === undefined || value === null || value === '') continue;
+    const num = Number(value);
+    if (Number.isNaN(num)) {
+      throw new ServiceError(`${field} must be a number`, 400);
+    }
+    const range = VITAL_RANGES[field];
+    if (num < range.min || num > range.max) {
+      throw new ServiceError(`${field} must be between ${range.min} and ${range.max}`, 400);
+    }
+  }
+  const systolic = Number(body.bloodPressureSystolic);
+  const diastolic = Number(body.bloodPressureDiastolic);
+  if (!Number.isNaN(systolic) && !Number.isNaN(diastolic) && body.bloodPressureSystolic !== undefined && body.bloodPressureDiastolic !== undefined) {
+    if (diastolic >= systolic) {
+      throw new ServiceError('bloodPressureDiastolic must be lower than bloodPressureSystolic', 400);
+    }
+  }
+  if (body.bloodType !== undefined && body.bloodType !== null && body.bloodType !== '' && !BLOOD_TYPES.includes(body.bloodType)) {
+    throw new ServiceError(`bloodType must be one of: ${BLOOD_TYPES.join(', ')}`, 400);
+  }
+  if (typeof body.summary === 'string' && body.summary.length > 500) {
+    throw new ServiceError('summary must be at most 500 characters', 400);
+  }
+};
+
 const { uploadImageBuffer } = require('../utils/cloudinaryUpload');
 
 const checkAbnormalVitals = (body) => {
@@ -404,20 +461,22 @@ const notifyFamilyAboutHealthMonitoringUpdate = async ({ resident, record, user 
       recipientUserId: new mongoose.Types.ObjectId(recipientUserId),
     }));
 
-    await notificationRepo.insertMany(notifications);
+    await notificationService.createMany(notifications);
   } catch (error) {
     console.error('[medicalRecordService] Failed creating family health notifications', error.message || error);
   }
 };
 
 const recordMedicalRecord = async (user, residentId, body, req) => {
-  console.log('[recordMedicalRecord] Called with body keys:', Object.keys(body));
-  console.log('[recordMedicalRecord] selectedServices:', body.selectedServices);
-  console.log('[recordMedicalRecord] consentToPayment:', body.consentToPayment);
-
   if (!residentId || !mongoose.Types.ObjectId.isValid(residentId)) {
     throw new ServiceError('Resident ID không hợp lệ', 400);
   }
+
+  if (user.role === 'caregiver') {
+    await assertResidentsAssignedToUser(user._id, [residentId]);
+  }
+
+  assertVitalsValid(body);
 
   const {
     bloodPressureSystolic,
@@ -452,9 +511,6 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
 
   const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
-  
-  console.log('[recordMedicalRecord] Destructured selectedServices:', selectedServices);
-  console.log('[recordMedicalRecord] Destructured consentToPayment:', consentToPayment);
 
   // Find staff profile of the logged-in doctor/nurse
   const staffProfile = await staffProfileRepo.findByUserId(user._id);
@@ -521,6 +577,36 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     abnormalFlag,
     summary,
   });
+
+  if (abnormalFlag) {
+    try {
+      const recipientIds = new Set();
+      (resident.familyPortalAccountIds || []).forEach((id) => recipientIds.add(id.toString()));
+      const assignedStaff = await staffProfileRepo.findByAssignedResidentId(residentId);
+      assignedStaff.forEach((profile) => {
+        const staffUser = profile.userId;
+        if (staffUser && ['doctor', 'nurse'].includes(staffUser.role) && staffUser._id.toString() !== user._id.toString()) {
+          recipientIds.add(staffUser._id.toString());
+        }
+      });
+      if (recipientIds.size > 0) {
+        const title = `Chỉ số sinh hiệu bất thường - ${resident.fullName || resident.residentCode}`;
+        const content = `Ghi nhận chỉ số sinh hiệu bất thường cho ${resident.fullName || 'cư dân'} lúc ${new Date().toLocaleString('vi-VN')}. Vui lòng kiểm tra chi tiết.`;
+        const notificationDocs = Array.from(recipientIds).map((recipientUserId) => ({
+          recipientUserId,
+          category: 'health',
+          title,
+          content,
+          targetEntityType: 'MedicalRecord',
+          targetEntityId: record._id,
+          deliveryChannels: ['in_app'],
+        }));
+        await notificationService.createMany(notificationDocs);
+      }
+    } catch (err) {
+      console.error('Failed to create abnormal vitals notification:', err.message || err);
+    }
+  }
 
   // If selectedServices provided, create charges (with origin linked to this record) and invoice for them
   if (body.selectedServices && Array.isArray(body.selectedServices) && body.selectedServices.length > 0 && (consentToPayment === true || consentToPayment === 'true')) {
@@ -595,6 +681,10 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
 
 const getResidentMedicalHistory = async (user, residentId, query) => {
   if (!residentId) throw new ServiceError('Resident ID is required', 400);
+
+  if (user.role === 'caregiver') {
+    await assertResidentsAssignedToUser(user._id, [residentId]);
+  }
 
   const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);

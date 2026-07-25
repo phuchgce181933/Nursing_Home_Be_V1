@@ -6,6 +6,7 @@ const {
   closeSupportRequest,
   listSupportRequests,
   getSupportRequest,
+  addMessage,
 } = require('../controllers/supportRequestController');
 
 router.use(protect);
@@ -61,8 +62,8 @@ router.post('/', authorize('family'), submitSupportRequest);
  *       200:
  *         description: Paginated list
  */
-// allow family to list their own requests and admin to list all
-router.get('/', authorize('family', 'admin'), listSupportRequests);
+// allow family to list their own requests and staff (manager/admin) to list all
+router.get('/', authorize('family', 'manager', 'admin'), listSupportRequests);
 
 /**
  * @swagger
@@ -82,8 +83,40 @@ router.get('/', authorize('family', 'admin'), listSupportRequests);
  *       200:
  *         description: Support request detail
  */
-// allow family to view their own request and admin to view any
-router.get('/:requestId', authorize('family', 'admin'), getSupportRequest);
+// allow family to view their own request and staff (manager/admin) to view any
+router.get('/:requestId', authorize('family', 'manager', 'admin'), getSupportRequest);
+
+/**
+ * @swagger
+ * /api/family/support-requests/{requestId}/messages:
+ *   post:
+ *     summary: Send a message on a support request (Family on own request, or Staff on any)
+ *     tags: [Family Support]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: requestId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [text]
+ *             properties:
+ *               text:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Message added
+ *       403:
+ *         description: Not allowed on this request
+ */
+router.post('/:requestId/messages', authorize('family', 'manager', 'admin'), addMessage);
 
 /**
  * @swagger
@@ -116,7 +149,7 @@ router.get('/:requestId', authorize('family', 'admin'), getSupportRequest);
  *       400:
  *         description: Invalid request
  */
-// only family may close/cancel their own requests
-router.patch('/:requestId/close', authorize('family'), closeSupportRequest);
+// family may close/cancel their own requests; staff (manager/admin) may close any
+router.patch('/:requestId/close', authorize('family', 'manager', 'admin'), closeSupportRequest);
 
 module.exports = router;

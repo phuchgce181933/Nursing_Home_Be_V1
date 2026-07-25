@@ -7,7 +7,7 @@ const submitAdmissionRequest = async (req, res) => {
     const result = await admissionService.submitAdmissionRequest(req.user, payload, req);
     res.status(201).json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -16,7 +16,7 @@ const listAdmissionRequests = async (req, res) => {
     const result = await admissionService.listAdmissionHistory(req.user, req.query);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -25,7 +25,7 @@ const getAdmissionRequest = async (req, res) => {
     const result = await admissionService.getAdmissionRequest(req.user, req.params.admissionId);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -39,7 +39,7 @@ const cancelAdmissionRequest = async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -49,7 +49,7 @@ const adminListAdmissions = async (req, res) => {
     const result = await admissionService.adminListAdmissions(req.query, req.user);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -58,7 +58,7 @@ const adminGetAdmission = async (req, res) => {
     const result = await admissionService.adminGetAdmission(req.params.admissionId, req.user);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -67,7 +67,7 @@ const approveAdmission = async (req, res) => {
     const result = await admissionService.approveAdmission(req.user, req.params.admissionId, req.body, req);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -76,7 +76,7 @@ const rejectAdmission = async (req, res) => {
     const result = await admissionService.rejectAdmission(req.user, req.params.admissionId, req.body, req);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -86,7 +86,17 @@ const preAdmissionConsultation = async (req, res) => {
     const result = await admissionService.preAdmissionConsultation(req.user, req.params.admissionId, req.body, req);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
+  }
+};
+
+// ── UC-6.17: Initial Assessment Scheduling ─────────────────────────────────────
+const scheduleInitialAssessment = async (req, res) => {
+  try {
+    const result = await admissionService.scheduleInitialAssessment(req.user, req.params.admissionId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -96,7 +106,7 @@ const evaluateAdmissionEligibility = async (req, res) => {
     const result = await admissionService.evaluateAdmissionEligibility(req.user, req.params.admissionId, req.body, req);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -106,7 +116,7 @@ const assignServicePackage = async (req, res) => {
     const result = await admissionService.assignServicePackage(req.user, req.params.admissionId, req.body, req);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -116,7 +126,7 @@ const createAdmissionContract = async (req, res) => {
     const result = await admissionService.createAdmissionContract(req.user, req.params.admissionId, req.body, req);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -144,7 +154,7 @@ const checkInResident = async (req, res) => {
     const result = await admissionService.checkInResident(req.user, req.params.admissionId, req.body, req);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -154,7 +164,7 @@ const extendAdmissionContract = async (req, res) => {
     const result = await admissionService.extendAdmissionContract(req.user, req.params.admissionId, req.body);
     res.json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
   }
 };
 
@@ -168,6 +178,7 @@ module.exports = {
   approveAdmission,
   rejectAdmission,
   preAdmissionConsultation,
+  scheduleInitialAssessment,
   evaluateAdmissionEligibility,
   assignServicePackage,
   createAdmissionContract,

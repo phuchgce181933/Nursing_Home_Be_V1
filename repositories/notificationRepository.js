@@ -13,13 +13,15 @@ const findByRecipient = async (recipientUserId, filter = {}, options = {}) => {
   return { items, total, page, limit };
 };
 
-const markAsRead = async (id) => Notification.findByIdAndUpdate(id, { isRead: true, readAt: new Date() }, { new: true });
+const markAsRead = async (id, recipientUserId) =>
+  Notification.findOneAndUpdate({ _id: id, recipientUserId }, { isRead: true, readAt: new Date() }, { new: true });
 
-const markManyAsRead = async (ids) => Notification.updateMany({ _id: { $in: ids } }, { $set: { isRead: true, readAt: new Date() } });
+const markManyAsRead = async (ids, recipientUserId) =>
+  Notification.updateMany({ _id: { $in: ids }, recipientUserId }, { $set: { isRead: true, readAt: new Date() } });
 
-const deleteById = async (id) => Notification.findByIdAndDelete(id);
+const deleteById = async (id, recipientUserId) => Notification.findOneAndDelete({ _id: id, recipientUserId });
 
-const deleteMany = async (ids) => Notification.deleteMany({ _id: { $in: ids } });
+const deleteMany = async (ids, recipientUserId) => Notification.deleteMany({ _id: { $in: ids }, recipientUserId });
 
 module.exports = {
   insertMany,

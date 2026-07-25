@@ -368,6 +368,19 @@ const submitAdmissionRequest = async (user, body, req) => {
     }
   }
 
+  if (resolvedApplicant.citizenId) {
+    const existingResidentFilter = {
+      citizenId: { $regex: new RegExp(`^${resolvedApplicant.citizenId.trim()}$`, 'i') },
+    };
+    if (resolvedResidentId) {
+      existingResidentFilter._id = { $ne: resolvedResidentId };
+    }
+    const existingResident = await Resident.findOne(existingResidentFilter);
+    if (existingResident) {
+      throw new ServiceError('Số CCCD này đã tồn tại trong danh sách cư dân hệ thống', 400);
+    }
+  }
+
   let preferredDate;
   if (preferredAdmissionDate) {
     preferredDate = new Date(preferredAdmissionDate);

@@ -9,6 +9,16 @@ const rateLimit = require('express-rate-limit');
 
 const multipart = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+// A message is valid with just text, just attachment(s), or both — only reject when
+// there's truly nothing (runs after handleAttachments, so req.body.attachments is
+// already the uploaded-file metadata array by the time this executes).
+const requireContentOrAttachments = body('content').custom((value, { req }) => {
+	const hasText = typeof value === 'string' && value.trim().length > 0;
+	const hasAttachments = Array.isArray(req.body.attachments) && req.body.attachments.length > 0;
+	if (!hasText && !hasAttachments) throw new Error('content or attachments is required');
+	return true;
+});
+
 const handleAttachments = (fieldName = 'attachments') => async (req, res, next) => {
 	if (!req.files || !req.files[fieldName]) return next();
 	try {
@@ -36,6 +46,31 @@ const handleAttachments = (fieldName = 'attachments') => async (req, res, next) 
 	}
 };
 
+// Only relevant when handleAttachments didn't run (i.e. the client sent JSON `attachments`
+// directly instead of a real multipart file upload) — without this, a client could reference
+// arbitrary external URLs/mimetypes as "attachments" and have them rendered to other
+// participants, bypassing Cloudinary entirely. Legitimate attachments always resolve to a
+// Cloudinary-hosted secure_url, so anything else is rejected.
+const MIME_TYPE_SHAPE = /^[-\w.]+\/[-\w.+]+$/;
+const validateAttachmentsShape = body('attachments').custom((value) => {
+	if (value === undefined) return true;
+	if (!Array.isArray(value)) throw new Error('attachments must be an array');
+	if (value.length > 6) throw new Error('A message may have at most 6 attachments');
+	for (const att of value) {
+		if (!att || typeof att !== 'object') throw new Error('Each attachment must be an object');
+		if (typeof att.fileUrl !== 'string' || !att.fileUrl.startsWith('https://res.cloudinary.com/')) {
+			throw new Error('attachment fileUrl must be a Cloudinary-hosted URL');
+		}
+		if (att.mimeType && !MIME_TYPE_SHAPE.test(String(att.mimeType))) {
+			throw new Error('attachment mimeType is not a valid MIME type');
+		}
+		if (att.sizeInBytes != null && (typeof att.sizeInBytes !== 'number' || att.sizeInBytes < 0 || att.sizeInBytes > 10 * 1024 * 1024)) {
+			throw new Error('attachment sizeInBytes is invalid');
+		}
+	}
+	return true;
+});
+
 const validate = (checks) => async (req, res, next) => {
 	await Promise.all(checks.map((c) => c.run(req)));
 	const errors = validationResult(req);
@@ -54,6 +89,15 @@ const guestMessageLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, // 15 minutes
 	max: 30, // limit each IP to 30 messages per window
 	message: { message: 'Too many messages from this IP, please slow down' },
+});
+
+// Authenticated senders are keyed by user id (not IP) so shared-office IPs don't throttle
+// each other, while still capping spam from a single compromised/malicious account.
+const authenticatedMessageLimiter = rateLimit({
+	windowMs: 1 * 60 * 1000, // 1 minute
+	max: 30,
+	message: { message: 'Too many messages sent, please slow down' },
+	keyGenerator: (req) => (req.user && req.user._id ? String(req.user._id) : req.ip),
 });
 
 /**
@@ -146,6 +190,39 @@ router.get('/', protect, controller.listConversations);
 // Search conversations (q)
 router.get('/search', protect, validate([query('q').notEmpty().withMessage('q is required')]), controller.searchConversations);
 
+/**
+ * @swagger
+ * /conversations/staff-directory:
+ *   get:
+ *     tags:
+ *       - Conversations
+ *     summary: List staff users available to start a direct conversation with (excludes family accounts and the caller)
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Staff directory
+ */
+// Directory of staff users (non-family) to pick a chat partner from — must be registered
+// before the generic /:conversationId route below so it isn't swallowed by it.
+router.get('/staff-directory', protect, controller.getStaffDirectory);
+
+/**
+ * @swagger
+ * /conversations/care-team:
+ *   get:
+ *     tags:
+ *       - Conversations
+ *     summary: List the assigned nurse(s)/doctor(s) for the logged-in family user's resident(s)
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Care team members
+ */
+// Family-only: assigned nurse/doctor for their resident(s), to pick a chat partner from.
+router.get('/care-team', protect, controller.getCareTeam);
+
 // Public guest conversation creation (no auth required)
 router.post(
 	'/guest',
@@ -155,6 +232,7 @@ router.post(
 	validate([
 		body('guestName').notEmpty().withMessage('guestName is required'),
 		// either email or phone must be provided - we'll validate in controller as well
+		validateAttachmentsShape,
 	]),
 	controller.createGuestConversation
 );
@@ -165,7 +243,7 @@ router.post(
 	guestMessageLimiter,
 	multipart.fields([{ name: 'attachments', maxCount: 6 }]),
 	handleAttachments('attachments'),
-	validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id'), body('content').notEmpty().withMessage('content is required')]),
+	validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id'), requireContentOrAttachments, validateAttachmentsShape]),
 	controller.createGuestMessage
 );
 
@@ -208,9 +286,10 @@ router.get('/guest/:conversationId/messages', validate([param('conversationId').
 router.post(
 	'/:conversationId/messages',
 	protect,
+	authenticatedMessageLimiter,
 	multipart.fields([{ name: 'attachments', maxCount: 6 }]),
 	handleAttachments('attachments'),
-	validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id'), body('content').notEmpty().withMessage('content is required')]),
+	validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id'), requireContentOrAttachments, validateAttachmentsShape]),
 	controller.createMessage
 );
 
@@ -234,14 +313,7 @@ router.post(
  *         description: Conversation detail
  */
 // Get conversation detail
-router.get('/:conversationId', protect, validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id')]), async (req, res) => {
-	const { conversationId } = req.params;
-	const Conversation = require('../models/conversation');
-	const conv = await Conversation.findById(conversationId).populate('participantUserIds', 'fullName email role').lean();
-	if (!conv) return res.status(404).json({ message: 'Conversation not found' });
-	if (req.user.role === 'family' && String(conv.familyAccountId) !== String(req.user._id)) return res.status(403).json({ message: 'Access forbidden' });
-	res.json({ success: true, data: conv });
-});
+router.get('/:conversationId', protect, validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id')]), controller.getConversationDetail);
 
 // Delete a conversation (admin or owning family)
 router.delete('/:conversationId', protect, validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id')]), controller.deleteConversation);

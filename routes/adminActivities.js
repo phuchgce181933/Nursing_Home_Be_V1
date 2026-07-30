@@ -11,6 +11,7 @@ const {
   updateActivityStatus,
   setParticipantList,
   registerResident,
+  unregisterResident,
   recordParticipationResult,
   getActivityStatistics,
   getActivityStatisticsById,
@@ -122,7 +123,7 @@ router.post('/', protect, authorize('admin'), createActivity);
  *       403:
  *         description: Access forbidden
  */
-router.get('/', protect, authorize('admin', 'doctor', 'nurse', 'family'), listActivities);
+router.get('/', protect, authorize('admin', 'doctor', 'nurse', 'caregiver', 'family'), listActivities);
 
 /**
  * @swagger
@@ -184,7 +185,7 @@ router.get('/statistics', protect, authorize('admin'), getActivityStatistics);
 router.delete('/bulk', protect, authorize('admin'), bulkDeleteActivities);
 router.patch('/bulk/status', protect, authorize('admin'), bulkUpdateActivityStatus);
 
-router.get('/:activityId', protect, authorize('admin', 'doctor', 'nurse', 'family'), getActivity);
+router.get('/:activityId', protect, authorize('admin', 'doctor', 'nurse', 'caregiver', 'family'), getActivity);
 
 /**
  * @swagger
@@ -386,6 +387,40 @@ router.put('/:activityId/participants', protect, authorize('admin'), setParticip
  *         description: Activity not found
  */
 router.post('/:activityId/register', protect, authorize('admin', 'family'), registerResident);
+
+/**
+ * @swagger
+ * /api/admin/activities/{activityId}/unregister:
+ *   post:
+ *     summary: Cancel a resident's registration for an activity (Admin, Family)
+ *     tags: [Admin - Activity Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: activityId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [residentId]
+ *             properties:
+ *               residentId:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Registration cancelled successfully
+ *       400:
+ *         description: Validation error
+ *       404:
+ *         description: Activity not found
+ */
+router.post('/:activityId/unregister', protect, authorize('admin', 'family'), unregisterResident);
 
 /**
  * @swagger

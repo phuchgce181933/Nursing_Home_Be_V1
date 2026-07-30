@@ -158,32 +158,73 @@ async function main() {
   }
 
   const deactivate = await api('PUT', `/nutrition/dishes/${dishId}`, adminToken, { isActive: false });
-  if (deactivate.status !== 200) {
-    throw new Error(`Deactivate dish failed: ${deactivate.status}`);
-  }
-
-  const inactivePlan = await api('POST', '/nurse/meal-plans/drafts', nurseToken, {
-    workDate,
-    mealTimeScheduleDayId: scheduleId,
-    careStage: 'maintenance',
-    title: 'Smoke inactive dish plan',
-    entries: [
-      {
-        residentId,
-        mealType: 'lunch',
-        dishId,
-        source: 'catalog',
-        mealTime: '12:00',
-      },
-    ],
-  });
-  if (inactivePlan.status !== 400 || inactivePlan.body?.errorCode !== 'DISH_INACTIVE') {
+  if (deactivate.status !== 409 || deactivate.body?.errorCode !== 'DISH_IN_USE') {
     throw new Error(
-      `Expected DISH_INACTIVE 400, got ${inactivePlan.status} ${inactivePlan.body?.errorCode || inactivePlan.body?.message}`
+      `Expected DISH_IN_USE 409 on deactivate, got ${deactivate.status} ${deactivate.body?.errorCode || deactivate.body?.message}`
     );
   }
 
-  await api('DELETE', `/nutrition/dishes/${dishId}`, adminToken);
+  const deleteBlocked = await api('DELETE', `/nutrition/dishes/${dishId}`, adminToken);
+  if (deleteBlocked.status !== 409 || deleteBlocked.body?.errorCode !== 'DISH_IN_USE') {
+    throw new Error(
+      `Expected DISH_IN_USE 409 on delete, got ${deleteBlocked.status} ${deleteBlocked.body?.errorCode || deleteBlocked.body?.message}`
+    );
+  }
+
+  const unusedName = `${dishName} Unused`;
+  const createUnused = await api('POST', '/nutrition/dishes', adminToken, {
+    name: unusedName,
+    calories: 120,
+    isActive: true,
+  });
+  if (createUnused.status !== 201) {
+    throw new Error(`Create unused dish failed: ${createUnused.status}`);
+  }
+  const unusedId = String(createUnused.body?.data?.dish?._id || createUnused.body?.data?._id || '');
+
+  const deleteUnused = await api('DELETE', `/nutrition/dishes/${unusedId}`, adminToken);
+  if (deleteUnused.status !== 200 || !deleteUnused.body?.data?.deleted) {
+    throw new Error(`Delete unused dish failed: ${deleteUnused.status}`);
+  }
+
+  const recreateUnused = await api('POST', '/nutrition/dishes', adminToken, {
+    name: unusedName,
+    calories: 150,
+    isActive: true,
+  });
+  if (recreateUnused.status !== 201) {
+    throw new Error(`Recreate dish after delete failed: ${recreateUnused.status} ${recreateUnused.body?.message}`);
+  }
+
+  const ghostName = `${dishName} Ghost`;
+  const createGhost = await api('POST', '/nutrition/dishes', adminToken, {
+    name: ghostName,
+    calories: 90,
+    isActive: true,
+  });
+  if (createGhost.status !== 201) {
+    throw new Error(`Create ghost dish failed: ${createGhost.status}`);
+  }
+  const ghostId = String(createGhost.body?.data?.dish?._id || createGhost.body?.data?._id || '');
+
+  const deactivateGhost = await api('PUT', `/nutrition/dishes/${ghostId}`, adminToken, { isActive: false });
+  if (deactivateGhost.status !== 200) {
+    throw new Error(`Deactivate ghost dish failed: ${deactivateGhost.status}`);
+  }
+
+  const reviveGhost = await api('POST', '/nutrition/dishes', adminToken, {
+    name: ghostName,
+    calories: 95,
+    isActive: true,
+  });
+  if (reviveGhost.status !== 201) {
+    throw new Error(`Revive inactive dish failed: ${reviveGhost.status} ${reviveGhost.body?.message}`);
+  }
+  const revivedCalories = reviveGhost.body?.data?.dish?.calories ?? reviveGhost.body?.data?.calories;
+  if (revivedCalories !== 95) {
+    throw new Error(`Revived dish calories mismatch: ${revivedCalories}`);
+  }
+
   console.log('PASS smoke-dish-catalog.js');
 }
 

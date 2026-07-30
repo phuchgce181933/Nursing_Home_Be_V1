@@ -294,7 +294,7 @@ const getNoteAuditHistory = async (id) => {
   }));
 };
 
-// Nurses can only update their own notes; doctor/admin can update any note.
+// Only nurses can access care notes; a nurse may update only their own notes.
 const updateNote = async (user, id, body, req) => {
   if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
 
@@ -350,7 +350,7 @@ const updateNote = async (user, id, body, req) => {
   return careNoteRepo.findByIdWithPopulate(note._id);
 };
 
-// Nurses can only delete their own notes; doctor/admin can delete any note.
+// Only nurses can access care notes; a nurse may delete only their own notes.
 const deleteNote = async (user, id, req) => {
   if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
   const note = await careNoteRepo.findById(id);

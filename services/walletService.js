@@ -20,9 +20,18 @@ const getWalletBalance = async (user) => {
   };
 };
 
+const TOPUP_MIN_AMOUNT = 10000;
+const TOPUP_MAX_AMOUNT = 500000000;
+
 const generateTopupPaymentUrl = async (user, amount, req) => {
   if (!amount || amount <= 0) {
     throw new ServiceError('Số tiền nạp phải lớn hơn 0', 400);
+  }
+  if (amount < TOPUP_MIN_AMOUNT) {
+    throw new ServiceError(`Số tiền nạp tối thiểu là ${TOPUP_MIN_AMOUNT.toLocaleString('vi-VN')}₫`, 400);
+  }
+  if (amount > TOPUP_MAX_AMOUNT) {
+    throw new ServiceError(`Số tiền nạp tối đa là ${TOPUP_MAX_AMOUNT.toLocaleString('vi-VN')}₫`, 400);
   }
 
   const topupId = `topup_${user._id}_${Date.now()}`;

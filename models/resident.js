@@ -39,6 +39,15 @@ const residentSchema = new Schema(
     dischargedAt: { type: Date },
     servicePackage: { type: String, trim: true },
     familyPortalAccountIds: [{ type: Types.ObjectId, ref: 'User' }],
+    photos: [
+      {
+        url: { type: String, required: true, trim: true },
+        publicId: { type: String, trim: true },
+        caption: { type: String, trim: true },
+        uploadedBy: { type: Types.ObjectId, ref: 'User' },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   { timestamps: true }
 );

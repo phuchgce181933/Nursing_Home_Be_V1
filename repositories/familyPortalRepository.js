@@ -20,14 +20,14 @@ const getFamilyResidentIds = async (userId) => {
 
 const getResidentsForFamily = async (userId) =>
   Resident.find({ familyPortalAccountIds: userId, residencyStatus: 'admitted' })
-    .select('residentCode fullName dateOfBirth gender bloodType allergies chronicConditions residencyStatus admittedAt roomId bedId servicePackage')
-    .populate('roomId', 'roomCode name')
+    .select('residentCode fullName dateOfBirth gender bloodType avatarUrl allergies chronicConditions residencyStatus admittedAt roomId bedId servicePackage')
+    .populate('roomId', 'roomNumber')
     .populate('bedId', 'bedCode');
 
 const getResidentById = async (residentId) =>
   Resident.findById(residentId)
     .select('-familyPortalAccountIds')
-    .populate('roomId', 'roomCode name')
+    .populate('roomId', 'roomNumber')
     .populate('bedId', 'bedCode');
 
 const findMedicalRecords = async (filter, { sort = { measuredAt: -1 }, skip = 0, limit = 20 } = {}) =>

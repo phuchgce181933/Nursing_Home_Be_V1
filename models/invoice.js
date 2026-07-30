@@ -21,8 +21,11 @@ const invoiceSchema = new Schema(
     tax: { type: Number, default: 0 },
     total: { type: Number, default: 0 },
     totalAmount: { type: Number, default: 0 },
+    originalTotalAmount: { type: Number, default: 0 },
+    remainingAmount: { type: Number, default: 0 },
     familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
     status: { type: String, enum: ['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'CANCELLED'], default: 'DRAFT', index: true },
+    cancellationReason: { type: String, trim: true },
     createdBy: { type: String },
     
     // Service fee components
@@ -33,9 +36,15 @@ const invoiceSchema = new Schema(
     
     // Invoice metadata
     type: { type: String, enum: ['SERVICE', 'MEDICATION', 'OTHER', 'COMBINED'], default: 'COMBINED' },
+    paymentPlan: { type: String, enum: ['FULL', 'HALF_NOW'], default: 'FULL' },
     prescriptionId: { type: Types.ObjectId, ref: 'Prescription' },
     dueDate: { type: Date },
-    
+
+    // Set when a PayOS checkout is created for this invoice; used to verify the real payment
+    // status with PayOS before marking the invoice paid (never trust client-supplied status alone).
+    payosOrderCode: { type: Number, index: true },
+    issuedAt: { type: Date, default: Date.now, index: true },
+
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
   },
@@ -44,6 +53,9 @@ const invoiceSchema = new Schema(
 
 invoiceSchema.pre('save', function () {
   this.updatedAt = new Date();
+  if (!this.issuedAt) {
+    this.issuedAt = this.createdAt || new Date();
+  }
 
   if (Array.isArray(this.items) && this.items.length > 0) {
     this.subTotal = (this.items || []).reduce((s, it) => s + (it.amount || 0), 0);

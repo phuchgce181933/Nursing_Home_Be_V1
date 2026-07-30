@@ -15,9 +15,15 @@ const listActivities = async (req, res) => {
     // Nurses can only see activities where they are assigned as organizers
     if (req.user) {
       const userRole = String(req.user.role || '').toLowerCase();
-      const isNurse = userRole.includes('nurse') || userRole.includes('y tá') || userRole.includes('điều dưỡng');
-      if (isNurse) {
-        query.organizerStaffId = req.user._id.toString();
+      const isStaffLikeRole = userRole.includes('nurse')
+        || userRole.includes('y tá')
+        || userRole.includes('điều dưỡng')
+        || userRole.includes('caregiver')
+        || userRole.includes('hộ lý')
+        || userRole.includes('doctor')
+        || userRole.includes('bác sĩ');
+      if (isStaffLikeRole) {
+        query.organizerStaffIds = req.user._id.toString();
       }
     }
     const result = await activityService.listActivities(query);
@@ -92,7 +98,16 @@ const setParticipantList = async (req, res) => {
 
 const registerResident = async (req, res) => {
   try {
-    const result = await activityService.registerResident(req.params.activityId, req.body.residentId);
+    const result = await activityService.registerResident(req.params.activityId, req.body.residentId, req.user);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const unregisterResident = async (req, res) => {
+  try {
+    const result = await activityService.unregisterResident(req.params.activityId, req.body.residentId, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -137,6 +152,7 @@ module.exports = {
   updateActivityStatus,
   setParticipantList,
   registerResident,
+  unregisterResident,
   recordParticipationResult,
   getActivityStatistics,
   getActivityStatisticsById,

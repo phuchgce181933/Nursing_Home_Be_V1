@@ -28,6 +28,24 @@ const createStaffAccount = async (req, res) => {
   }
 };
 
+const requestRegisterOtp = async (req, res) => {
+  try {
+    const result = await authService.requestRegisterOtp(req.body);
+    res.status(201).json(result);
+  } catch (err) {
+    sendApiError(res, err);
+  }
+};
+
+const verifyRegisterOtp = async (req, res) => {
+  try {
+    const result = await authService.verifyRegisterOtp(req.body);
+    res.status(201).json(result);
+  } catch (err) {
+    sendApiError(res, err);
+  }
+};
+
 const listStaffAccounts = async (req, res) => {
   try {
     const result = await authService.listStaffAccounts(req.query);
@@ -147,6 +165,8 @@ module.exports = {
   login,
   getMe,
   createStaffAccount,
+  requestRegisterOtp,
+  verifyRegisterOtp,
   listStaffAccounts,
   toggleStaffActive,
   updateProfile,

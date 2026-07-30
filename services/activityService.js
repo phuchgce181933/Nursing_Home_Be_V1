@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const activityRepo = require('../repositories/activityRepository');
-const notificationRepo = require('../repositories/notificationRepository');
+const notificationService = require('./notificationService');
 const Resident = require('../models/resident');
 const User = require('../models/user');
 const { ACTIVITY_STATUSES } = require('../models/enums');
@@ -10,6 +10,55 @@ const { calculateDurationMinutes } = require('../utils/activityDuration');
 const VALID_ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'left_early'];
 const VALID_PARTICIPATION_LEVELS = ['active', 'partial', 'passive'];
 const MANUAL_ACTIVITY_STATUSES = ['draft', 'scheduled', 'completed', 'cancelled'];
+const ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS = ['nurse', 'y tá', 'điều dưỡng', 'caregiver', 'hộ lý', 'doctor', 'bác sĩ'];
+const ALLOWED_ACTIVITY_CATEGORY_OPTIONS = [
+  'Hoạt động chăm sóc cá nhân hằng ngày',
+  'Hoạt động chăm sóc sức khỏe',
+  'Hoạt động ăn uống - dinh dưỡng',
+  'Hoạt động thể chất - phục hồi chức năng',
+  'Hoạt động giải trí',
+  'Hoạt động kích thích nhận thức',
+  'Hoạt động xã hội - giao lưu',
+  'Hoạt động tâm lý - tinh thần',
+  'Hoạt động sự kiện đặc biệt',
+  'Hoạt động với gia đình',
+  'Hoạt động quản lý nội bộ',
+  'Hoạt động xử lý sự cố',
+];
+
+const normalizeActivityCategory = (body) => {
+  const selectedCategory = typeof body.category === 'string' ? body.category.trim() : '';
+  if (!selectedCategory) {
+    throw new ServiceError('category is required', 400);
+  }
+
+  if (selectedCategory === 'Khác') {
+    const customCategory = typeof body.categoryOther === 'string' ? body.categoryOther.trim() : '';
+    if (!customCategory) {
+      throw new ServiceError('custom category is required when category is Khác', 400);
+    }
+    return customCategory;
+  }
+
+  if (!ALLOWED_ACTIVITY_CATEGORY_OPTIONS.includes(selectedCategory)) {
+    throw new ServiceError(`category must be one of: ${ALLOWED_ACTIVITY_CATEGORY_OPTIONS.join(', ')}, Khác`, 400);
+  }
+
+  return selectedCategory;
+};
+
+const isAllowedActivityStaffRole = (role) => {
+  const roleText = String(role || '').toLowerCase();
+  return ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS.some((keyword) => roleText.includes(keyword));
+};
+
+const normalizeStaffIdList = (value) => {
+  if (value === undefined || value === null || value === '') return [];
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== undefined && item !== null && item !== '').map((item) => String(item));
+  }
+  return [String(value)];
+};
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -30,6 +79,7 @@ const buildFilterFromQuery = (query) => {
   if (query.status) filter.status = query.status;
   if (query.category) filter.category = query.category;
   if (query.organizerStaffId) filter.organizerStaffId = query.organizerStaffId;
+  if (query.organizerStaffIds) filter.organizerStaffIds = { $in: [query.organizerStaffIds] };
   if (query.participantResidentIds) filter.participantResidentIds = { $in: query.participantResidentIds };
   else if (query.participantResidentId) filter.participantResidentIds = query.participantResidentId;
   if (query.search) {
@@ -83,12 +133,34 @@ const validateActivityTimeRange = (startDate, endDate) => {
   }
 };
 
+const MAX_NOTE_LENGTH = 500;
+
+const assertNoDuplicateResidentIds = (records, label) => {
+  const seen = new Set();
+  for (const r of records) {
+    const key = r.residentId.toString();
+    if (seen.has(key)) {
+      throw new ServiceError(`${label} contains duplicate residentId ${key}`, 400);
+    }
+    seen.add(key);
+  }
+};
+
+const assertResidentsAreParticipants = (records, participantIds, label) => {
+  const allowed = new Set((participantIds || []).map((id) => id.toString()));
+  for (const r of records) {
+    if (!allowed.has(r.residentId.toString())) {
+      throw new ServiceError(`${label}: resident ${r.residentId} is not a participant of this activity`, 400);
+    }
+  }
+};
+
 const normalizeAttendanceRecords = (records) => {
   if (!Array.isArray(records)) {
     throw new ServiceError('attendanceRecords must be an array', 400);
   }
 
-  return records.map((record) => {
+  const normalized = records.map((record) => {
     const residentId = record?.residentId;
     if (!residentId || !mongoose.Types.ObjectId.isValid(residentId)) {
       throw new ServiceError('attendanceRecords must contain valid residentId values', 400);
@@ -99,15 +171,22 @@ const normalizeAttendanceRecords = (records) => {
       throw new ServiceError(`attendance status must be one of: ${VALID_ATTENDANCE_STATUSES.join(', ')}`, 400);
     }
 
+    const note = typeof record?.note === 'string' ? record.note.trim() : '';
+    if (note.length > MAX_NOTE_LENGTH) {
+      throw new ServiceError(`note must be at most ${MAX_NOTE_LENGTH} characters`, 400);
+    }
     const occurrenceDate = record?.occurrenceDate ? new Date(record.occurrenceDate) : null;
 
     return {
       residentId: new mongoose.Types.ObjectId(residentId),
       occurrenceDate: occurrenceDate && !Number.isNaN(occurrenceDate.getTime()) ? occurrenceDate : undefined,
       status,
-      note: typeof record?.note === 'string' ? record.note.trim() : '',
+      note,
     };
   });
+
+  assertNoDuplicateResidentIds(normalized, 'attendanceRecords');
+  return normalized;
 };
 
 const normalizeParticipationRecords = (records) => {
@@ -115,7 +194,7 @@ const normalizeParticipationRecords = (records) => {
     throw new ServiceError('participationRecords must be an array', 400);
   }
 
-  return records.map((record) => {
+  const normalized = records.map((record) => {
     const residentId = record?.residentId;
     if (!residentId || !mongoose.Types.ObjectId.isValid(residentId)) {
       throw new ServiceError('participationRecords must contain valid residentId values', 400);
@@ -126,15 +205,24 @@ const normalizeParticipationRecords = (records) => {
       throw new ServiceError(`participation level must be one of: ${VALID_PARTICIPATION_LEVELS.join(', ')}`, 400);
     }
 
+    const comment = typeof record?.comment === 'string' ? record.comment.trim() : '';
+    const incident = typeof record?.incident === 'string' ? record.incident.trim() : '';
+    if (comment.length > MAX_NOTE_LENGTH || incident.length > MAX_NOTE_LENGTH) {
+      throw new ServiceError(`comment/incident must be at most ${MAX_NOTE_LENGTH} characters`, 400);
+    }
     const occurrenceDate = record?.occurrenceDate ? new Date(record.occurrenceDate) : null;
+
     return {
       residentId: new mongoose.Types.ObjectId(residentId),
       occurrenceDate: occurrenceDate && !Number.isNaN(occurrenceDate.getTime()) ? occurrenceDate : undefined,
       participationLevel,
-      comment: typeof record?.comment === 'string' ? record.comment.trim() : '',
-      incident: typeof record?.incident === 'string' ? record.incident.trim() : '',
+      comment,
+      incident,
     };
   });
+
+  assertNoDuplicateResidentIds(normalized, 'participationRecords');
+  return normalized;
 };
 
 const syncActivityStatusIfNeeded = async (activity, now = new Date()) => {
@@ -313,7 +401,7 @@ const sendActivityNotifications = async (activity, action, message, extraResiden
     };
   });
 
-  await notificationRepo.insertMany(notifications);
+  await notificationService.createMany(notifications);
 };
 
 const createActivity = async (body) => {
@@ -323,9 +411,11 @@ const createActivity = async (body) => {
 
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const description = typeof body.description === 'string' ? body.description.trim() : '';
-  const category = typeof body.category === 'string' ? body.category.trim() : '';
+  const category = normalizeActivityCategory(body);
   const location = typeof body.location === 'string' ? body.location.trim() : '';
   const status = typeof body.status === 'string' ? body.status.trim() : 'scheduled';
+  const organizerStaffIds = normalizeStaffIdList(body.organizerStaffIds ?? body.organizerStaffId);
+  const supportStaffIds = normalizeStaffIdList(body.supportStaffIds ?? body.supportStaffId);
   const requestedDailyMinutes = body.dailyDurationMinutes !== undefined && body.dailyDurationMinutes !== '' && body.dailyDurationMinutes !== null
     ? Number(body.dailyDurationMinutes)
     : null;
@@ -367,16 +457,37 @@ const createActivity = async (body) => {
     throw new ServiceError('organizerStaffId must be a valid ObjectId', 400);
   }
 
-  if (body.organizerStaffId) {
-    const User = require('../models/user');
-    const organizer = await User.findById(body.organizerStaffId);
-    if (!organizer) {
-      throw new ServiceError('Organizer staff not found', 404);
+  if (organizerStaffIds.length) {
+    if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('organizerStaffIds must contain valid ObjectIds', 400);
     }
-    const role = String(organizer.role || '').toLowerCase();
-    const isNurse = role.includes('nurse') || role.includes('y tá') || role.includes('điều dưỡng');
-    if (!isNurse) {
-      throw new ServiceError('Activity organizer must be a nurse', 400);
+
+    const User = require('../models/user');
+    for (const organizerId of organizerStaffIds) {
+      const organizer = await User.findById(organizerId);
+      if (!organizer) {
+        throw new ServiceError('Organizer staff not found', 404);
+      }
+      if (!isAllowedActivityStaffRole(organizer.role)) {
+        throw new ServiceError('Activity organizer must be a nurse, caregiver, hộ lý, or doctor', 400);
+      }
+    }
+  }
+
+  if (supportStaffIds.length) {
+    if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('supportStaffIds must contain valid ObjectIds', 400);
+    }
+
+    const User = require('../models/user');
+    for (const supportStaffId of supportStaffIds) {
+      const supportStaff = await User.findById(supportStaffId);
+      if (!supportStaff) {
+        throw new ServiceError('Support staff not found', 404);
+      }
+      if (!isAllowedActivityStaffRole(supportStaff.role)) {
+        throw new ServiceError('Support staff must be a nurse, caregiver, hộ lý, or doctor', 400);
+      }
     }
   }
 
@@ -414,7 +525,10 @@ const createActivity = async (body) => {
         endAt: occurrenceEnd,
         durationMinutes: recurringDailyDurationMinutes,
         location: location || undefined,
-        organizerStaffId: body.organizerStaffId || undefined,
+        organizerStaffId: organizerStaffIds[0] || undefined,
+        organizerStaffIds: organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
+        supportStaffId: supportStaffIds[0] || undefined,
+        supportStaffIds: supportStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
         participantResidentIds: normalizeObjectIds(body.participantResidentIds),
         status,
       });
@@ -428,6 +542,30 @@ const createActivity = async (body) => {
     }
     return { message: 'Activities created for each day', createdCount: createdActivities.length, data: createdActivities };
   }
+
+  const activity = await activityRepo.create({
+    title,
+    category: category || undefined,
+    description: description || undefined,
+    scheduledAt,
+    endAt,
+    durationMinutes: computedDurationMinutes,
+    location: location || undefined,
+    organizerStaffId: organizerStaffIds[0] || undefined,
+    organizerStaffIds: organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
+    supportStaffId: supportStaffIds[0] || undefined,
+    supportStaffIds: supportStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
+    participantResidentIds: normalizeObjectIds(body.participantResidentIds),
+    status,
+  });
+
+  await sendActivityNotifications(
+    activity,
+    'scheduled',
+    `Hoạt động mới: ${activity.title} đã được lên lịch vào ${activity.scheduledAt.toLocaleString('vi-VN')}${activity.location ? ` tại ${activity.location}` : ''}.`,
+  );
+
+  return activity;
 };
 
 const listActivities = async (query) => {
@@ -450,7 +588,7 @@ const getActivityById = async (activityId) => {
 const updateActivity = async (activityId, body) => {
   const update = {};
   if (body.title !== undefined) update.title = body.title.trim();
-  if (body.category !== undefined) update.category = body.category?.trim();
+  if (body.category !== undefined) update.category = normalizeActivityCategory(body);
   if (body.description !== undefined) update.description = body.description?.trim();
   if (body.startAt !== undefined || body.scheduledAt !== undefined) {
     update.scheduledAt = new Date(body.startAt ?? body.scheduledAt);
@@ -484,20 +622,46 @@ const updateActivity = async (activityId, body) => {
     if (dd !== null) update.dailyDurationMinutes = dd;
   }
   if (body.location !== undefined) update.location = body.location?.trim();
-  if (body.organizerStaffId !== undefined) {
-    if (body.organizerStaffId) {
-      const User = require('../models/user');
-      const organizer = await User.findById(body.organizerStaffId);
-      if (!organizer) {
-        throw new ServiceError('Organizer staff not found', 404);
+  if (body.organizerStaffIds !== undefined || body.organizerStaffId !== undefined) {
+    const organizerStaffIds = normalizeStaffIdList(body.organizerStaffIds ?? body.organizerStaffId);
+    if (organizerStaffIds.length) {
+      if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+        throw new ServiceError('organizerStaffIds must contain valid ObjectIds', 400);
       }
-      const role = String(organizer.role || '').toLowerCase();
-      const isNurse = role.includes('nurse') || role.includes('y tá') || role.includes('điều dưỡng');
-      if (!isNurse) {
-        throw new ServiceError('Activity organizer must be a nurse', 400);
+      const User = require('../models/user');
+      for (const organizerId of organizerStaffIds) {
+        const organizer = await User.findById(organizerId);
+        if (!organizer) {
+          throw new ServiceError('Organizer staff not found', 404);
+        }
+        if (!isAllowedActivityStaffRole(organizer.role)) {
+          throw new ServiceError('Activity organizer must be a nurse, caregiver, hộ lý, or doctor', 400);
+        }
       }
     }
-    update.organizerStaffId = body.organizerStaffId;
+    update.organizerStaffIds = organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id));
+    update.organizerStaffId = organizerStaffIds[0] || null;
+  }
+
+  if (body.supportStaffIds !== undefined || body.supportStaffId !== undefined) {
+    const supportStaffIds = normalizeStaffIdList(body.supportStaffIds ?? body.supportStaffId);
+    if (supportStaffIds.length) {
+      if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+        throw new ServiceError('supportStaffIds must contain valid ObjectIds', 400);
+      }
+      const User = require('../models/user');
+      for (const supportStaffId of supportStaffIds) {
+        const supportStaff = await User.findById(supportStaffId);
+        if (!supportStaff) {
+          throw new ServiceError('Support staff not found', 404);
+        }
+        if (!isAllowedActivityStaffRole(supportStaff.role)) {
+          throw new ServiceError('Support staff must be a nurse, caregiver, hộ lý, or doctor', 400);
+        }
+      }
+    }
+    update.supportStaffIds = supportStaffIds.map((id) => new mongoose.Types.ObjectId(id));
+    update.supportStaffId = supportStaffIds[0] || null;
   }
   if (body.status !== undefined) {
     if (body.status === 'ongoing') {
@@ -569,6 +733,19 @@ const setParticipantList = async (activityId, participantResidentIds) => {
   }
 
   const participants = normalizeObjectIds(participantResidentIds);
+  if (participants.length) {
+    const residents = await Resident.find({ _id: { $in: participants } }, 'residencyStatus').lean();
+    const foundIds = new Set(residents.map((r) => r._id.toString()));
+    const missing = participants.filter((id) => !foundIds.has(id.toString()));
+    if (missing.length) {
+      throw new ServiceError(`Residents not found: ${missing.join(', ')}`, 404);
+    }
+    const notAdmitted = residents.filter((r) => r.residencyStatus !== 'admitted').map((r) => r._id.toString());
+    if (notAdmitted.length) {
+      throw new ServiceError(`Residents are not currently admitted: ${notAdmitted.join(', ')}`, 400);
+    }
+  }
+
   const activity = await activityRepo.findByIdAndUpdate(activityId, { participantResidentIds: participants });
   if (!activity) throw new ServiceError('Activity not found', 404);
 
@@ -581,7 +758,18 @@ const setParticipantList = async (activityId, participantResidentIds) => {
   return activity;
 };
 
-const registerResident = async (activityId, residentId) => {
+const assertActivityOpenForRegistration = (activity) => {
+  const status = String(activity.status || '').trim().toLowerCase();
+  if (status === 'cancelled' || status === 'completed') {
+    throw new ServiceError(`Cannot register: this activity is already ${status}`, 400);
+  }
+  const startAt = new Date(activity.startAt || activity.scheduledAt);
+  if (!Number.isNaN(startAt.getTime()) && new Date() > startAt) {
+    throw new ServiceError('Cannot register: this activity has already started', 400);
+  }
+};
+
+const registerResident = async (activityId, residentId, currentUser) => {
   if (!residentId) throw new ServiceError('residentId is required', 400);
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Activity not found', 404);
@@ -591,6 +779,14 @@ const registerResident = async (activityId, residentId) => {
   if (resident.residencyStatus !== 'admitted') {
     throw new ServiceError('Resident is not currently admitted', 400);
   }
+  if (currentUser?.role === 'family') {
+    const ownedIds = (resident.familyPortalAccountIds || []).map((id) => id.toString());
+    if (!ownedIds.includes(String(currentUser._id))) {
+      throw new ServiceError('Access denied: not your relative', 403);
+    }
+  }
+
+  assertActivityOpenForRegistration(activity);
 
   const normalizedResidentId = new mongoose.Types.ObjectId(residentId);
   const existing = activity.participantResidentIds?.map((id) => id.toString()) || [];
@@ -612,6 +808,39 @@ const registerResident = async (activityId, residentId) => {
   return activity;
 };
 
+const unregisterResident = async (activityId, residentId, currentUser) => {
+  if (!residentId) throw new ServiceError('residentId is required', 400);
+  const activity = await activityRepo.findById(activityId);
+  if (!activity) throw new ServiceError('Activity not found', 404);
+
+  const resident = await Resident.findById(residentId);
+  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (currentUser?.role === 'family') {
+    const ownedIds = (resident.familyPortalAccountIds || []).map((id) => id.toString());
+    if (!ownedIds.includes(String(currentUser._id))) {
+      throw new ServiceError('Access denied: not your relative', 403);
+    }
+  }
+
+  const status = String(activity.status || '').trim().toLowerCase();
+  if (status === 'completed') {
+    throw new ServiceError('Cannot cancel registration: this activity has already completed', 400);
+  }
+
+  const normalizedResidentId = String(residentId);
+  const existing = activity.participantResidentIds?.map((id) => id.toString()) || [];
+  if (!existing.includes(normalizedResidentId)) {
+    throw new ServiceError('Resident is not registered for this activity', 400);
+  }
+
+  activity.participantResidentIds = activity.participantResidentIds.filter(
+    (id) => id.toString() !== normalizedResidentId
+  );
+  await activity.save();
+
+  return activity;
+};
+
 const recordParticipationResult = async (activityId, body) => {
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Activity not found', 404);
@@ -628,12 +857,21 @@ const recordParticipationResult = async (activityId, body) => {
   if (Number.isNaN(activityStart.getTime()) || Number.isNaN(activityEnd.getTime())) {
     throw new ServiceError('Activity time window is invalid', 400);
   }
-  if (now < activityStart || now > activityEnd) {
-    throw new ServiceError('Chỉ có thể điểm danh khi hoạt động đã được lên lịch và đang diễn ra', 400);
+  // Allow a grace window after the activity ends so nurses can still record attendance
+  // shortly after it concludes (the activity auto-flips to 'completed' right at activityEnd).
+  const RECORD_GRACE_MS = 2 * 60 * 60 * 1000; // 2 hours
+  if (now < activityStart || now > new Date(activityEnd.getTime() + RECORD_GRACE_MS)) {
+    throw new ServiceError('Chỉ có thể điểm danh khi hoạt động đã hoặc đang diễn ra (trong vòng 2 giờ sau khi kết thúc)', 400);
   }
 
   const updates = {};
-  if (body.participantResultNotes !== undefined) updates.participantResultNotes = body.participantResultNotes?.trim();
+  if (body.participantResultNotes !== undefined) {
+    const trimmed = body.participantResultNotes?.trim();
+    if (trimmed && trimmed.length > MAX_NOTE_LENGTH) {
+      throw new ServiceError(`participantResultNotes must be at most ${MAX_NOTE_LENGTH} characters`, 400);
+    }
+    updates.participantResultNotes = trimmed;
+  }
   if (body.status !== undefined) {
     if (body.status === 'ongoing') {
       throw new ServiceError('Activity status ongoing is managed automatically', 400);
@@ -647,6 +885,14 @@ const recordParticipationResult = async (activityId, body) => {
   if (body.participationRecords !== undefined) updates.participationRecords = normalizeParticipationRecords(body.participationRecords);
   if (Object.keys(updates).length === 0) {
     throw new ServiceError('At least one field is required to record participation results', 400);
+  }
+
+  const participantIds = syncedActivity.participantResidentIds || [];
+  if (updates.attendanceRecords) {
+    assertResidentsAreParticipants(updates.attendanceRecords, participantIds, 'attendanceRecords');
+  }
+  if (updates.participationRecords) {
+    assertResidentsAreParticipants(updates.participationRecords, participantIds, 'participationRecords');
   }
 
   // Merge attendance/participation records by occurrenceDate + residentId instead of replacing whole arrays
@@ -769,6 +1015,7 @@ module.exports = {
   bulkUpdateActivityStatus,
   setParticipantList,
   registerResident,
+  unregisterResident,
   recordParticipationResult,
   getActivityStatistics,
   getActivityStatisticsById,

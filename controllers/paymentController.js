@@ -24,6 +24,9 @@ const getPayosCheckoutPage = async (req, res, next) => {
   try {
     const invoice = await paymentService.findInvoiceForCheckout(req.user, req.params.residentId, req.params.invoiceId, req.query);
     const payosData = await paymentService.createPayosPaymentRequest({ invoice, req });
+    if (payosData.orderCode) {
+      await paymentService.storeInvoicePayosOrderCode(invoice._id, payosData.orderCode);
+    }
 
     if (payosData.checkoutUrl) {
       return res.redirect(payosData.checkoutUrl);
@@ -118,7 +121,7 @@ const recordPayment = async (req, res, next) => {
 const listInvoices = async (req, res, next) => {
   try {
     const { residentId } = req.params;
-    const invoices = await paymentService.listInvoicesByResident(residentId);
+    const invoices = await paymentService.listInvoicesByResident(req.user, residentId);
     return res.json({ success: true, data: invoices });
   } catch (error) {
     return next(error);

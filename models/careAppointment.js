@@ -6,6 +6,7 @@ const { Schema, Types } = mongoose;
 const careAppointmentSchema = new Schema(
   {
     residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
+    admissionId: { type: Types.ObjectId, ref: 'Admission', index: true },
     doctorStaffId: { type: Types.ObjectId, ref: 'StaffProfile', index: true },
     nurseStaffId: { type: Types.ObjectId, ref: 'StaffProfile', index: true },
     scheduledStartAt: { type: Date, required: true, index: true },

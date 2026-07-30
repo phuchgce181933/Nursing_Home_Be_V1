@@ -10,18 +10,28 @@ const createStaffProfile = async (profileData) => StaffProfile.create(profileDat
 const updateById = async (id, data) =>
   StaffProfile.findByIdAndUpdate(id, data, { new: true, runValidators: true });
 
+const RESPONSIBLE_AREA_POPULATE = {
+  path: 'responsibleAreaIds',
+  select: 'floorNumber name buildingId',
+  populate: { path: 'buildingId', select: 'code name' },
+};
+
 const findByUserIdList = async (userIds) =>
   StaffProfile.find({ userId: { $in: userIds } })
-    .populate('responsibleAreaIds', 'floorNumber name')
+    .populate(RESPONSIBLE_AREA_POPULATE)
     .populate('responsibleRoomIds', 'roomNumber roomType')
-    .populate('assignedResidentIds', 'fullName residentCode');
+    .populate({
+      path: 'assignedResidentIds',
+      select: 'fullName residentCode roomId residencyStatus',
+      populate: { path: 'roomId', select: 'roomNumber floorId' },
+    });
 
 const findByIds = async (ids) => StaffProfile.find({ _id: { $in: ids } });
 
 const findByAreaId = async (floorId) =>
   StaffProfile.find({ responsibleAreaIds: floorId })
     .populate('userId', 'fullName role avatarUrl isActive isBanned')
-    .populate('responsibleAreaIds', 'floorNumber name')
+    .populate(RESPONSIBLE_AREA_POPULATE)
     .populate('responsibleRoomIds', 'roomNumber roomType');
 
 const findByRoomId = async (roomId) =>

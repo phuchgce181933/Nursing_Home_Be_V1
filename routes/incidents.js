@@ -6,8 +6,10 @@ const {
   listIncidents,
   getIncident,
   updateIncidentStatus,
+  reopenIncident,
   assignHandlers,
   exportIncidents,
+  getAssignmentConflicts,
 } = require('../controllers/incidentController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -122,6 +124,8 @@ router.post('/', createIncident);
  */
 router.get('/', listIncidents);
 
+router.post('/assignment-conflicts', authorize('admin'), getAssignmentConflicts);
+
 /**
  * @swagger
  * /api/incidents/export:
@@ -187,6 +191,7 @@ router.get('/:id', getIncident);
  *         description: Incident status updated
  */
 router.patch('/:id/status', updateIncidentStatus);
+router.patch('/:id/reopen', reopenIncident);
 
 /**
  * @swagger

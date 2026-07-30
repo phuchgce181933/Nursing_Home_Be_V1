@@ -488,11 +488,7 @@ const escapeCSV = (val) => {
 
 const row = (...cols) => cols.map(escapeCSV).join(',');
 
-const downloadReport = async (user, residentId, query) => {
-  if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
-  }
-
+const buildResidentReportCSV = async (residentId, query) => {
   const resident = await familyPortalRepo.getResidentById(residentId);
   if (!resident) throw new ServiceError('Resident not found', 404);
 
@@ -601,6 +597,20 @@ const downloadReport = async (user, residentId, query) => {
   return { csv: lines.join('\r\n'), filename };
 };
 
+const downloadReport = async (user, residentId, query) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Access denied: not your relative', 403);
+  }
+  return buildResidentReportCSV(residentId, query);
+};
+
+// UC-132: Doctor/Nurse export of a resident's health report (reuses the same CSV builder as the family export).
+const staffDownloadReport = async (user, residentId, query) => {
+  const resident = await familyPortalRepo.getResidentById(residentId);
+  if (!resident) throw new ServiceError('Resident not found', 404);
+  return buildResidentReportCSV(residentId, query);
+};
+
 const getHealthReport = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Access denied: not your relative', 403);
@@ -644,6 +654,7 @@ const getHealthReport = async (user, residentId, query) => {
 };
 
 module.exports = {
+  assertResidentAccess,
   getResidents,
   getResident,
   getResidentBillingSummary,
@@ -663,4 +674,5 @@ module.exports = {
   getDailyActivities,
   getCareSchedule,
   downloadReport,
+  staffDownloadReport,
 };

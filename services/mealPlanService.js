@@ -169,6 +169,21 @@ const validateEntry = (entry, index, mealTimeOverride, dishMap = {}) => {
   if (!mealName || !String(mealName).trim()) {
     throw apiErr(CODES.MEAL_ENTRY_NAME_REQUIRED, { statusCode: 400, params: { index } });
   }
+  if (String(row.mealName).trim().length > 200) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: `entries[${index}].mealName`, min: 0, max: 200 } });
+  }
+  if (row.nutritionNote && String(row.nutritionNote).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: `entries[${index}].nutritionNote`, min: 0, max: 500 } });
+  }
+  if (row.stageNote && String(row.stageNote).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: `entries[${index}].stageNote`, min: 0, max: 500 } });
+  }
+  if (row.calories !== undefined && row.calories !== null && row.calories !== '') {
+    const cal = Number(row.calories);
+    if (Number.isNaN(cal) || cal < 0 || cal > 5000) {
+      throw apiErr(CODES.FIELD_INVALID_FORMAT, { statusCode: 400, params: { field: `entries[${index}].calories`, format: '0-5000' } });
+    }
+  }
   if (source && !VALID_ENTRY_SOURCES.includes(source)) {
     throw apiErr(CODES.MEAL_ENTRY_SOURCE_INVALID, {
       statusCode: 400,

@@ -101,6 +101,13 @@ const viOverrides = {
   CARE_SCHEDULE_ENTRY_TIME_OUTSIDE_SHIFT: 'Thời gian {{scheduledTime}} phải nằm trong ca {{startTime}}-{{endTime}}',
   CARE_SCHEDULE_ENTRY_TIME_PAST: 'Thời gian lịch chăm sóc phải từ thời điểm hiện tại trở đi',
   CARE_SCHEDULE_ENTRY_SHIFT_ENDED: 'Không thể đăng dòng cho ca đã kết thúc',
+  CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS: 'Nhân viên có lịch khám trong khung giờ này ({{from}}–{{to}})',
+  CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE:
+    'Hai nhiệm vụ của cùng nhân viên phải cách nhau ít nhất {{minGapMinutes}} phút (trùng với {{conflictTime}})',
+  CARE_TASK_APPOINTMENT_BLOCKS: 'Nhân viên có lịch khám trong khung giờ này ({{from}}–{{to}})',
+  CARE_TASK_TIME_TOO_CLOSE:
+    'Hai nhiệm vụ của cùng nhân viên phải cách nhau ít nhất {{minGapMinutes}} phút (trùng với {{conflictTime}})',
+  DISH_IN_USE: 'Không thể xóa hoặc tạm ngưng món đã được lên lịch trong kế hoạch bữa ăn',
   CARE_SCHEDULE_ENTRY_RESIDENT_OUTSIDE_AREA: 'Cư dân không thuộc khu vực phụ trách của nhân viên',
   CARE_SCHEDULE_ENTRY_SOURCE_INVALID: 'entries[{{index}}].source phải thuộc một trong: {{allowed}}',
   CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID: 'entries[{{index}}].taskType phải thuộc một trong: {{allowed}}',
@@ -127,6 +134,9 @@ const viOverrides = {
   RESIDENT_CLOUDINARY_NOT_CONFIGURED: 'Cloudinary chưa được cấu hình',
   RESIDENT_PERSONAL_INFO_NO_FIELDS: 'Không có trường thông tin cá nhân hợp lệ để cập nhật',
   RESIDENT_FAMILY_INFO_NO_FIELDS: 'Không có trường thông tin gia đình hợp lệ để cập nhật',
+  SHIFT_COMPLETE_CONFIRMED_ONLY: 'Chỉ có thể hoàn thành ca ở trạng thái đã xác nhận (hiện tại: {{status}})',
+  SHIFT_COMPLETE_NOT_ENDED: 'Ca làm việc chưa kết thúc',
+  SHIFT_COMPLETE_WINDOW_CLOSED: 'Đã hết thời gian xác nhận hoàn thành ca (15 phút sau khi hết ca)',
   AUTH_ACCOUNT_ACTIVATED: 'Kích hoạt tài khoản thành công',
   AUTH_ACCOUNT_DEACTIVATED: 'Vô hiệu hóa tài khoản thành công',
   RESIDENT_HEALTH_SAVED: 'Đã lưu tình trạng sức khỏe ban đầu',
@@ -153,6 +163,7 @@ const viOverrides = {
   SHIFT_UPDATED: 'Cập nhật ca làm việc thành công',
   SHIFT_PUBLISHED: 'Đăng ca làm việc thành công',
   SHIFT_CONFIRMED: 'Xác nhận ca làm việc thành công',
+  SHIFT_COMPLETED: 'Xác nhận hoàn thành ca thành công',
   SHIFT_CANCELLED: 'Hủy ca làm việc thành công',
   SHIFT_DELETED: 'Xóa ca làm việc thành công',
 };

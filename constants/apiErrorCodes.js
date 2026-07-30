@@ -40,6 +40,8 @@ const CODES = {
   AUTH_ACCOUNT_BANNED: 'AUTH_ACCOUNT_BANNED',
   AUTH_ROLE_INVALID: 'AUTH_ROLE_INVALID',
   AUTH_CREATE_STAFF_REQUIRED: 'AUTH_CREATE_STAFF_REQUIRED',
+  AUTH_REGISTER_REQUIRED: 'AUTH_REGISTER_REQUIRED',
+  AUTH_REGISTER_CONTACT_REQUIRED: 'AUTH_REGISTER_CONTACT_REQUIRED',
   AUTH_PASSWORD_TOO_SHORT: 'AUTH_PASSWORD_TOO_SHORT',
   AUTH_EMAIL_IN_USE: 'AUTH_EMAIL_IN_USE',
   AUTH_PHONE_IN_USE: 'AUTH_PHONE_IN_USE',
@@ -102,6 +104,8 @@ const CODES = {
   CARE_TASK_RESIDENT_OUTSIDE_AREA: 'CARE_TASK_RESIDENT_OUTSIDE_AREA',
   CARE_TASK_STATUS_TRANSITION_INVALID: 'CARE_TASK_STATUS_TRANSITION_INVALID',
   CARE_TASK_DELETE_PENDING_ONLY: 'CARE_TASK_DELETE_PENDING_ONLY',
+  CARE_TASK_APPOINTMENT_BLOCKS: 'CARE_TASK_APPOINTMENT_BLOCKS',
+  CARE_TASK_TIME_TOO_CLOSE: 'CARE_TASK_TIME_TOO_CLOSE',
 
   // Leave
   LEAVE_NOT_FOUND: 'LEAVE_NOT_FOUND',
@@ -121,6 +125,10 @@ const CODES = {
   SHIFT_STAFF_PROFILE_NOT_FOUND: 'SHIFT_STAFF_PROFILE_NOT_FOUND',
   SHIFT_NO_CONFIRM_PERMISSION: 'SHIFT_NO_CONFIRM_PERMISSION',
   SHIFT_NO_VIEW_PERMISSION: 'SHIFT_NO_VIEW_PERMISSION',
+  SHIFT_CHECKIN_CONFIRMED_ONLY: 'SHIFT_CHECKIN_CONFIRMED_ONLY',
+  SHIFT_ALREADY_CHECKED_IN: 'SHIFT_ALREADY_CHECKED_IN',
+  SHIFT_NOT_CHECKED_IN: 'SHIFT_NOT_CHECKED_IN',
+  SHIFT_ALREADY_CHECKED_OUT: 'SHIFT_ALREADY_CHECKED_OUT',
   SHIFT_LEAVE_BLOCKS: 'SHIFT_LEAVE_BLOCKS',
   SHIFT_PAST_DATE: 'SHIFT_PAST_DATE',
   SHIFT_TIME_INVALID: 'SHIFT_TIME_INVALID',
@@ -144,6 +152,9 @@ const CODES = {
   SHIFT_PUBLISH_DRAFT_ONLY: 'SHIFT_PUBLISH_DRAFT_ONLY',
   SHIFT_PUBLISH_CONFLICT: 'SHIFT_PUBLISH_CONFLICT',
   SHIFT_CONFIRM_PUBLISHED_ONLY: 'SHIFT_CONFIRM_PUBLISHED_ONLY',
+  SHIFT_COMPLETE_CONFIRMED_ONLY: 'SHIFT_COMPLETE_CONFIRMED_ONLY',
+  SHIFT_COMPLETE_NOT_ENDED: 'SHIFT_COMPLETE_NOT_ENDED',
+  SHIFT_COMPLETE_WINDOW_CLOSED: 'SHIFT_COMPLETE_WINDOW_CLOSED',
   SHIFT_EDIT_STATUS_INVALID: 'SHIFT_EDIT_STATUS_INVALID',
   SHIFT_EDIT_TOO_LATE: 'SHIFT_EDIT_TOO_LATE',
   SHIFT_NO_CHANGES: 'SHIFT_NO_CHANGES',
@@ -218,6 +229,7 @@ const CODES = {
   DISH_INGREDIENTS_INVALID: 'DISH_INGREDIENTS_INVALID',
   DISH_NOT_FOUND: 'DISH_NOT_FOUND',
   DISH_INACTIVE: 'DISH_INACTIVE',
+  DISH_IN_USE: 'DISH_IN_USE',
 
   // Care schedules
   CARE_SCHEDULE_WORK_DATE_INVALID: 'CARE_SCHEDULE_WORK_DATE_INVALID',
@@ -245,6 +257,8 @@ const CODES = {
   CARE_SCHEDULE_ENTRY_SOURCE_INVALID: 'CARE_SCHEDULE_ENTRY_SOURCE_INVALID',
   CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID: 'CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID',
   CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID: 'CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID',
+  CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS: 'CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS',
+  CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE: 'CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE',
 
   // Resident (main)
   RESIDENT_ID_REQUIRED: 'RESIDENT_ID_REQUIRED',
@@ -284,6 +298,9 @@ const CODES = {
   RESIDENT_CLOUDINARY_NOT_CONFIGURED: 'RESIDENT_CLOUDINARY_NOT_CONFIGURED',
   RESIDENT_PERSONAL_INFO_NO_FIELDS: 'RESIDENT_PERSONAL_INFO_NO_FIELDS',
   RESIDENT_FAMILY_INFO_NO_FIELDS: 'RESIDENT_FAMILY_INFO_NO_FIELDS',
+  RESIDENT_LIST_TOO_MANY_ITEMS: 'RESIDENT_LIST_TOO_MANY_ITEMS',
+  RESIDENT_LIST_ITEM_LENGTH_INVALID: 'RESIDENT_LIST_ITEM_LENGTH_INVALID',
+  RESIDENT_HEALTH_CONDITION_TOO_LONG: 'RESIDENT_HEALTH_CONDITION_TOO_LONG',
 
   INTERNAL_ERROR: 'INTERNAL_ERROR',
 };
@@ -328,6 +345,8 @@ const ERROR_MESSAGES = {
   [CODES.AUTH_ACCOUNT_BANNED]: 'Account is banned',
   [CODES.AUTH_ROLE_INVALID]: 'Role must be one of: {{allowed}}',
   [CODES.AUTH_CREATE_STAFF_REQUIRED]: 'fullName, email, password and role are required',
+  [CODES.AUTH_REGISTER_REQUIRED]: 'fullName, email and password are required',
+  [CODES.AUTH_REGISTER_CONTACT_REQUIRED]: 'Provide exactly one of email or phone, not both or neither',
   [CODES.AUTH_PASSWORD_TOO_SHORT]: 'Password must be at least {{min}} characters',
   [CODES.AUTH_EMAIL_IN_USE]: 'Email is already in use',
   [CODES.AUTH_PHONE_IN_USE]: 'Phone number is already in use',
@@ -389,6 +408,9 @@ const ERROR_MESSAGES = {
   [CODES.CARE_TASK_RESIDENT_OUTSIDE_AREA]: 'Resident is outside staff assigned area',
   [CODES.CARE_TASK_STATUS_TRANSITION_INVALID]: 'Cannot change status from {{from}} to {{to}}',
   [CODES.CARE_TASK_DELETE_PENDING_ONLY]: 'Only pending tasks can be deleted',
+  [CODES.CARE_TASK_APPOINTMENT_BLOCKS]: 'Staff has a clinical appointment at this time ({{from}}–{{to}})',
+  [CODES.CARE_TASK_TIME_TOO_CLOSE]:
+    'Duties for the same staff must be at least {{minGapMinutes}} minutes apart (conflicts with {{conflictTime}})',
 
   [CODES.LEAVE_NOT_FOUND]: 'Leave request not found',
   [CODES.LEAVE_INVALID_STATUS]: 'Invalid leave request status',
@@ -406,6 +428,10 @@ const ERROR_MESSAGES = {
   [CODES.SHIFT_STAFF_PROFILE_NOT_FOUND]: 'Staff profile not found',
   [CODES.SHIFT_NO_CONFIRM_PERMISSION]: 'No permission to confirm this shift',
   [CODES.SHIFT_NO_VIEW_PERMISSION]: 'You do not have permission to view this shift',
+  [CODES.SHIFT_CHECKIN_CONFIRMED_ONLY]: 'Only confirmed shifts can be checked in (current: {{status}})',
+  [CODES.SHIFT_ALREADY_CHECKED_IN]: 'Already checked in to this shift',
+  [CODES.SHIFT_NOT_CHECKED_IN]: 'You must check in before checking out',
+  [CODES.SHIFT_ALREADY_CHECKED_OUT]: 'Already checked out of this shift',
   [CODES.SHIFT_LEAVE_BLOCKS]: 'Staff has approved leave and cannot be scheduled',
   [CODES.SHIFT_PAST_DATE]: 'Cannot create or assign shifts for a past date',
   [CODES.SHIFT_TIME_INVALID]:
@@ -432,6 +458,9 @@ const ERROR_MESSAGES = {
   [CODES.SHIFT_PUBLISH_DRAFT_ONLY]: 'Only draft shifts can be published (current: {{status}})',
   [CODES.SHIFT_PUBLISH_CONFLICT]: 'Cannot publish: blocking conflicts remain',
   [CODES.SHIFT_CONFIRM_PUBLISHED_ONLY]: 'Only published shifts can be confirmed (current: {{status}})',
+  [CODES.SHIFT_COMPLETE_CONFIRMED_ONLY]: 'Only confirmed shifts can be marked completed (current: {{status}})',
+  [CODES.SHIFT_COMPLETE_NOT_ENDED]: 'Shift has not ended yet',
+  [CODES.SHIFT_COMPLETE_WINDOW_CLOSED]: 'Completion window closed (15 minutes after shift end)',
   [CODES.SHIFT_EDIT_STATUS_INVALID]: "Cannot edit shift in status '{{status}}'",
   [CODES.SHIFT_EDIT_TOO_LATE]: 'Cannot edit shift less than 2 hours before start',
   [CODES.SHIFT_NO_CHANGES]: 'No changes detected',
@@ -510,6 +539,7 @@ const ERROR_MESSAGES = {
   [CODES.DISH_INGREDIENTS_INVALID]: 'Ingredients cannot contain special characters',
   [CODES.DISH_NOT_FOUND]: 'Dish not found',
   [CODES.DISH_INACTIVE]: 'Dish is inactive',
+  [CODES.DISH_IN_USE]: 'Cannot delete or deactivate a dish that is already scheduled in a meal plan',
 
   [CODES.CARE_SCHEDULE_WORK_DATE_INVALID]: 'workDate must be YYYY-MM-DD',
   [CODES.CARE_SCHEDULE_PAST_DATE]: 'Cannot create care schedule for a past date',
@@ -536,6 +566,10 @@ const ERROR_MESSAGES = {
   [CODES.CARE_SCHEDULE_ENTRY_SOURCE_INVALID]: 'entries[{{index}}].source must be one of: {{allowed}}',
   [CODES.CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID]: 'entries[{{index}}].taskType must be one of: {{allowed}}',
   [CODES.CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID]: 'entries[{{index}}].careLevel must be one of: {{allowed}}',
+  [CODES.CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS]:
+    'Staff has a clinical appointment at this time ({{from}}–{{to}})',
+  [CODES.CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE]:
+    'Duties for the same staff must be at least {{minGapMinutes}} minutes apart (conflicts with {{conflictTime}})',
 
   [CODES.RESIDENT_ID_REQUIRED]: 'residentId is required',
   [CODES.RESIDENT_ID_INVALID]: '{{label}} is invalid',
@@ -574,6 +608,9 @@ const ERROR_MESSAGES = {
   [CODES.RESIDENT_CLOUDINARY_NOT_CONFIGURED]: 'Cloudinary is not configured',
   [CODES.RESIDENT_PERSONAL_INFO_NO_FIELDS]: 'No valid personal info fields to update',
   [CODES.RESIDENT_FAMILY_INFO_NO_FIELDS]: 'No valid family info fields to update',
+  [CODES.RESIDENT_LIST_TOO_MANY_ITEMS]: '{{field}} cannot have more than {{max}} items',
+  [CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID]: '{{field}} items must be between {{min}} and {{max}} characters',
+  [CODES.RESIDENT_HEALTH_CONDITION_TOO_LONG]: 'initialHealthCondition must be at most {{max}} characters',
 
   [CODES.INTERNAL_ERROR]: 'An internal error occurred',
 };

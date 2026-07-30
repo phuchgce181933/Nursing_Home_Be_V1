@@ -83,9 +83,15 @@ const uploadRawBuffer = async (buffer, { folder, mimeType = 'application/octet-s
   const dataUri = `data:${mimeType};base64,${buffer.toString('base64')}`;
 
   try {
+    // Force 'raw' rather than 'auto': Cloudinary's auto-detection classifies PDF/ZIP
+    // buffers as its 'image' resource type (so it can render page thumbnails), and
+    // delivery of that resource type is blocked by default for unauthenticated PDF/ZIP
+    // access (a Cloudinary security policy) — the upload succeeds but the resulting
+    // fileUrl 401s for anyone who opens it. 'raw' stores the bytes as-is and is served
+    // as a plain download, which isn't subject to that restriction.
     const result = await cloudinary.uploader.upload(dataUri, {
       folder,
-      resource_type: 'auto',
+      resource_type: 'raw',
       ...options,
     });
     if (!result?.secure_url) {
@@ -98,10 +104,22 @@ const uploadRawBuffer = async (buffer, { folder, mimeType = 'application/octet-s
   }
 };
 
+const deleteAsset = async (publicId) => {
+  if (!publicId) return;
+  ensureCloudinaryEnv();
+  if (!isCloudinaryConfigured()) return;
+  try {
+    await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
+  } catch (err) {
+    console.error('[Cloudinary] delete failed:', err);
+  }
+};
+
 module.exports = {
   isCloudinaryConfigured,
   mapCloudinaryError,
   extractCloudinaryErrorMessage,
   uploadImageBuffer,
   uploadRawBuffer,
+  deleteAsset,
 };

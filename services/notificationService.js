@@ -1,5 +1,26 @@
 const notificationRepo = require('../repositories/notificationRepository');
 const User = require('../models/user');
+const { escapeRegex } = require('../utils/validators');
+const pushNotificationService = require('./pushNotificationService');
+
+// Single entry point for creating in-app notifications: persists them, then best-effort
+// pushes to each recipient's registered devices (respecting doNotDisturb/enabledCategories).
+// All notification-creation call sites should go through this rather than the repository
+// directly, so push delivery is never something an individual caller can forget to wire up.
+const createMany = async (notifications) => {
+  const created = await notificationRepo.insertMany(notifications);
+  await Promise.all(
+    created.map((n) =>
+      pushNotificationService.sendPushToUsers([n.recipientUserId], {
+        title: n.title,
+        body: n.content,
+        category: n.category,
+        data: { notificationId: String(n._id), targetEntityType: n.targetEntityType, targetEntityId: n.targetEntityId ? String(n.targetEntityId) : undefined },
+      })
+    )
+  );
+  return created;
+};
 
 const buildListFilter = (userId, queryOptions = {}) => {
   const { category, isRead, search } = queryOptions;
@@ -39,13 +60,13 @@ const updateSettingsForUser = async (userId, updates) => {
   return user.notificationSettings;
 };
 
-const markAsRead = async (id) => notificationRepo.markAsRead(id);
+const markAsRead = async (id, recipientUserId) => notificationRepo.markAsRead(id, recipientUserId);
 
-const markManyAsRead = async (ids) => notificationRepo.markManyAsRead(ids);
+const markManyAsRead = async (ids, recipientUserId) => notificationRepo.markManyAsRead(ids, recipientUserId);
 
-const deleteById = async (id) => notificationRepo.deleteById(id);
+const deleteById = async (id, recipientUserId) => notificationRepo.deleteById(id, recipientUserId);
 
-const deleteMany = async (ids) => notificationRepo.deleteMany(ids);
+const deleteMany = async (ids, recipientUserId) => notificationRepo.deleteMany(ids, recipientUserId);
 
 module.exports = {
   buildListFilter,

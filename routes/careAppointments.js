@@ -350,7 +350,7 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), attachStaffProfile, getAp
  *       409:
  *         description: Trùng lịch với appointment khác của resident
  */
-router.put('/:id', protect, authorize(...STAFF_ROLES), updateAppointment);
+router.put('/:id', protect, authorize(...STAFF_ROLES), attachStaffProfile, updateAppointment);
 
 /**
  * @swagger
@@ -374,7 +374,7 @@ router.put('/:id', protect, authorize(...STAFF_ROLES), updateAppointment);
  *       404:
  *         description: Appointment not found
  */
-router.delete('/:id', protect, authorize('admin', 'doctor'), deleteAppointment);
+router.delete('/:id', protect, authorize('admin', 'doctor'), attachStaffProfile, deleteAppointment);
 
 /**
  * @swagger
@@ -416,8 +416,8 @@ router.delete('/:id', protect, authorize('admin', 'doctor'), deleteAppointment);
  *       404:
  *         description: Appointment not found
  */
-router.put('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
-router.patch('/:id/status', protect, authorize(...STAFF_ROLES), updateStatus);
+router.put('/:id/status', protect, authorize(...STAFF_ROLES), attachStaffProfile, updateStatus);
+router.patch('/:id/status', protect, authorize(...STAFF_ROLES), attachStaffProfile, updateStatus);
 
 /**
  * @swagger

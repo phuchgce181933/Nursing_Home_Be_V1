@@ -1,6 +1,19 @@
 const mongoose = require('mongoose');
 const Resident = require('../models/resident');
 
+const ROOM_POPULATE = {
+  path: 'roomId',
+  select: 'roomNumber roomType floorId buildingId',
+  populate: [
+    {
+      path: 'floorId',
+      select: 'name floorNumber buildingId',
+      populate: { path: 'buildingId', select: 'code name' },
+    },
+    { path: 'buildingId', select: 'code name' },
+  ],
+};
+
 const findForAssignment = async ({
   floorId,
   floorIds,
@@ -41,8 +54,11 @@ const findForAssignment = async ({
   }
 
   return Resident.find(filter)
-    .select('residentCode fullName roomId residencyStatus dateOfBirth gender bloodType avatarUrl')
-    .populate({ path: 'roomId', select: 'roomNumber floorId roomType' })
+    .select(
+      'residentCode fullName roomId bedId residencyStatus dateOfBirth gender bloodType avatarUrl allergies drugAllergies chronicConditions'
+    )
+    .populate(ROOM_POPULATE)
+    .populate({ path: 'bedId', select: 'bedCode bedType status' })
     .sort({ fullName: 1 })
     .limit(Math.min(limit, 500))
     .lean();
@@ -210,19 +226,6 @@ const assertValidObjectId = (id, label = 'id') => {
     return false;
   }
   return true;
-};
-
-const ROOM_POPULATE = {
-  path: 'roomId',
-  select: 'roomNumber roomType floorId buildingId',
-  populate: [
-    {
-      path: 'floorId',
-      select: 'name floorNumber buildingId',
-      populate: { path: 'buildingId', select: 'code name' },
-    },
-    { path: 'buildingId', select: 'code name' },
-  ],
 };
 
 const resolveRoomIds = async ({ buildingId, floorId, roomId } = {}) => {

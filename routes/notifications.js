@@ -1,10 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { protect, authorize } = require('../middleware/auth');
+const { protect } = require('../middleware/auth');
 const notifCtrl = require('../controllers/notificationController');
+const pushTokenCtrl = require('../controllers/pushTokenController');
 
-// Shared notifications route for staff and family
-router.use(protect, authorize('admin', 'doctor', 'nurse', 'family'));
+// Generic notification inbox for any authenticated role (staff/doctor/nurse/caregiver/manager/
+// pharmacist/admin) — access control is per-user via recipientUserId scoping in the service
+// layer, not a role allowlist here, so a new role never needs this file updated to see its own
+// notifications. Family has its own scoped equivalent at /api/family/notifications.
+router.use(protect);
 
 /**
  * @swagger
@@ -187,5 +191,10 @@ router.post('/delete', async (req, res, next) => {
   req.params.id = 'bulk';
   return notifCtrl.deleteNotification(req, res, next);
 });
+
+// Expo push-token registration — any authenticated role, called once on app start/login
+// and again on logout so this device stops receiving pushes for that account.
+router.post('/push-token', pushTokenCtrl.registerPushToken);
+router.delete('/push-token', pushTokenCtrl.unregisterPushToken);
 
 module.exports = router;

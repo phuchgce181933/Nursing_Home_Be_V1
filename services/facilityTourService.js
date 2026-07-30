@@ -1,6 +1,24 @@
 const ServiceError = require('./serviceError');
 const tourRepo = require('../repositories/facilityTourRepository');
 const { createAuditLog } = require('../utils/auditLog');
+const { validateEmail } = require('../utils/validators');
+
+const MAX_TEXT_LENGTH = 500;
+const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
+  if (value && value.length > max) {
+    throw new ServiceError(`${fieldName} must be at most ${max} characters`, 400);
+  }
+};
+
+// Accepts "HH:MM - HH:MM" or "HH:MM-HH:MM"
+const parseSlotStart = (slot) => {
+  if (!slot) return null;
+  const [startPart] = String(slot).split('-').map((p) => p.trim());
+  if (!startPart) return null;
+  const [hour, minute] = startPart.split(':').map(Number);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
+  return { hour, minute };
+};
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -76,9 +94,19 @@ const scheduleTour = async (user, body, req) => {
 
   const phone = typeof contactPhone === 'string' ? contactPhone.trim() : '';
   if (!phone) throw new ServiceError('contactPhone is required', 400);
+  // Matches the admission-request page's phone format (Stage 1) so the two forms validate
+  // phone numbers identically instead of each having its own slightly different regex.
   if (!/^(0|\+84)(3|5|7|8|9)\d{8}$/.test(phone)) {
     throw new ServiceError('Số điện thoại không hợp lệ (di động 10 chữ số bắt đầu bằng 03, 05, 07, 08 hoặc 09).', 400);
   }
+
+  if (contactEmail) {
+    const emailError = validateEmail(contactEmail.trim());
+    if (emailError) throw new ServiceError(`contactEmail: ${emailError}`, 400);
+  }
+
+  assertMaxLength(name, 'contactName');
+  assertMaxLength(notes?.trim(), 'notes');
 
   if (!preferredDate) throw new ServiceError('preferredDate is required', 400);
   const parsedDate = new Date(preferredDate);
@@ -99,15 +127,12 @@ const scheduleTour = async (user, body, req) => {
   const todayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
   if (preferredDateStr === todayStr && preferredTimeSlot) {
-    const [startPart] = preferredTimeSlot.split(' - ');
-    if (startPart) {
-      const [startHour, startMinute] = startPart.split(':').map(Number);
-      if (!Number.isNaN(startHour) && !Number.isNaN(startMinute)) {
-        const curHour = vnNow.getUTCHours();
-        const curMin = vnNow.getUTCMinutes();
-        if (curHour > startHour || (curHour === startHour && curMin >= startMinute)) {
-          throw new ServiceError('The selected time slot for today has already passed', 400);
-        }
+    const slotStart = parseSlotStart(preferredTimeSlot);
+    if (slotStart) {
+      const curHour = vnNow.getUTCHours();
+      const curMin = vnNow.getUTCMinutes();
+      if (curHour > slotStart.hour || (curHour === slotStart.hour && curMin >= slotStart.minute)) {
+        throw new ServiceError('The selected time slot for today has already passed', 400);
       }
     }
   }
@@ -235,7 +260,8 @@ const cancelTour = async (user, tourId, body, req) => {
     );
   }
 
-  const cancellationReason = body?.cancellationReason?.trim() || body?.reason?.trim() || '';
+  const cancellationReason = body?.cancellationReason?.trim() || '';
+  assertMaxLength(cancellationReason, 'cancellationReason');
 
   const updated = await tourRepo.updateTour(tour._id, {
     status: 'cancelled',
@@ -340,7 +366,10 @@ const approveTour = async (admin, tourId, body, req) => {
     confirmedAt: new Date(),
   };
   if (body?.confirmedTimeSlot) updateData.confirmedTimeSlot = String(body.confirmedTimeSlot).trim();
-  if (body?.adminNotes) updateData.adminNotes = String(body.adminNotes).trim();
+  if (body?.adminNotes) {
+    assertMaxLength(String(body.adminNotes).trim(), 'adminNotes');
+    updateData.adminNotes = String(body.adminNotes).trim();
+  }
 
   const updated = await tourRepo.updateTour(tourId, updateData);
 
@@ -374,7 +403,10 @@ const completeTour = async (admin, tourId, body, req) => {
     status: 'completed',
     completedAt: new Date(),
   };
-  if (body?.adminNotes) updateData.adminNotes = String(body.adminNotes).trim();
+  if (body?.adminNotes) {
+    assertMaxLength(String(body.adminNotes).trim(), 'adminNotes');
+    updateData.adminNotes = String(body.adminNotes).trim();
+  }
 
   const updated = await tourRepo.updateTour(tourId, updateData);
 
@@ -404,10 +436,11 @@ const rejectTour = async (admin, tourId, body, req) => {
     );
   }
 
-  const rejectionReason = body?.rejectionReason?.trim() || body?.reason?.trim() || '';
+  const rejectionReason = body?.rejectionReason?.trim() || '';
   if (!rejectionReason) {
     throw new ServiceError('rejectionReason is required when rejecting a tour request', 400);
   }
+  assertMaxLength(rejectionReason, 'rejectionReason');
 
   const updated = await tourRepo.updateTour(tourId, {
     status: 'cancelled',

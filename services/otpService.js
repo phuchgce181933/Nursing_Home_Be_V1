@@ -10,6 +10,18 @@ function generateCode() {
 }
 
 const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {}, expiresMinutes = DEFAULT_EXPIRY_MINUTES }) => {
+  const now = new Date();
+  const existingPendingOtps = await Otp.find({
+    userId,
+    purpose,
+    used: false,
+    expiresAt: { $gt: now },
+  }).sort({ createdAt: -1 });
+
+  if (existingPendingOtps.length > 1) {
+    throw new ServiceError('Bạn đã gửi mã OTP quá 1 lần. Vui lòng nhập mã OTP hiện tại hoặc đợi 10 phút mã hết hạn trước khi yêu cầu lại.', 429);
+  }
+
   const code = generateCode();
   const expiresAt = new Date(Date.now() + expiresMinutes * 60 * 1000);
   
@@ -52,7 +64,7 @@ const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {},
 const verifyOtp = async ({ userId, otpId, code, purpose = 'wallet_payment' }) => {
   const otp = await Otp.findById(otpId);
   if (!otp) throw new ServiceError('OTP not found or expired', 400);
-  if (String(otp.userId) !== String(userId)) throw new ServiceError('OTP does not belong to user', 403);
+  if (userId && otp.userId && String(otp.userId) !== String(userId)) throw new ServiceError('OTP does not belong to user', 403);
   if (otp.purpose !== purpose) throw new ServiceError('OTP purpose mismatch', 400);
   if (otp.used) throw new ServiceError('OTP already used', 400);
   if (otp.attempts >= MAX_ATTEMPTS) throw new ServiceError('Too many attempts', 400);

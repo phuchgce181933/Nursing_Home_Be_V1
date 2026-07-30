@@ -3,8 +3,13 @@ const invoiceRepo = require('../repositories/invoiceRepository');
 const walletService = require('../services/walletService');
 const paymentService = require('../services/paymentService');
 
-const getChecksumKey = () =>
-  process.env.PAYOS_CHECKSUM_KEY || '2928b277a4b208bd9725946d9b5098013948863a43931e59ce5da5765dabccee';
+// No hardcoded fallback on purpose — see services/paymentService.js:getPayosCredentials for why.
+const getChecksumKey = () => {
+  if (!process.env.PAYOS_CHECKSUM_KEY) {
+    throw new Error('PAYOS_CHECKSUM_KEY is not configured');
+  }
+  return process.env.PAYOS_CHECKSUM_KEY;
+};
 
 // PayOS webhook signature: HMAC-SHA256 over sorted key=value pairs of the data object
 const verifyWebhookSignature = (data, signature) => {
@@ -56,10 +61,14 @@ const handleWebhook = async (req, res, next) => {
       } catch (err) {
         console.warn('[PayOS Webhook] Could not confirm topup:', err.message);
       }
-    } else {
-      // Invoice payment — try to match via orderCode or invoiceId embedded in description
-      // invoiceId is not in the data object, but we log for debugging
-      console.log('[PayOS Webhook] Invoice payment received — orderCode:', data.orderCode, 'amount:', amount);
+    } else if (data.orderCode) {
+      // Invoice payment — match against the orderCode we persisted when the checkout was created.
+      try {
+        const paidInvoices = await paymentService.confirmInvoicesByOrderCode(data.orderCode);
+        console.log('[PayOS Webhook] Invoices confirmed paid via orderCode:', data.orderCode, paidInvoices.length);
+      } catch (err) {
+        console.warn('[PayOS Webhook] Could not confirm invoice by orderCode:', err.message);
+      }
     }
 
     return res.status(200).json({ success: true });
@@ -72,39 +81,48 @@ const handleWebhook = async (req, res, next) => {
 
 const handleReturn = async (req, res, next) => {
   try {
-    const { invoiceId, status } = req.query;
+    const { invoiceId } = req.query;
+    // The return-URL query string is set by the user's browser redirect and is not signed —
+    // it must never be trusted on its own. Always re-verify the real status with PayOS
+    // (server-to-server) before crediting a wallet or marking an invoice paid.
+    let verifiedPaid = false;
 
-    if (invoiceId && String(invoiceId).startsWith('topup_') && status === 'PAID') {
+    if (invoiceId && String(invoiceId).startsWith('topup_')) {
       try {
         const parts = String(invoiceId).split('_');
         const userId = parts[1];
-        await walletService.confirmTopup(userId, String(invoiceId), String(invoiceId));
-        console.log('[PayOS Return] Topup confirmed via return URL:', invoiceId);
+        const result = await walletService.verifyAndConfirmTopup(userId, String(invoiceId));
+        verifiedPaid = result.status === 'PAID';
+        console.log('[PayOS Return] Topup verification result:', invoiceId, result.status);
       } catch (err) {
-        console.warn('[PayOS Return] Unable to confirm wallet topup:', err.message);
+        console.warn('[PayOS Return] Unable to verify wallet topup:', err.message);
       }
-    } else if (status === 'PAID' && invoiceId && !String(invoiceId).startsWith('topup_')) {
+    } else if (invoiceId) {
       try {
         // Handle batch invoiceIds (comma-separated)
-        const invoiceIds = String(invoiceId).includes(',') 
+        const invoiceIds = String(invoiceId).includes(',')
           ? String(invoiceId).split(',').map(id => id.trim())
           : [String(invoiceId)];
-        
-        for (const id of invoiceIds) {
+
+        const results = await Promise.all(invoiceIds.map(async (id) => {
           try {
-            await paymentService.markInvoiceAsPaid(id);
-            console.log('[PayOS Return] Invoice marked paid:', id);
+            const result = await paymentService.verifyAndMarkInvoicePaid(id);
+            console.log('[PayOS Return] Invoice verification result:', id, result.status);
+            return result.status === 'PAID';
           } catch (err) {
-            console.warn('[PayOS Return] Unable to mark invoice paid:', id, err.message || err);
+            console.warn('[PayOS Return] Unable to verify invoice:', id, err.message || err);
+            return false;
           }
-        }
+        }));
+        verifiedPaid = results.length > 0 && results.every(Boolean);
       } catch (err) {
         console.warn('[PayOS Return] Unable to process invoices:', err.message || err);
       }
     }
 
-    // Return a user-friendly page instead of redirecting to web admin
-    const paymentStatus = status === 'PAID' ? 'thành công' : 'không thành công';
+    // The page only reflects what was actually verified with PayOS, never the raw query string.
+    const status = verifiedPaid ? 'PAID' : 'PENDING';
+    const paymentStatus = verifiedPaid ? 'thành công' : 'đang được xử lý hoặc chưa xác nhận';
     return res.status(200).send(`
       <!DOCTYPE html>
       <html lang="vi">

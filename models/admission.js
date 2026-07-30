@@ -78,6 +78,9 @@ const admissionSchema = new Schema(
     contractDurationMonths: { type: Number, min: 1 },
     contractDiscountPercent: { type: Number, min: 0, max: 100 },
     contractTerms: { type: String, trim: true },
+    contractStatus: { type: String, enum: ['active', 'cancelled'] },
+    contractCancelledAt: { type: Date },
+    contractCancellationReason: { type: String, trim: true },
 
     // UC-6.26: Check-in
     assignedBedId: { type: Types.ObjectId, ref: 'Bed' },

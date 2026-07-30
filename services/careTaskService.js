@@ -25,6 +25,10 @@ const {
   getShiftEndDateTime,
   isShiftEnded,
 } = require('../utils/shiftTime');
+const {
+  assertNoClinicalAppointmentAtTime,
+  assertStaffDutyMinGap,
+} = require('../utils/careTaskAssignmentValidation');
 const { getTaskTypeOptions, getCareLevelOptions } = require('../utils/careTaskLabels');
 
 const AUTO_MISSED_NOTE = 'Tự động bỏ lỡ: đã hết ca làm việc.';
@@ -291,7 +295,7 @@ const assignCareTask = async (body, actorUserId) => {
   if (!scheduledTimeTrimmed || toMinutes(scheduledTimeTrimmed) === null) {
     throw apiErr(CODES.FIELD_INVALID_FORMAT, {
       statusCode: 400,
-      params: { field: 'scheduledTime', format: 'HH:mm' },
+      params: { field: 'Giờ dự kiến', format: 'HH:mm' },
     });
   }
 
@@ -319,6 +323,45 @@ const assignCareTask = async (body, actorUserId) => {
     throw apiErr(CODES.CARE_TASK_SHIFT_ENDED, { statusCode: 400 });
   }
 
+  // Kiểm tra trùng lịch với Cuộc hẹn khám (CareAppointment) cùng ngày
+  const CareAppointment = require('../models/careAppointment');
+  const taskStart = new Date(`${workDateStr}T${scheduledTimeTrimmed}:00+07:00`);
+  const taskEnd = new Date(taskStart.getTime() + 15 * 60 * 1000);
+
+  const apptConflict = await CareAppointment.findOne({
+    $or: [{ doctorStaffId: staffProfileId }, { nurseStaffId: staffProfileId }],
+    status: { $ne: 'cancelled' },
+    scheduledStartAt: { $lt: taskEnd },
+    scheduledEndAt: { $gt: taskStart },
+  }).populate('residentId', 'fullName');
+
+  if (apptConflict) {
+    const residentName = apptConflict.residentId?.fullName || 'cư dân';
+    const apptStartStr = new Date(apptConflict.scheduledStartAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+    const apptEndStr = new Date(apptConflict.scheduledEndAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+    throw apiErr('CARE_TASK_CONFLICT', {
+      statusCode: 409,
+      message: `Nhân viên đã bị đụng lịch với cuộc hẹn khám của ${residentName} trong khung giờ ${apptStartStr} – ${apptEndStr} cùng ngày.`,
+    });
+  }
+
+  // Kiểm tra trùng lịch với Nhiệm vụ chăm sóc khác cùng thời gian
+  const CareTask = require('../models/careTask');
+  const existingTask = await CareTask.findOne({
+    staffProfileId,
+    workDate: { $gte: new Date(workDateStr + 'T00:00:00+07:00'), $lte: new Date(workDateStr + 'T23:59:59+07:00') },
+    scheduledTime: scheduledTimeTrimmed,
+    status: { $in: ['pending', 'in_progress'] },
+  }).populate('residentId', 'fullName');
+
+  if (existingTask) {
+    const residentName = existingTask.residentId?.fullName || 'cư dân khác';
+    throw apiErr('CARE_TASK_CONFLICT', {
+      statusCode: 409,
+      message: `Nhân viên đã được phân công nhiệm vụ chăm sóc cho ${residentName} vào lúc ${scheduledTimeTrimmed} cùng ngày.`,
+    });
+  }
+
   let effectiveAt;
   try {
     effectiveAt = buildTaskDateTime(workDateStr, scheduledTimeTrimmed);
@@ -331,6 +374,9 @@ const assignCareTask = async (body, actorUserId) => {
   if (effectiveAt < nowVN()) {
     throw apiErr(CODES.CARE_TASK_TIME_PAST, { statusCode: 400 });
   }
+
+  await assertNoClinicalAppointmentAtTime(staffProfileId, assigneeRole, effectiveAt);
+  await assertStaffDutyMinGap(staffProfileId, workDateObj, scheduledTimeTrimmed);
 
   const resolvedShiftId = shiftMatch._id;
 

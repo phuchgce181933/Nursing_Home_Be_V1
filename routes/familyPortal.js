@@ -25,6 +25,7 @@ const {
   downloadReport,
 } = require('../controllers/familyPortalController');
 const { initiateWalletPayment, verifyWalletPayment } = require('../controllers/familyPaymentController');
+const { listPhotosForFamily } = require('../controllers/residentPhotoController');
 const { protect, authorize } = require('../middleware/auth');
 
 // Public checkout endpoints (no auth required - use checksum verification instead)
@@ -284,6 +285,28 @@ router.post('/wallet/payments/verify', verifyWalletPayment);
  *         description: Access denied
  */
 router.get('/residents/:residentId/vitals', getVitals);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/photos:
+ *   get:
+ *     summary: List photos uploaded by caregivers for a resident
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Photo list
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/photos', listPhotosForFamily);
 
 /**
  * @swagger

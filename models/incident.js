@@ -7,6 +7,7 @@ const fileAttachmentSchema = new Schema(
   {
     fileName: { type: String, trim: true },
     fileUrl: { type: String, trim: true },
+    cloudinaryPublicId: { type: String, trim: true },
     mimeType: { type: String, trim: true },
     sizeInBytes: { type: Number, min: 0 },
     uploadedAt: { type: Date, default: Date.now },
@@ -35,7 +36,6 @@ const incidentSchema = new Schema(
     notifiedFamilyIds: [{ type: Types.ObjectId, ref: 'User' }],
     attachments: [fileAttachmentSchema],
     resolution: {
-      status: { type: String, trim: true },
       method: { type: String, trim: true },
       rootCause: { type: String, trim: true },
       detailedCause: { type: String, trim: true },
@@ -52,7 +52,8 @@ const incidentSchema = new Schema(
         residentCondition: { type: String, trim: true },
         needFollowUp: { type: Boolean },
       },
-      result: { type: String, trim: true },
+      severityAssessment: { type: String, trim: true },
+      escalationRequested: { type: Boolean, default: false },
       notes: { type: String, trim: true },
       completedAt: { type: Date },
       resolvedByUserId: { type: Types.ObjectId, ref: 'User' },

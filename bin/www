@@ -14,18 +14,57 @@ const server = http.createServer(app);
 // Initialize Socket.IO for real-time notifications
 try {
   const { Server } = require('socket.io');
+  const jwt = require('jsonwebtoken');
+  const User = require('../models/user');
+  const Conversation = require('../models/conversation');
+
   const io = new Server(server, {
     cors: {
-      origin: ['http://localhost:5173', 'http://localhost:3000'],
+      // Reflect any origin: web dev servers, LAN IPs for Expo/React Native testing, etc.
+      // Real access control happens via the JWT check in io.use() below, not CORS.
+      origin: true,
       methods: ['GET', 'POST'],
       credentials: true,
     },
   });
   app.set('io', io);
+
+  // Authenticate every socket connection with the same JWT used for REST auth.
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token;
+      if (!token) return next(new Error('Not authenticated'));
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await User.findById(decoded.id).select('_id role isActive isBanned');
+      if (!user || !user.isActive || user.isBanned) return next(new Error('Not authenticated'));
+      socket.user = user;
+      next();
+    } catch (e) {
+      next(new Error('Not authenticated'));
+    }
+  });
+
   io.on('connection', (socket) => {
-    // clients can join conversation rooms
-    socket.on('join', (room) => {
-      try { socket.join(room); } catch (e) {}
+    // clients can join conversation rooms, gated by actual membership/role
+    socket.on('join', async (room) => {
+      try {
+        if (typeof room !== 'string') return;
+        if (room === 'role:admin') {
+          if (socket.user.role === 'admin') socket.join(room);
+          return;
+        }
+        if (room.startsWith('conversation:')) {
+          const conversationId = room.slice('conversation:'.length);
+          if (socket.user.role === 'admin') return socket.join(room);
+          const isMember = await Conversation.exists({
+            _id: conversationId,
+            $or: [{ familyAccountId: socket.user._id }, { participantUserIds: socket.user._id }],
+          });
+          if (isMember) socket.join(room);
+          return;
+        }
+        // unknown room pattern — ignore rather than allow blindly
+      } catch (e) {}
     });
     socket.on('leave', (room) => {
       try { socket.leave(room); } catch (e) {}

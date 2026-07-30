@@ -53,7 +53,7 @@ const validateDateOfBirth = (dob) => {
 const STAFF_DOB_GENDERS = ['male', 'female'];
 
 const validateStaffDateOfBirth = (dob, { gender } = {}) => {
-  if (!dob) return null;
+  if (!dob) return 'dateOfBirth is required';
   const d = new Date(dob);
   if (isNaN(d.getTime())) return 'dateOfBirth is not a valid date';
   if (d > new Date()) return 'dateOfBirth cannot be in the future';
@@ -76,6 +76,46 @@ const collectErrors = (checks) => {
   return errors.length ? errors.join('; ') : null;
 };
 
+// Escapes regex metacharacters so user-supplied search text is safe to embed in `new RegExp()`.
+const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const ROLES_REQUIRING_CERT = ['doctor', 'nurse'];
+const CERTIFICATE_MAX_AGE_YEARS = 5;
+
+const validateStaffCertifications = (role, certificationDocuments) => {
+  if (!ROLES_REQUIRING_CERT.includes(role)) return null;
+
+  const docs = Array.isArray(certificationDocuments) ? certificationDocuments : [];
+  if (docs.length === 0) {
+    return 'at least one certification document is required for doctor/nurse';
+  }
+
+  const now = new Date();
+  now.setHours(23, 59, 59, 999);
+
+  const minDate = new Date();
+  minDate.setFullYear(minDate.getFullYear() - CERTIFICATE_MAX_AGE_YEARS);
+  minDate.setHours(0, 0, 0, 0);
+
+  for (const doc of docs) {
+    if (!doc?.issueDate) {
+      return 'each certification must have an issue date';
+    }
+    const d = new Date(doc.issueDate);
+    if (Number.isNaN(d.getTime())) {
+      return 'certification issue date is not a valid date';
+    }
+    if (d > now) {
+      return 'certification issue date cannot be in the future';
+    }
+    if (d < minDate) {
+      return `certification has expired (older than ${CERTIFICATE_MAX_AGE_YEARS} years)`;
+    }
+  }
+
+  return null;
+};
+
 module.exports = {
   validateFullName,
   validateEmail,
@@ -84,5 +124,9 @@ module.exports = {
   validatePassword,
   validateDateOfBirth,
   validateStaffDateOfBirth,
+  validateStaffCertifications,
   collectErrors,
+  escapeRegex,
+  ROLES_REQUIRING_CERT,
+  CERTIFICATE_MAX_AGE_YEARS,
 };

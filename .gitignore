@@ -44,7 +44,10 @@ config/firebase-service-account.json
 docs/sequence/
 docs/class diagram/
 docs/Specification/
-
+docs/test report/
+docs/unit test/
+docs/integration test/
+docs/userguide/
 
 # Postman collections (local test data only)
 *.postman_collection.json

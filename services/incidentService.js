@@ -130,7 +130,7 @@ const validateStatus = (status) => {
 const getStatusLabel = (status) => {
   const labels = {
     open: 'mở',
-    investigating: 'đang điều tra',
+    investigating: 'đang xác minh',
     resolved: 'đã giải quyết',
     closed: 'đã đóng',
   };
@@ -531,7 +531,9 @@ const sendNotifications = async (incident, recipients, options = {}) => {
   ]);
 };
 
-const notifyIncident = async (incident, options) => {
+const notifyIncident = async (incident, options = {}) => {
+  const shouldNotifyAdmin = options.notifyAdmin === true;
+
   // Extract resident IDs - handle both ObjectId and populated Resident objects
   const extractResidentId = (item) => {
     if (!item) return null;
@@ -576,6 +578,26 @@ const notifyIncident = async (incident, options) => {
     .lean();
 
   await sendNotifications(incident, recipientDocs, options);
+
+  if (shouldNotifyAdmin) {
+    const adminUsers = await User.find({ role: 'admin', isActive: true, isBanned: false })
+      .select('fullName email phone role')
+      .lean();
+
+    if (adminUsers.length) {
+      const adminNotificationDocs = adminUsers.map((recipient) => ({
+        recipientUserId: recipient._id,
+        category: 'incident',
+        title: 'Yêu cầu chỉ định người xử lý',
+        content: `Nhân viên ${incident.reporterName || 'đã'} vừa đề cập một sự cố ${incident.incidentType || 'mới'}${incident.residentId ? ' cho bệnh nhân liên quan' : ''}. Vui lòng chỉ định người xử lý.`,
+        targetEntityType: 'Incident',
+        targetEntityId: incident._id,
+        deliveryChannels: ['in_app'],
+      }));
+
+      await notificationRepo.insertMany(adminNotificationDocs);
+    }
+  }
 
   if (familyUsers.length) {
     await incidentRepo.updateById(incident._id, {
@@ -727,6 +749,7 @@ const createIncident = async (currentUser, payload) => {
       content: `Sự cố ${createdIncident.incidentType} đã được ghi nhận cho bệnh nhân: ${allResidentNames}.`,
       emailSubject: `Báo cáo sự cố mới: ${createdIncident.incidentType}`,
       smsMessage: `Báo cáo sự cố mới: ${createdIncident.incidentType} cho bệnh nhân ${allResidentNames}. Nhân viên xử lý: ${assignedStaffNames}. Vui lòng kiểm tra hệ thống.`,
+      notifyAdmin: ['doctor', 'nurse', 'caregiver'].includes(String(currentUser.role || '').toLowerCase()),
     });
 
     console.log('[DEBUG] === END createIncident - SUCCESS ===');
@@ -960,7 +983,6 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
       smsMessage: `Sự cố ${updated.incidentType} đã được giải quyết.`,
     });
   }
-
   return updated;
 };
 

@@ -3,6 +3,7 @@ const ServiceError = require('./serviceError');
 const activityRepo = require('../repositories/activityRepository');
 const notificationService = require('./notificationService');
 const Resident = require('../models/resident');
+const User = require('../models/user');
 const { ACTIVITY_STATUSES } = require('../models/enums');
 const { calculateDurationMinutes } = require('../utils/activityDuration');
 
@@ -251,6 +252,13 @@ const syncActivityStatusIfNeeded = async (activity, now = new Date()) => {
 
   if (nextStatus !== currentStatus) {
     const updated = await activityRepo.findByIdAndUpdate(activity._id, { status: nextStatus });
+    if (updated) {
+      await sendActivityNotifications(
+        updated,
+        'status_update',
+        `Trạng thái hoạt động đã được cập nhật thành ${getActivityStatusLabel(nextStatus)}.`,
+      );
+    }
     return updated || activity;
   }
 
@@ -270,30 +278,128 @@ const getParticipantFamilyUserIds = async (residentIds = []) => {
   return [...userIds];
 };
 
-const sendActivityNotifications = async (activity, action, message, extraResidentIds = []) => {
+const getAdminUserIds = async () => {
+  const admins = await User.find({ role: 'admin', isActive: true, isBanned: false }).select('_id').lean();
+  return admins.map((user) => user._id.toString());
+};
+
+const getActivityStatusLabel = (status) => {
+  switch (status) {
+    case 'scheduled': return 'đã lên lịch';
+    case 'ongoing': return 'đang diễn ra';
+    case 'completed': return 'đã hoàn thành';
+    case 'cancelled': return 'đã bị hủy';
+    case 'draft': return 'bản nháp';
+    default: return status || 'cập nhật';
+  }
+};
+
+const buildActivityChangeSummary = (previousActivity, currentActivity) => {
+  const previousStatus = String(previousActivity?.status || '').trim().toLowerCase();
+  const currentStatus = String(currentActivity?.status || '').trim().toLowerCase();
+  const previousParticipants = (previousActivity?.participantResidentIds || []).map((id) => String(id));
+  const currentParticipants = (currentActivity?.participantResidentIds || []).map((id) => String(id));
+
+  const changes = [];
+
+  if (previousStatus !== currentStatus) {
+    changes.push(`trạng thái đổi từ ${getActivityStatusLabel(previousStatus)} sang ${getActivityStatusLabel(currentStatus)}`);
+  }
+
+  const addedParticipants = currentParticipants.filter((id) => !previousParticipants.includes(id));
+  const removedParticipants = previousParticipants.filter((id) => !currentParticipants.includes(id));
+  if (addedParticipants.length || removedParticipants.length) {
+    const participantChanges = [];
+    if (addedParticipants.length) participantChanges.push(`thêm ${addedParticipants.length} người tham gia`);
+    if (removedParticipants.length) participantChanges.push(`bớt ${removedParticipants.length} người tham gia`);
+    changes.push(participantChanges.join(' và '));
+  }
+
+  return {
+    hasChanges: changes.length > 0,
+    changes,
+  };
+};
+
+const buildActivityNotificationPayload = (activity, action, message, isAdminRecipient = false, previousActivity = null) => {
+  const status = String(activity?.status || '').trim().toLowerCase();
+  const statusLabel = getActivityStatusLabel(status);
+  const changeSummary = buildActivityChangeSummary(previousActivity, activity);
+  const detailSuffix = changeSummary.hasChanges
+    ? ` Cập nhật: ${changeSummary.changes.join(' và ')}.`
+    : '';
+
+  if (status === 'completed') {
+    return {
+      title: isAdminRecipient ? `Hoạt động ${statusLabel}: ${activity.title}` : `Hoạt động đã hoàn thành: ${activity.title}`,
+      content: (isAdminRecipient
+        ? `Admin vừa đánh dấu hoạt động "${activity.title}" là ${statusLabel}.`
+        : message || `Hoạt động "${activity.title}" đã hoàn thành.`) + detailSuffix,
+    };
+  }
+
+  if (status === 'cancelled') {
+    return {
+      title: isAdminRecipient ? `Hoạt động ${statusLabel}: ${activity.title}` : `Hoạt động đã bị hủy: ${activity.title}`,
+      content: (isAdminRecipient
+        ? `Admin vừa đánh dấu hoạt động "${activity.title}" là ${statusLabel}.`
+        : message || `Hoạt động "${activity.title}" đã bị hủy.`) + detailSuffix,
+    };
+  }
+
+  if (status === 'ongoing') {
+    return {
+      title: isAdminRecipient ? `Hoạt động ${statusLabel}: ${activity.title}` : `Hoạt động đang diễn ra: ${activity.title}`,
+      content: (isAdminRecipient
+        ? `Admin vừa cập nhật hoạt động "${activity.title}" sang trạng thái ${statusLabel}.`
+        : message || `Hoạt động "${activity.title}" đang diễn ra.`) + detailSuffix,
+    };
+  }
+
+  if (status === 'scheduled') {
+    const title = isAdminRecipient
+      ? `Hoạt động ${statusLabel}: ${activity.title}`
+      : (action === 'updated'
+        ? `Hoạt động đã được cập nhật: ${activity.title}`
+        : action === 'registration'
+          ? `Đăng ký hoạt động: ${activity.title}`
+          : `Hoạt động mới: ${activity.title}`);
+
+    const baseContent = isAdminRecipient
+      ? `Admin vừa ${action === 'updated' ? 'cập nhật' : action === 'registration' ? 'đăng ký' : 'tạo'} hoạt động "${activity.title}".`
+      : message || `Hoạt động "${activity.title}" đã được lên lịch.`;
+
+    return { title, content: `${baseContent}${detailSuffix}`.trim() };
+  }
+
+  return {
+    title: isAdminRecipient ? `Hoạt động ${statusLabel}: ${activity.title}` : `${activity.title}`,
+    content: `${message || `Hoạt động "${activity.title}" có trạng thái ${statusLabel}.`}${detailSuffix}`.trim(),
+  };
+};
+
+const sendActivityNotifications = async (activity, action, message, extraResidentIds = [], previousActivity = null) => {
   const residentIds = [...new Set([...(Array.isArray(activity.participantResidentIds) ? activity.participantResidentIds : []), ...extraResidentIds.map((id) => new mongoose.Types.ObjectId(id))].map((id) => id.toString()))].map((id) => new mongoose.Types.ObjectId(id));
   const recipientUserIds = await getParticipantFamilyUserIds(residentIds);
-  if (!recipientUserIds.length) return;
+  const adminUserIds = await getAdminUserIds();
+  const uniqueRecipientUserIds = [...new Set([...recipientUserIds, ...adminUserIds])];
+  if (!uniqueRecipientUserIds.length) return;
 
-  const notifications = recipientUserIds.map((recipientUserId) => ({
-    recipientUserId,
-    category: 'activity',
-    title: (() => {
-      switch (action) {
-        case 'scheduled': return `Hoạt động mới: ${activity.title}`;
-        case 'updated': return `Hoạt động đã được cập nhật: ${activity.title}`;
-        case 'cancelled': return `Hoạt động đã bị hủy: ${activity.title}`;
-        case 'registration': return `Đăng ký hoạt động: ${activity.title}`;
-        case 'completed': return `Hoạt động hoàn thành: ${activity.title}`;
-        default: return `${activity.title}`;
-      }
-    })(),
-    content: message,
-    targetEntityType: 'Activity',
-    targetEntityId: activity._id,
-    deliveryChannels: ['in_app'],
-    sentAt: new Date(),
-  }));
+  const notifications = uniqueRecipientUserIds.map((recipientUserId) => {
+    const isAdminRecipient = adminUserIds.includes(recipientUserId);
+    const payload = buildActivityNotificationPayload(activity, action, message, isAdminRecipient, previousActivity);
+
+    return {
+      recipientUserId,
+      category: 'activity',
+      title: payload.title,
+      content: payload.content,
+      targetEntityType: 'Activity',
+      targetEntityId: activity._id,
+      deliveryChannels: ['in_app'],
+      sentAt: new Date(),
+    };
+  });
 
   await notificationService.createMany(notifications);
 };
@@ -434,7 +540,6 @@ const createActivity = async (body) => {
         `Hoạt động mới: ${activity.title} đã được lên lịch vào ${activity.scheduledAt.toLocaleString('vi-VN')}${activity.location ? ` tại ${activity.location}` : ''}.`,
       );
     }
-
     return { message: 'Activities created for each day', createdCount: createdActivities.length, data: createdActivities };
   }
 
@@ -569,6 +674,7 @@ const updateActivity = async (activityId, body) => {
   }
   if (body.participantResidentIds !== undefined) update.participantResidentIds = normalizeObjectIds(body.participantResidentIds);
 
+  const previousActivity = await activityRepo.findById(activityId);
   const updated = await activityRepo.findByIdAndUpdate(activityId, update);
   if (!updated) throw new ServiceError('Activity not found', 404);
 
@@ -576,6 +682,8 @@ const updateActivity = async (activityId, body) => {
     updated,
     'updated',
     `Hoạt động đã được cập nhật.`,
+    [],
+    previousActivity,
   );
 
   return updated;
@@ -897,6 +1005,7 @@ const getActivityStatisticsById = async (activityId) => {
 };
 
 module.exports = {
+  buildActivityNotificationPayload,
   createActivity,
   listActivities,
   getActivityById,

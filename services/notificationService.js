@@ -1,15 +1,28 @@
 const notificationRepo = require('../repositories/notificationRepository');
 const User = require('../models/user');
 
-const listForUser = async (userId, queryOptions = {}) => {
-  const { page = 1, limit = 20, category, isRead, search } = queryOptions;
-  const filter = {};
+const buildListFilter = (userId, queryOptions = {}) => {
+  const { category, isRead, search } = queryOptions;
+  const filter = { recipientUserId: userId, isDeleted: false };
   if (category) filter.category = category;
   if (typeof isRead !== 'undefined') filter.isRead = isRead === 'true' || isRead === true;
   if (search) filter.$or = [
     { title: { $regex: search, $options: 'i' } },
     { content: { $regex: search, $options: 'i' } },
   ];
+  return filter;
+};
+
+const buildSoftDeleteUpdate = () => ({
+  $set: {
+    isDeleted: true,
+    deletedAt: new Date(),
+  },
+});
+
+const listForUser = async (userId, queryOptions = {}) => {
+  const { page = 1, limit = 20 } = queryOptions;
+  const filter = buildListFilter(userId, queryOptions);
   return notificationRepo.findByRecipient(userId, filter, { page: parseInt(page, 10), limit: parseInt(limit, 10) });
 };
 
@@ -35,6 +48,8 @@ const deleteById = async (id) => notificationRepo.deleteById(id);
 const deleteMany = async (ids) => notificationRepo.deleteMany(ids);
 
 module.exports = {
+  buildListFilter,
+  buildSoftDeleteUpdate,
   listForUser,
   getSettingsForUser,
   updateSettingsForUser,

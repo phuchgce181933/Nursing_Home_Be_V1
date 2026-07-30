@@ -1,4 +1,6 @@
 const consultationRequestRepo = require('../repositories/consultationRequestRepository');
+const notificationRepo = require('../repositories/notificationRepository');
+const User = require('../models/user');
 const ServiceError = require('./serviceError');
 const { CONSULTATION_REQUEST_STATUSES } = require('../models/enums');
 const mongoose = require('mongoose');
@@ -31,6 +33,24 @@ const isValidStatusTransition = (currentStatus, nextStatus) => {
   const currentIndex = statusOrder.indexOf(currentStatus);
   const nextIndex = statusOrder.indexOf(nextStatus);
   return currentIndex !== -1 && nextIndex !== -1 && nextIndex >= currentIndex;
+};
+
+const notifyAdminsOfNewConsultationRequest = async (request) => {
+  const adminUsers = await User.find({ role: 'admin', isActive: true, isBanned: false }).select('_id').lean();
+  if (!adminUsers.length) return;
+
+  const notifications = adminUsers.map((recipient) => ({
+    recipientUserId: recipient._id,
+    category: 'system',
+    title: 'Yêu cầu tư vấn mới',
+    content: `Có yêu cầu tư vấn mới từ ${request.fullName || 'khách hàng'}${request.serviceInterest ? `. Nội dung: ${request.serviceInterest}` : ''}.`,
+    targetEntityType: 'ConsultationRequest',
+    targetEntityId: request._id,
+    deliveryChannels: ['in_app'],
+    sentAt: new Date(),
+  }));
+
+  await notificationRepo.insertMany(notifications);
 };
 
 const submitConsultationRequest = async (body, req) => {
@@ -88,6 +108,8 @@ const submitConsultationRequest = async (body, req) => {
     message: message || undefined,
     status: 'open',
   });
+
+  await notifyAdminsOfNewConsultationRequest(request);
 
   return { message: 'Consultation request submitted successfully', request: formatRequest(request) };
 };

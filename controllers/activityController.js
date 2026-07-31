@@ -5,7 +5,14 @@ const createActivity = async (req, res) => {
     const result = await activityService.createActivity(req.body);
     res.status(201).json(result);
   } catch (err) {
-    res.status(err.statusCode || 500).json({ message: err.message });
+    // Surface extra context in dev so 500s aren't silent "Request body is required" placeholders.
+    console.error('[createActivity] body=%j', req.body);
+    console.error('[createActivity] err=%s', err.stack || err);
+    const payload = { message: err.message };
+    if (process.env.NODE_ENV !== 'production') {
+      payload.stack = err.stack;
+    }
+    res.status(err.statusCode || 500).json(payload);
   }
 };
 

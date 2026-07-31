@@ -401,7 +401,19 @@ const sendActivityNotifications = async (activity, action, message, extraResiden
     };
   });
 
-  await notificationService.createMany(notifications);
+  // Notification dispatch is best-effort: callers (create/update/delete/register/...)
+  // have already persisted the entity by the time we get here, so a failure to fan out
+  // notifications must NOT roll back the whole operation or surface as 500 to the user.
+  try {
+    await notificationService.createMany(notifications);
+  } catch (notifErr) {
+    console.error(
+      '[sendActivityNotifications] failed for activity %s action=%s: %s',
+      activity?._id,
+      action,
+      notifErr.stack || notifErr,
+    );
+  }
 };
 
 const createActivity = async (body) => {

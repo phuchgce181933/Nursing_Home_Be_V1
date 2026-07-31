@@ -280,7 +280,11 @@ const formatResident = (residentDoc) => {
         : null,
     },
     room: resident.roomId
-      ? { _id: resident.roomId._id || resident.roomId, roomCode: resident.roomId.roomCode, name: resident.roomId.name }
+      ? {
+          _id: resident.roomId._id || resident.roomId,
+          roomNumber: resident.roomId.roomNumber,
+          roomType: resident.roomId.roomType,
+        }
       : null,
     bed: resident.bedId ? { _id: resident.bedId._id || resident.bedId, bedCode: resident.bedId.bedCode } : null,
     familyPortalAccounts: Array.isArray(resident.familyPortalAccountIds)
@@ -439,7 +443,24 @@ const mapResidentFamilySummary = (resident) => ({
   _id: resident._id,
   residentCode: resident.residentCode,
   fullName: resident.fullName,
-  roomId: resident.roomId,
+  avatarUrl: resident.avatarUrl || undefined,
+  citizenId: resident.citizenId,
+  insuranceNumber: resident.insuranceNumber,
+  bloodType: resident.bloodType,
+  gender: resident.gender,
+  room: resident.roomId && typeof resident.roomId === 'object'
+    ? {
+        _id: resident.roomId._id,
+        roomNumber: resident.roomId.roomNumber,
+        floor: resident.roomId.floorId && typeof resident.roomId.floorId === 'object'
+          ? { _id: resident.roomId.floorId._id, name: resident.roomId.floorId.name, floorNumber: resident.roomId.floorId.floorNumber }
+          : resident.roomId.floorId,
+      }
+    : resident.roomId,
+  bed: resident.bedId && typeof resident.bedId === 'object'
+    ? { _id: resident.bedId._id, bedCode: resident.bedId.bedCode }
+    : resident.bedId,
+  admittedAt: resident.admittedAt,
   residencyStatus: resident.residencyStatus,
   emergencyContactCount: resident.emergencyContacts?.length ?? 0,
 });

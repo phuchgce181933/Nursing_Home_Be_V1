@@ -36,37 +36,37 @@ const formatVisit = (visit) => ({
 // ── Family: create visit request ────────────────────────────────────────────────
 const createVisit = async (user, body) => {
   if (!body || typeof body !== 'object') {
-    throw new ServiceError('Request body is empty', 400);
+    throw new ServiceError('Nội dung yêu cầu trống', 400);
   }
 
   const { residentId, visitorName, visitorPhone, requestedDate, requestedTimeSlot, numberOfVisitors, notes } = body;
 
-  if (!residentId) throw new ServiceError('residentId is required', 400);
+  if (!residentId) throw new ServiceError('residentId là bắt buộc', 400);
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Từ chối truy cập: không phải người thân của bạn', 403);
   }
 
   const name = typeof visitorName === 'string' ? visitorName.trim() : '';
-  if (!name) throw new ServiceError('visitorName is required', 400);
+  if (!name) throw new ServiceError('visitorName là bắt buộc', 400);
 
   const phone = typeof visitorPhone === 'string' ? visitorPhone.trim() : '';
-  if (!phone) throw new ServiceError('visitorPhone is required', 400);
+  if (!phone) throw new ServiceError('visitorPhone là bắt buộc', 400);
 
-  if (!requestedDate) throw new ServiceError('requestedDate is required', 400);
+  if (!requestedDate) throw new ServiceError('requestedDate là bắt buộc', 400);
   const parsedDate = new Date(requestedDate);
   if (Number.isNaN(parsedDate.getTime())) {
-    throw new ServiceError('requestedDate is invalid (use ISO format: YYYY-MM-DD)', 400);
+    throw new ServiceError('requestedDate không hợp lệ (dùng định dạng ISO: YYYY-MM-DD)', 400);
   }
   const now = new Date();
   const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
   const startOfToday = new Date(Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth(), vnNow.getUTCDate(), 0, 0, 0, 0) - 7 * 60 * 60 * 1000);
   if (parsedDate < startOfToday) {
-    throw new ServiceError('requestedDate must be today or in the future', 400);
+    throw new ServiceError('requestedDate phải là hôm nay hoặc trong tương lai', 400);
   }
 
   const visitors = numberOfVisitors ? parseInt(numberOfVisitors, 10) : 1;
   if (Number.isNaN(visitors) || visitors < 1 || visitors > 20) {
-    throw new ServiceError('numberOfVisitors must be between 1 and 20', 400);
+    throw new ServiceError('numberOfVisitors phải từ 1 đến 20', 400);
   }
 
   const vnTime = new Date(parsedDate.getTime() + 7 * 60 * 60 * 1000);
@@ -75,7 +75,7 @@ const createVisit = async (user, body) => {
 
   const duplicateVisit = await visitRepo.findActiveVisitOnDate(residentId, startOfDate, endOfDate);
   if (duplicateVisit) {
-    throw new ServiceError('A visit request already exists for this resident on this date', 400);
+    throw new ServiceError('Đã tồn tại yêu cầu thăm viếng cho cư dân này vào ngày này', 400);
   }
 
   const visit = await visitRepo.createVisit({
@@ -100,7 +100,7 @@ const createVisit = async (user, body) => {
     afterData: { residentId, requestedDate: visit.requestedDate, status: visit.status },
   });
 
-  return { message: 'Visit request created successfully', visit: formatVisit(await visitRepo.findById(visit._id)) };
+  return { message: 'Đã tạo yêu cầu thăm viếng thành công', visit: formatVisit(await visitRepo.findById(visit._id)) };
 };
 
 // ── Family: list own visit requests ─────────────────────────────────────────────
@@ -129,11 +129,11 @@ const listFamilyVisits = async (user, query) => {
 // ── Family: cancel a pending/approved visit ─────────────────────────────────────
 const cancelVisit = async (user, visitId, body) => {
   const visit = await visitRepo.findByIdForFamily(visitId, user._id);
-  if (!visit) throw new ServiceError('Visit request not found', 404);
+  if (!visit) throw new ServiceError('Không tìm thấy yêu cầu thăm viếng', 404);
 
   if (!visitRepo.CANCELLABLE_STATUSES.includes(visit.status)) {
     throw new ServiceError(
-      `Cannot cancel a visit with status: ${visit.status}. Only ${visitRepo.CANCELLABLE_STATUSES.join(', ')} can be cancelled.`,
+      `Không thể hủy yêu cầu thăm viếng ở trạng thái: ${visit.status}. Chỉ có thể hủy khi ở trạng thái ${visitRepo.CANCELLABLE_STATUSES.join(', ')}.`,
       400
     );
   }
@@ -156,7 +156,7 @@ const cancelVisit = async (user, visitId, body) => {
     afterData: { status: updated.status },
   });
 
-  return { message: 'Visit request cancelled successfully', visit: formatVisit(updated) };
+  return { message: 'Đã hủy yêu cầu thăm viếng thành công', visit: formatVisit(updated) };
 };
 
 // ── Staff: list visits (nurse/manager/admin) ────────────────────────────────────
@@ -185,11 +185,11 @@ const listVisits = async (query) => {
 // ── Staff: approve a pending visit (manager/admin) ──────────────────────────────
 const approveVisit = async (actor, visitId) => {
   const visit = await visitRepo.findById(visitId);
-  if (!visit) throw new ServiceError('Visit request not found', 404);
+  if (!visit) throw new ServiceError('Không tìm thấy yêu cầu thăm viếng', 404);
 
   if (!visitRepo.APPROVABLE_STATUSES.includes(visit.status)) {
     throw new ServiceError(
-      `Cannot approve a visit with status: ${visit.status}. Only ${visitRepo.APPROVABLE_STATUSES.join(', ')} can be approved.`,
+      `Không thể duyệt yêu cầu thăm viếng ở trạng thái: ${visit.status}. Chỉ có thể duyệt khi ở trạng thái ${visitRepo.APPROVABLE_STATUSES.join(', ')}.`,
       400
     );
   }
@@ -211,24 +211,24 @@ const approveVisit = async (actor, visitId) => {
     afterData: { status: updated.status },
   });
 
-  return { message: 'Visit request approved successfully', visit: formatVisit(updated) };
+  return { message: 'Đã duyệt yêu cầu thăm viếng thành công', visit: formatVisit(updated) };
 };
 
 // ── Staff: reject a pending visit (manager/admin) ───────────────────────────────
 const rejectVisit = async (actor, visitId, body) => {
   const visit = await visitRepo.findById(visitId);
-  if (!visit) throw new ServiceError('Visit request not found', 404);
+  if (!visit) throw new ServiceError('Không tìm thấy yêu cầu thăm viếng', 404);
 
   if (!visitRepo.REJECTABLE_STATUSES.includes(visit.status)) {
     throw new ServiceError(
-      `Cannot reject a visit with status: ${visit.status}. Only ${visitRepo.REJECTABLE_STATUSES.join(', ')} can be rejected.`,
+      `Không thể từ chối yêu cầu thăm viếng ở trạng thái: ${visit.status}. Chỉ có thể từ chối khi ở trạng thái ${visitRepo.REJECTABLE_STATUSES.join(', ')}.`,
       400
     );
   }
 
   const rejectionReason = body?.rejectionReason?.trim() || '';
   if (!rejectionReason) {
-    throw new ServiceError('rejectionReason is required when rejecting a visit', 400);
+    throw new ServiceError('rejectionReason là bắt buộc khi từ chối yêu cầu thăm viếng', 400);
   }
 
   const updated = await visitRepo.updateVisit(visitId, {
@@ -249,7 +249,7 @@ const rejectVisit = async (actor, visitId, body) => {
     afterData: { status: updated.status, rejectionReason },
   });
 
-  return { message: 'Visit request rejected successfully', visit: formatVisit(updated) };
+  return { message: 'Đã từ chối yêu cầu thăm viếng thành công', visit: formatVisit(updated) };
 };
 
 module.exports = {

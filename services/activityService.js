@@ -29,19 +29,19 @@ const ALLOWED_ACTIVITY_CATEGORY_OPTIONS = [
 const normalizeActivityCategory = (body) => {
   const selectedCategory = typeof body.category === 'string' ? body.category.trim() : '';
   if (!selectedCategory) {
-    throw new ServiceError('category is required', 400);
+    throw new ServiceError('category là bắt buộc', 400);
   }
 
   if (selectedCategory === 'Khác') {
     const customCategory = typeof body.categoryOther === 'string' ? body.categoryOther.trim() : '';
     if (!customCategory) {
-      throw new ServiceError('custom category is required when category is Khác', 400);
+      throw new ServiceError('category tùy chỉnh là bắt buộc khi category là Khác', 400);
     }
     return customCategory;
   }
 
   if (!ALLOWED_ACTIVITY_CATEGORY_OPTIONS.includes(selectedCategory)) {
-    throw new ServiceError(`category must be one of: ${ALLOWED_ACTIVITY_CATEGORY_OPTIONS.join(', ')}, Khác`, 400);
+    throw new ServiceError(`category phải thuộc một trong: ${ALLOWED_ACTIVITY_CATEGORY_OPTIONS.join(', ')}, Khác`, 400);
   }
 
   return selectedCategory;
@@ -119,17 +119,17 @@ const buildFilterFromQuery = (query) => {
 const validateActivityTimeRange = (startDate, endDate) => {
   const now = new Date();
   if (Number.isNaN(startDate.getTime())) {
-    throw new ServiceError('startAt must be a valid date', 400);
+    throw new ServiceError('startAt phải là ngày hợp lệ', 400);
   }
   if (startDate < now) {
-    throw new ServiceError('startAt cannot be in the past', 400);
+    throw new ServiceError('startAt không được ở trong quá khứ', 400);
   }
 
   if (Number.isNaN(endDate.getTime())) {
-    throw new ServiceError('endAt must be a valid date', 400);
+    throw new ServiceError('endAt phải là ngày hợp lệ', 400);
   }
   if (endDate <= startDate) {
-    throw new ServiceError('endAt must be later than startAt', 400);
+    throw new ServiceError('endAt phải sau startAt', 400);
   }
 };
 
@@ -140,7 +140,7 @@ const assertNoDuplicateResidentIds = (records, label) => {
   for (const r of records) {
     const key = r.residentId.toString();
     if (seen.has(key)) {
-      throw new ServiceError(`${label} contains duplicate residentId ${key}`, 400);
+      throw new ServiceError(`${label} chứa residentId trùng lặp ${key}`, 400);
     }
     seen.add(key);
   }
@@ -150,30 +150,30 @@ const assertResidentsAreParticipants = (records, participantIds, label) => {
   const allowed = new Set((participantIds || []).map((id) => id.toString()));
   for (const r of records) {
     if (!allowed.has(r.residentId.toString())) {
-      throw new ServiceError(`${label}: resident ${r.residentId} is not a participant of this activity`, 400);
+      throw new ServiceError(`${label}: cư dân ${r.residentId} không phải là người tham gia hoạt động này`, 400);
     }
   }
 };
 
 const normalizeAttendanceRecords = (records) => {
   if (!Array.isArray(records)) {
-    throw new ServiceError('attendanceRecords must be an array', 400);
+    throw new ServiceError('attendanceRecords phải là một mảng', 400);
   }
 
   const normalized = records.map((record) => {
     const residentId = record?.residentId;
     if (!residentId || !mongoose.Types.ObjectId.isValid(residentId)) {
-      throw new ServiceError('attendanceRecords must contain valid residentId values', 400);
+      throw new ServiceError('attendanceRecords phải chứa các giá trị residentId hợp lệ', 400);
     }
 
     const status = String(record?.status || '').trim().toLowerCase();
     if (!VALID_ATTENDANCE_STATUSES.includes(status)) {
-      throw new ServiceError(`attendance status must be one of: ${VALID_ATTENDANCE_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`attendance status phải thuộc một trong: ${VALID_ATTENDANCE_STATUSES.join(', ')}`, 400);
     }
 
     const note = typeof record?.note === 'string' ? record.note.trim() : '';
     if (note.length > MAX_NOTE_LENGTH) {
-      throw new ServiceError(`note must be at most ${MAX_NOTE_LENGTH} characters`, 400);
+      throw new ServiceError(`note phải có tối đa ${MAX_NOTE_LENGTH} ký tự`, 400);
     }
     const occurrenceDate = record?.occurrenceDate ? new Date(record.occurrenceDate) : null;
 
@@ -191,24 +191,24 @@ const normalizeAttendanceRecords = (records) => {
 
 const normalizeParticipationRecords = (records) => {
   if (!Array.isArray(records)) {
-    throw new ServiceError('participationRecords must be an array', 400);
+    throw new ServiceError('participationRecords phải là một mảng', 400);
   }
 
   const normalized = records.map((record) => {
     const residentId = record?.residentId;
     if (!residentId || !mongoose.Types.ObjectId.isValid(residentId)) {
-      throw new ServiceError('participationRecords must contain valid residentId values', 400);
+      throw new ServiceError('participationRecords phải chứa các giá trị residentId hợp lệ', 400);
     }
 
     const participationLevel = String(record?.participationLevel || '').trim().toLowerCase();
     if (!VALID_PARTICIPATION_LEVELS.includes(participationLevel)) {
-      throw new ServiceError(`participation level must be one of: ${VALID_PARTICIPATION_LEVELS.join(', ')}`, 400);
+      throw new ServiceError(`participation level phải thuộc một trong: ${VALID_PARTICIPATION_LEVELS.join(', ')}`, 400);
     }
 
     const comment = typeof record?.comment === 'string' ? record.comment.trim() : '';
     const incident = typeof record?.incident === 'string' ? record.incident.trim() : '';
     if (comment.length > MAX_NOTE_LENGTH || incident.length > MAX_NOTE_LENGTH) {
-      throw new ServiceError(`comment/incident must be at most ${MAX_NOTE_LENGTH} characters`, 400);
+      throw new ServiceError(`comment/incident phải có tối đa ${MAX_NOTE_LENGTH} ký tự`, 400);
     }
     const occurrenceDate = record?.occurrenceDate ? new Date(record.occurrenceDate) : null;
 
@@ -418,7 +418,7 @@ const sendActivityNotifications = async (activity, action, message, extraResiden
 
 const createActivity = async (body) => {
   if (!body || typeof body !== 'object') {
-    throw new ServiceError('Request body is required', 400);
+    throw new ServiceError('Request body là bắt buộc', 400);
   }
 
   const title = typeof body.title === 'string' ? body.title.trim() : '';
@@ -432,15 +432,15 @@ const createActivity = async (body) => {
     ? Number(body.dailyDurationMinutes)
     : null;
 
-  if (!title) throw new ServiceError('title is required', 400);
-  if (title.length > 100) throw new ServiceError('title must be at most 100 characters', 400);
-  if (description && description.length > 1000) throw new ServiceError('description must be at most 1000 characters', 400);
-  if (category && category.length > 100) throw new ServiceError('category must be at most 100 characters', 400);
-  if (location && location.length > 200) throw new ServiceError('location must be at most 200 characters', 400);
+  if (!title) throw new ServiceError('title là bắt buộc', 400);
+  if (title.length > 100) throw new ServiceError('title phải có tối đa 100 ký tự', 400);
+  if (description && description.length > 1000) throw new ServiceError('description phải có tối đa 1000 ký tự', 400);
+  if (category && category.length > 100) throw new ServiceError('category phải có tối đa 100 ký tự', 400);
+  if (location && location.length > 200) throw new ServiceError('location phải có tối đa 200 ký tự', 400);
 
   const startInput = body.startAt ?? body.scheduledAt;
   const endInput = body.endAt ?? body.scheduledAt ?? body.startAt;
-  if (!startInput) throw new ServiceError('startAt is required', 400);
+  if (!startInput) throw new ServiceError('startAt là bắt buộc', 400);
 
   const scheduledAt = new Date(startInput);
   const endAt = new Date(endInput);
@@ -448,10 +448,10 @@ const createActivity = async (body) => {
 
   const computedDurationMinutes = calculateDurationMinutes(scheduledAt, endAt);
   if (computedDurationMinutes === null) {
-    throw new ServiceError('startAt and endAt must be valid dates', 400);
+    throw new ServiceError('startAt và endAt phải là ngày hợp lệ', 400);
   }
   if (computedDurationMinutes < 1) {
-    throw new ServiceError('endAt must be later than startAt', 400);
+    throw new ServiceError('endAt phải sau startAt', 400);
   }
 
   const shouldCreateRecurring = Boolean(body.createRecurring) || (requestedDailyMinutes !== null && endAt.getTime() - scheduledAt.getTime() > 24 * 60 * 60 * 1000);
@@ -466,55 +466,55 @@ const createActivity = async (body) => {
   }
 
   if (body.organizerStaffId && !mongoose.Types.ObjectId.isValid(body.organizerStaffId)) {
-    throw new ServiceError('organizerStaffId must be a valid ObjectId', 400);
+    throw new ServiceError('organizerStaffId phải là ObjectId hợp lệ', 400);
   }
 
   if (organizerStaffIds.length) {
     if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
-      throw new ServiceError('organizerStaffIds must contain valid ObjectIds', 400);
+      throw new ServiceError('organizerStaffIds phải chứa các ObjectId hợp lệ', 400);
     }
 
     const User = require('../models/user');
     for (const organizerId of organizerStaffIds) {
       const organizer = await User.findById(organizerId);
       if (!organizer) {
-        throw new ServiceError('Organizer staff not found', 404);
+        throw new ServiceError('Không tìm thấy nhân viên tổ chức', 404);
       }
       if (!isAllowedActivityStaffRole(organizer.role)) {
-        throw new ServiceError('Activity organizer must be a nurse, caregiver, hộ lý, or doctor', 400);
+        throw new ServiceError('Người tổ chức hoạt động phải là điều dưỡng, hộ lý hoặc bác sĩ', 400);
       }
     }
   }
 
   if (supportStaffIds.length) {
     if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
-      throw new ServiceError('supportStaffIds must contain valid ObjectIds', 400);
+      throw new ServiceError('supportStaffIds phải chứa các ObjectId hợp lệ', 400);
     }
 
     const User = require('../models/user');
     for (const supportStaffId of supportStaffIds) {
       const supportStaff = await User.findById(supportStaffId);
       if (!supportStaff) {
-        throw new ServiceError('Support staff not found', 404);
+        throw new ServiceError('Không tìm thấy nhân viên hỗ trợ', 404);
       }
       if (!isAllowedActivityStaffRole(supportStaff.role)) {
-        throw new ServiceError('Support staff must be a nurse, caregiver, hộ lý, or doctor', 400);
+        throw new ServiceError('Nhân viên hỗ trợ phải là điều dưỡng, hộ lý hoặc bác sĩ', 400);
       }
     }
   }
 
   if (body.participantResidentIds !== undefined) {
     if (!Array.isArray(body.participantResidentIds)) {
-      throw new ServiceError('participantResidentIds must be an array', 400);
+      throw new ServiceError('participantResidentIds phải là một mảng', 400);
     }
 
     if (body.participantResidentIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
-      throw new ServiceError('participantResidentIds must contain valid ObjectIds', 400);
+      throw new ServiceError('participantResidentIds phải chứa các ObjectId hợp lệ', 400);
     }
   }
 
   if (!ACTIVITY_STATUSES.includes(status)) {
-    throw new ServiceError(`status must be one of: ${ACTIVITY_STATUSES.join(', ')}`, 400);
+    throw new ServiceError(`status phải thuộc một trong: ${ACTIVITY_STATUSES.join(', ')}`, 400);
   }
 
   if (shouldCreateRecurring) {
@@ -552,7 +552,7 @@ const createActivity = async (body) => {
         `Hoạt động mới: ${activity.title} đã được lên lịch vào ${activity.scheduledAt.toLocaleString('vi-VN')}${activity.location ? ` tại ${activity.location}` : ''}.`,
       );
     }
-    return { message: 'Activities created for each day', createdCount: createdActivities.length, data: createdActivities };
+    return { message: 'Đã tạo hoạt động cho mỗi ngày', createdCount: createdActivities.length, data: createdActivities };
   }
 
   const activity = await activityRepo.create({
@@ -593,7 +593,7 @@ const listActivities = async (query) => {
 
 const getActivityById = async (activityId) => {
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
   return syncActivityStatusIfNeeded(activity);
 };
 
@@ -614,10 +614,10 @@ const updateActivity = async (activityId, body) => {
     validateActivityTimeRange(startDate, endDate);
     const computedDurationMinutes = calculateDurationMinutes(startDate, endDate);
     if (computedDurationMinutes === null) {
-      throw new ServiceError('startAt and endAt must be valid dates', 400);
+      throw new ServiceError('startAt và endAt phải là ngày hợp lệ', 400);
     }
     if (computedDurationMinutes < 1) {
-      throw new ServiceError('endAt must be later than startAt', 400);
+      throw new ServiceError('endAt phải sau startAt', 400);
     }
     update.durationMinutes = computedDurationMinutes;
   }
@@ -638,16 +638,16 @@ const updateActivity = async (activityId, body) => {
     const organizerStaffIds = normalizeStaffIdList(body.organizerStaffIds ?? body.organizerStaffId);
     if (organizerStaffIds.length) {
       if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
-        throw new ServiceError('organizerStaffIds must contain valid ObjectIds', 400);
+        throw new ServiceError('organizerStaffIds phải chứa các ObjectId hợp lệ', 400);
       }
       const User = require('../models/user');
       for (const organizerId of organizerStaffIds) {
         const organizer = await User.findById(organizerId);
         if (!organizer) {
-          throw new ServiceError('Organizer staff not found', 404);
+          throw new ServiceError('Không tìm thấy nhân viên tổ chức', 404);
         }
         if (!isAllowedActivityStaffRole(organizer.role)) {
-          throw new ServiceError('Activity organizer must be a nurse, caregiver, hộ lý, or doctor', 400);
+          throw new ServiceError('Người tổ chức hoạt động phải là điều dưỡng, hộ lý hoặc bác sĩ', 400);
         }
       }
     }
@@ -659,16 +659,16 @@ const updateActivity = async (activityId, body) => {
     const supportStaffIds = normalizeStaffIdList(body.supportStaffIds ?? body.supportStaffId);
     if (supportStaffIds.length) {
       if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
-        throw new ServiceError('supportStaffIds must contain valid ObjectIds', 400);
+        throw new ServiceError('supportStaffIds phải chứa các ObjectId hợp lệ', 400);
       }
       const User = require('../models/user');
       for (const supportStaffId of supportStaffIds) {
         const supportStaff = await User.findById(supportStaffId);
         if (!supportStaff) {
-          throw new ServiceError('Support staff not found', 404);
+          throw new ServiceError('Không tìm thấy nhân viên hỗ trợ', 404);
         }
         if (!isAllowedActivityStaffRole(supportStaff.role)) {
-          throw new ServiceError('Support staff must be a nurse, caregiver, hộ lý, or doctor', 400);
+          throw new ServiceError('Nhân viên hỗ trợ phải là điều dưỡng, hộ lý hoặc bác sĩ', 400);
         }
       }
     }
@@ -677,10 +677,10 @@ const updateActivity = async (activityId, body) => {
   }
   if (body.status !== undefined) {
     if (body.status === 'ongoing') {
-      throw new ServiceError('Activity status ongoing is managed automatically', 400);
+      throw new ServiceError('Trạng thái hoạt động ongoing được quản lý tự động', 400);
     }
     if (!MANUAL_ACTIVITY_STATUSES.includes(body.status)) {
-      throw new ServiceError(`status must be one of: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
     }
     update.status = body.status;
   }
@@ -688,7 +688,7 @@ const updateActivity = async (activityId, body) => {
 
   const previousActivity = await activityRepo.findById(activityId);
   const updated = await activityRepo.findByIdAndUpdate(activityId, update);
-  if (!updated) throw new ServiceError('Activity not found', 404);
+  if (!updated) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   await sendActivityNotifications(
     updated,
@@ -703,7 +703,7 @@ const updateActivity = async (activityId, body) => {
 
 const deleteActivity = async (activityId) => {
   const activity = await activityRepo.findByIdAndUpdate(activityId, { status: 'cancelled' });
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   await sendActivityNotifications(
     activity,
@@ -712,36 +712,36 @@ const deleteActivity = async (activityId) => {
   );
 
   await activityRepo.deleteById(activityId);
-  return { message: 'Activity deleted successfully' };
+  return { message: 'Đã xóa hoạt động thành công' };
 };
 
 const bulkDeleteActivities = async (query = {}) => {
   const filter = buildFilterFromQuery(query);
   const deleted = await activityRepo.deleteMany(filter);
-  return { deletedCount: deleted.deletedCount || 0, message: 'Activities deleted successfully' };
+  return { deletedCount: deleted.deletedCount || 0, message: 'Đã xóa các hoạt động thành công' };
 };
 
 const bulkUpdateActivityStatus = async (query = {}, status) => {
   if (!status) {
-    throw new ServiceError('status is required', 400);
+    throw new ServiceError('status là bắt buộc', 400);
   }
 
   if (status === 'ongoing') {
-    throw new ServiceError('Activity status ongoing is managed automatically', 400);
+    throw new ServiceError('Trạng thái hoạt động ongoing được quản lý tự động', 400);
   }
 
   if (!MANUAL_ACTIVITY_STATUSES.includes(status)) {
-    throw new ServiceError(`status must be one of: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
+    throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
   }
 
   const filter = buildFilterFromQuery(query);
   const updated = await activityRepo.updateMany(filter, { status });
-  return { modifiedCount: updated.modifiedCount || 0, message: 'Activities status updated successfully' };
+  return { modifiedCount: updated.modifiedCount || 0, message: 'Đã cập nhật trạng thái hoạt động thành công' };
 };
 
 const setParticipantList = async (activityId, participantResidentIds) => {
   if (!Array.isArray(participantResidentIds)) {
-    throw new ServiceError('participantResidentIds must be an array', 400);
+    throw new ServiceError('participantResidentIds phải là một mảng', 400);
   }
 
   const participants = normalizeObjectIds(participantResidentIds);
@@ -750,16 +750,16 @@ const setParticipantList = async (activityId, participantResidentIds) => {
     const foundIds = new Set(residents.map((r) => r._id.toString()));
     const missing = participants.filter((id) => !foundIds.has(id.toString()));
     if (missing.length) {
-      throw new ServiceError(`Residents not found: ${missing.join(', ')}`, 404);
+      throw new ServiceError(`Không tìm thấy cư dân: ${missing.join(', ')}`, 404);
     }
     const notAdmitted = residents.filter((r) => r.residencyStatus !== 'admitted').map((r) => r._id.toString());
     if (notAdmitted.length) {
-      throw new ServiceError(`Residents are not currently admitted: ${notAdmitted.join(', ')}`, 400);
+      throw new ServiceError(`Cư dân hiện không được tiếp nhận: ${notAdmitted.join(', ')}`, 400);
     }
   }
 
   const activity = await activityRepo.findByIdAndUpdate(activityId, { participantResidentIds: participants });
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   await sendActivityNotifications(
     activity,
@@ -773,28 +773,28 @@ const setParticipantList = async (activityId, participantResidentIds) => {
 const assertActivityOpenForRegistration = (activity) => {
   const status = String(activity.status || '').trim().toLowerCase();
   if (status === 'cancelled' || status === 'completed') {
-    throw new ServiceError(`Cannot register: this activity is already ${status}`, 400);
+    throw new ServiceError(`Không thể đăng ký: hoạt động này đã ${status}`, 400);
   }
   const startAt = new Date(activity.startAt || activity.scheduledAt);
   if (!Number.isNaN(startAt.getTime()) && new Date() > startAt) {
-    throw new ServiceError('Cannot register: this activity has already started', 400);
+    throw new ServiceError('Không thể đăng ký: hoạt động này đã bắt đầu', 400);
   }
 };
 
 const registerResident = async (activityId, residentId, currentUser) => {
-  if (!residentId) throw new ServiceError('residentId is required', 400);
+  if (!residentId) throw new ServiceError('residentId là bắt buộc', 400);
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   const resident = await Resident.findById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   if (resident.residencyStatus !== 'admitted') {
-    throw new ServiceError('Resident is not currently admitted', 400);
+    throw new ServiceError('Cư dân hiện không được tiếp nhận', 400);
   }
   if (currentUser?.role === 'family') {
     const ownedIds = (resident.familyPortalAccountIds || []).map((id) => id.toString());
     if (!ownedIds.includes(String(currentUser._id))) {
-      throw new ServiceError('Access denied: not your relative', 403);
+      throw new ServiceError('Truy cập bị từ chối: không phải người thân của bạn', 403);
     }
   }
 
@@ -803,7 +803,7 @@ const registerResident = async (activityId, residentId, currentUser) => {
   const normalizedResidentId = new mongoose.Types.ObjectId(residentId);
   const existing = activity.participantResidentIds?.map((id) => id.toString()) || [];
   if (existing.includes(normalizedResidentId.toString())) {
-    throw new ServiceError('Resident already registered for this activity', 400);
+    throw new ServiceError('Cư dân đã đăng ký hoạt động này', 400);
   }
 
   const updatedParticipants = [...existing, normalizedResidentId];
@@ -821,28 +821,28 @@ const registerResident = async (activityId, residentId, currentUser) => {
 };
 
 const unregisterResident = async (activityId, residentId, currentUser) => {
-  if (!residentId) throw new ServiceError('residentId is required', 400);
+  if (!residentId) throw new ServiceError('residentId là bắt buộc', 400);
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   const resident = await Resident.findById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   if (currentUser?.role === 'family') {
     const ownedIds = (resident.familyPortalAccountIds || []).map((id) => id.toString());
     if (!ownedIds.includes(String(currentUser._id))) {
-      throw new ServiceError('Access denied: not your relative', 403);
+      throw new ServiceError('Truy cập bị từ chối: không phải người thân của bạn', 403);
     }
   }
 
   const status = String(activity.status || '').trim().toLowerCase();
   if (status === 'completed') {
-    throw new ServiceError('Cannot cancel registration: this activity has already completed', 400);
+    throw new ServiceError('Không thể hủy đăng ký: hoạt động này đã hoàn thành', 400);
   }
 
   const normalizedResidentId = String(residentId);
   const existing = activity.participantResidentIds?.map((id) => id.toString()) || [];
   if (!existing.includes(normalizedResidentId)) {
-    throw new ServiceError('Resident is not registered for this activity', 400);
+    throw new ServiceError('Cư dân chưa đăng ký hoạt động này', 400);
   }
 
   activity.participantResidentIds = activity.participantResidentIds.filter(
@@ -855,7 +855,7 @@ const unregisterResident = async (activityId, residentId, currentUser) => {
 
 const recordParticipationResult = async (activityId, body) => {
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   const syncedActivity = await syncActivityStatusIfNeeded(activity);
   const now = new Date();
@@ -867,7 +867,7 @@ const recordParticipationResult = async (activityId, body) => {
   const activityStart = new Date(syncedActivity.startAt || syncedActivity.scheduledAt);
   const activityEnd = new Date(syncedActivity.endAt || syncedActivity.startAt || syncedActivity.scheduledAt);
   if (Number.isNaN(activityStart.getTime()) || Number.isNaN(activityEnd.getTime())) {
-    throw new ServiceError('Activity time window is invalid', 400);
+    throw new ServiceError('Khung thời gian hoạt động không hợp lệ', 400);
   }
   // Allow a grace window after the activity ends so nurses can still record attendance
   // shortly after it concludes (the activity auto-flips to 'completed' right at activityEnd).
@@ -880,23 +880,23 @@ const recordParticipationResult = async (activityId, body) => {
   if (body.participantResultNotes !== undefined) {
     const trimmed = body.participantResultNotes?.trim();
     if (trimmed && trimmed.length > MAX_NOTE_LENGTH) {
-      throw new ServiceError(`participantResultNotes must be at most ${MAX_NOTE_LENGTH} characters`, 400);
+      throw new ServiceError(`participantResultNotes phải có tối đa ${MAX_NOTE_LENGTH} ký tự`, 400);
     }
     updates.participantResultNotes = trimmed;
   }
   if (body.status !== undefined) {
     if (body.status === 'ongoing') {
-      throw new ServiceError('Activity status ongoing is managed automatically', 400);
+      throw new ServiceError('Trạng thái hoạt động ongoing được quản lý tự động', 400);
     }
     if (!MANUAL_ACTIVITY_STATUSES.includes(body.status)) {
-      throw new ServiceError(`status must be one of: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
     }
     updates.status = body.status;
   }
   if (body.attendanceRecords !== undefined) updates.attendanceRecords = normalizeAttendanceRecords(body.attendanceRecords);
   if (body.participationRecords !== undefined) updates.participationRecords = normalizeParticipationRecords(body.participationRecords);
   if (Object.keys(updates).length === 0) {
-    throw new ServiceError('At least one field is required to record participation results', 400);
+    throw new ServiceError('Cần ít nhất một trường để ghi nhận kết quả tham gia', 400);
   }
 
   const participantIds = syncedActivity.participantResidentIds || [];
@@ -909,7 +909,7 @@ const recordParticipationResult = async (activityId, body) => {
 
   // Merge attendance/participation records by occurrenceDate + residentId instead of replacing whole arrays
   const existing = await activityRepo.findById(activityId);
-  if (!existing) throw new ServiceError('Activity not found', 404);
+  if (!existing) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   if (updates.attendanceRecords) {
     const mapKey = (rec) => `${rec.residentId.toString()}|${rec.occurrenceDate ? new Date(rec.occurrenceDate).toISOString().slice(0,10) : 'none'}`;
@@ -1000,7 +1000,7 @@ const getActivityStatistics = async (query) => {
 
 const getActivityStatisticsById = async (activityId) => {
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   return {
     activityId: activity._id,

@@ -55,6 +55,15 @@ const listStaffAccounts = async (req, res) => {
   }
 };
 
+const searchFamilyAccounts = async (req, res) => {
+  try {
+    const result = await authService.searchFamilyAccounts(req.query);
+    res.json(result);
+  } catch (err) {
+    sendApiError(res, err);
+  }
+};
+
 const toggleStaffActive = async (req, res) => {
   try {
     const result = await authService.toggleStaffActive(req.params.id, req.user);
@@ -168,6 +177,7 @@ module.exports = {
   requestRegisterOtp,
   verifyRegisterOtp,
   listStaffAccounts,
+  searchFamilyAccounts,
   toggleStaffActive,
   updateProfile,
   requestEmailChangeOtp,

@@ -35,32 +35,32 @@ const VITAL_RANGES = {
 const assertVitalsValid = (body) => {
   const hasAnyVital = VITAL_FIELDS.some((field) => body[field] !== undefined && body[field] !== null && body[field] !== '');
   if (!hasAnyVital) {
-    throw new ServiceError('At least one vital sign field must be provided', 400);
+    throw new ServiceError('Phải cung cấp ít nhất một chỉ số sinh hiệu', 400);
   }
   for (const field of VITAL_FIELDS) {
     const value = body[field];
     if (value === undefined || value === null || value === '') continue;
     const num = Number(value);
     if (Number.isNaN(num)) {
-      throw new ServiceError(`${field} must be a number`, 400);
+      throw new ServiceError(`${field} phải là một số`, 400);
     }
     const range = VITAL_RANGES[field];
     if (num < range.min || num > range.max) {
-      throw new ServiceError(`${field} must be between ${range.min} and ${range.max}`, 400);
+      throw new ServiceError(`${field} phải trong khoảng từ ${range.min} đến ${range.max}`, 400);
     }
   }
   const systolic = Number(body.bloodPressureSystolic);
   const diastolic = Number(body.bloodPressureDiastolic);
   if (!Number.isNaN(systolic) && !Number.isNaN(diastolic) && body.bloodPressureSystolic !== undefined && body.bloodPressureDiastolic !== undefined) {
     if (diastolic >= systolic) {
-      throw new ServiceError('bloodPressureDiastolic must be lower than bloodPressureSystolic', 400);
+      throw new ServiceError('bloodPressureDiastolic phải nhỏ hơn bloodPressureSystolic', 400);
     }
   }
   if (body.bloodType !== undefined && body.bloodType !== null && body.bloodType !== '' && !BLOOD_TYPES.includes(body.bloodType)) {
-    throw new ServiceError(`bloodType must be one of: ${BLOOD_TYPES.join(', ')}`, 400);
+    throw new ServiceError(`bloodType phải thuộc một trong: ${BLOOD_TYPES.join(', ')}`, 400);
   }
   if (typeof body.summary === 'string' && body.summary.length > 500) {
-    throw new ServiceError('summary must be at most 500 characters', 400);
+    throw new ServiceError('summary không được vượt quá 500 ký tự', 400);
   }
 };
 
@@ -507,10 +507,10 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     selectedServices,
   } = body;
 
-  if (!residentId) throw new ServiceError('Resident ID is required', 400);
+  if (!residentId) throw new ServiceError('Resident ID là bắt buộc', 400);
 
   const resident = await residentRepo.findById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   // Find staff profile of the logged-in doctor/nurse
   const staffProfile = await staffProfileRepo.findByUserId(user._id);
@@ -680,14 +680,14 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
 };
 
 const getResidentMedicalHistory = async (user, residentId, query) => {
-  if (!residentId) throw new ServiceError('Resident ID is required', 400);
+  if (!residentId) throw new ServiceError('Resident ID là bắt buộc', 400);
 
   if (user.role === 'caregiver') {
     await assertResidentsAssignedToUser(user._id, [residentId]);
   }
 
   const resident = await residentRepo.findById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const page = Math.max(1, parseInt(query.page || 1, 10));
   const limit = Math.min(100, Math.max(1, parseInt(query.limit || 50, 10)));

@@ -56,19 +56,19 @@ const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {},
     // If SMS fails, remove OTP
     await Otp.deleteOne({ _id: otp._id }).catch(() => {});
     console.error('otpService.createOtp send error:', err);
-    const msg = err?.message || 'Failed to send OTP SMS';
+    const msg = err?.message || 'Gửi SMS mã OTP thất bại';
     throw new ServiceError(msg, 500);
   }
 };
 
 const verifyOtp = async ({ userId, otpId, code, purpose = 'wallet_payment' }) => {
   const otp = await Otp.findById(otpId);
-  if (!otp) throw new ServiceError('OTP not found or expired', 400);
-  if (userId && otp.userId && String(otp.userId) !== String(userId)) throw new ServiceError('OTP does not belong to user', 403);
-  if (otp.purpose !== purpose) throw new ServiceError('OTP purpose mismatch', 400);
-  if (otp.used) throw new ServiceError('OTP already used', 400);
-  if (otp.attempts >= MAX_ATTEMPTS) throw new ServiceError('Too many attempts', 400);
-  if (otp.expiresAt && otp.expiresAt < new Date()) throw new ServiceError('OTP expired', 400);
+  if (!otp) throw new ServiceError('Không tìm thấy mã OTP hoặc mã đã hết hạn', 400);
+  if (userId && otp.userId && String(otp.userId) !== String(userId)) throw new ServiceError('Mã OTP không thuộc về người dùng này', 403);
+  if (otp.purpose !== purpose) throw new ServiceError('Mục đích OTP không khớp', 400);
+  if (otp.used) throw new ServiceError('Mã OTP đã được sử dụng', 400);
+  if (otp.attempts >= MAX_ATTEMPTS) throw new ServiceError('Đã thử quá nhiều lần', 400);
+  if (otp.expiresAt && otp.expiresAt < new Date()) throw new ServiceError('Mã OTP đã hết hạn', 400);
 
   otp.attempts += 1;
   const ok = otp.code === String(code).trim();
@@ -79,7 +79,7 @@ const verifyOtp = async ({ userId, otpId, code, purpose = 'wallet_payment' }) =>
   }
 
   await otp.save();
-  throw new ServiceError('Invalid OTP code', 400);
+  throw new ServiceError('Mã OTP không hợp lệ', 400);
 };
 
 module.exports = { createOtp, verifyOtp };

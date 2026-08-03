@@ -3,6 +3,7 @@ if (process.env.NODE_ENV === 'local') {
 }
 require('dotenv').config();
 const express = require('express');
+const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
@@ -18,6 +19,11 @@ const auditLogger = require('./middleware/auditLogger');
 
 const app = express();
 
+// contentSecurityPolicy is disabled because it would block the inline scripts
+// Swagger UI (/api-docs) injects; the other security headers (HSTS, no-sniff,
+// frameguard, etc.) still apply.
+app.use(helmet({ contentSecurityPolicy: false }));
+
 // Configure CORS to allow requests from frontend. CORS_ORIGINS is a comma-separated list of
 // additional allowed origins (e.g. the deployed web app's domain) layered on top of the local
 // dev defaults, so a single deploy config doesn't have to hardcode/replace this list in code.
@@ -32,6 +38,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// Redact the `token` query param (used by window.open checkout links, e.g.
+// GET /payos/checkout/:invoiceId?token=...) so JWTs never land in access logs.
+morgan.token('url', (req) => (req.originalUrl || req.url || '').replace(/([?&]token=)[^&]+/gi, '$1[REDACTED]'));
 app.use(morgan('dev'));
 app.use(
   bodyParser.json({
@@ -85,9 +94,6 @@ app.use('/api/resident-visits', require('./routes/staffResidentVisits'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
-app.use('/api/conversations', require('./routes/conversations'));
-// expose conversations router at root path as well for legacy or direct calls
-app.use('/conversations', require('./routes/conversations'));
 // canonical mount: works for every authenticated role (fixes doctor/nurse 404s that
 // happened when the frontend derived the API prefix from the current URL segment)
 app.use('/api/conversations', require('./routes/conversations'));
@@ -95,6 +101,7 @@ app.use('/api/payos', require('./routes/payos'));
 app.use('/payos', require('./routes/payos'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
 app.use('/api/consultation-requests', require('./routes/consultationRequest'));
+app.use('/api/public/admission-requests', require('./routes/publicAdmission'));
 app.use('/api/admin/consultation-requests', require('./routes/adminConsultationRequests'));
 
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));

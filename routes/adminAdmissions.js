@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
+  createWalkInAdmission,
   adminListAdmissions,
   adminGetAdmission,
   approveAdmission,
@@ -94,6 +95,53 @@ const { protect, authorize } = require('../middleware/auth');
  *       403:
  *         description: Access forbidden
  */
+/**
+ * @swagger
+ * /api/admin/admission-requests/walk-in:
+ *   post:
+ *     summary: Create an admission request for a walk-in family (Admin/Manager)
+ *     description: |
+ *       For families who show up in person without a self-registered account.
+ *       Provide requestedByEmail or requestedByPhone (or both) for the family
+ *       contact — a family account is auto-created and the login credentials
+ *       are emailed/texted to them once the admission is checked in.
+ *     tags: [Admin - Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [applicant, requestedByName]
+ *             properties:
+ *               applicant:
+ *                 type: object
+ *                 description: Elderly person's info (same shape as family self-submission)
+ *               relationshipToRequester:
+ *                 type: string
+ *               requestedByName:
+ *                 type: string
+ *               requestedByEmail:
+ *                 type: string
+ *               requestedByPhone:
+ *                 type: string
+ *               preferredAdmissionDate:
+ *                 type: string
+ *                 format: date
+ *               reasonForAdmission:
+ *                 type: string
+ *               notes:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Walk-in admission request created
+ *       400:
+ *         description: Validation error
+ */
+router.post('/walk-in', protect, authorize('admin', 'manager'), createWalkInAdmission);
+
 router.get('/', protect, authorize('admin', 'doctor', 'nurse'), adminListAdmissions);
 
 /**

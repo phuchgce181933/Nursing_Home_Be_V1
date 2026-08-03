@@ -64,7 +64,7 @@ const uploadAvatar = (req, res, next) => {
       if (req.file) {
         if (!ALLOWED_IMAGE_MIMES.includes(req.file.mimetype)) {
           return res.status(400).json({
-            message: 'Avatar must be an image file (jpg, png, webp)',
+            message: 'Ảnh đại diện phải là file ảnh (jpg, png, webp)',
           });
         }
         assertCloudinaryReady();
@@ -77,7 +77,7 @@ const uploadAvatar = (req, res, next) => {
       }
       return next();
     } catch (error) {
-      return res.status(500).json({ message: 'Image upload failed: ' + handleUploadError(error) });
+      return res.status(500).json({ message: 'Tải ảnh lên thất bại: ' + handleUploadError(error) });
     }
   });
 };
@@ -104,7 +104,7 @@ const uploadAvatarAndCertifications = (req, res, next) => {
       if (req.files?.avatar?.[0]) {
         const avatarFile = req.files.avatar[0];
         if (!ALLOWED_IMAGE_MIMES.includes(avatarFile.mimetype)) {
-          return res.status(400).json({ message: 'Avatar must be an image file (jpg, png, webp)' });
+          return res.status(400).json({ message: 'Ảnh đại diện phải là file ảnh (jpg, png, webp)' });
         }
         const result = await uploadImageBuffer(avatarFile.buffer, {
           folder: 'nursing-home/avatars',
@@ -145,7 +145,7 @@ const uploadAvatarAndCertifications = (req, res, next) => {
 
       return next();
     } catch (error) {
-      return res.status(500).json({ message: 'Upload failed: ' + handleUploadError(error) });
+      return res.status(500).json({ message: 'Tải lên thất bại: ' + handleUploadError(error) });
     }
   });
 };
@@ -167,7 +167,7 @@ const uploadResidentPhotos = (req, res, next) => {
         const photos = [];
         for (const file of req.files) {
           if (!ALLOWED_IMAGE_MIMES.includes(file.mimetype)) {
-            return res.status(400).json({ message: 'Photos must be image files (jpg, png, webp)' });
+            return res.status(400).json({ message: 'Ảnh phải là file ảnh (jpg, png, webp)' });
           }
           const result = await uploadImageBuffer(file.buffer, {
             folder: 'nursing-home/resident-photos',
@@ -180,7 +180,7 @@ const uploadResidentPhotos = (req, res, next) => {
 
       return next();
     } catch (error) {
-      return res.status(500).json({ message: 'Upload failed: ' + handleUploadError(error) });
+      return res.status(500).json({ message: 'Tải lên thất bại: ' + handleUploadError(error) });
     }
   });
 };

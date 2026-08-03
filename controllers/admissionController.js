@@ -11,6 +11,26 @@ const submitAdmissionRequest = async (req, res) => {
   }
 };
 
+const submitGuestAdmissionRequest = async (req, res) => {
+  try {
+    const payload = normalizeAdmissionBody(req.body);
+    const result = await admissionService.submitGuestAdmissionRequest(payload, req);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
+  }
+};
+
+const createWalkInAdmission = async (req, res) => {
+  try {
+    const payload = normalizeAdmissionBody(req.body);
+    const result = await admissionService.createWalkInAdmission(req.user, payload, req);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
+  }
+};
+
 const listAdmissionRequests = async (req, res) => {
   try {
     const result = await admissionService.listAdmissionHistory(req.user, req.query);
@@ -170,6 +190,8 @@ const extendAdmissionContract = async (req, res) => {
 
 module.exports = {
   submitAdmissionRequest,
+  submitGuestAdmissionRequest,
+  createWalkInAdmission,
   listAdmissionRequests,
   getAdmissionRequest,
   cancelAdmissionRequest,

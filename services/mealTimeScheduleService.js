@@ -101,7 +101,7 @@ const validateEntry = (entry, index) => {
   if (!(toMinutes(breakfastTime) < toMinutes(lunchTime) && toMinutes(lunchTime) < toMinutes(dinnerTime))) {
     throw apiErr(CODES.MEAL_TIME_ENTRY_TIME_INVALID, {
       statusCode: 400,
-      message: `entries[${index}]: breakfastTime must be before lunchTime, which must be before dinnerTime`,
+      message: `entries[${index}]: giờ ăn sáng phải trước giờ ăn trưa, và giờ ăn trưa phải trước giờ ăn tối`,
       params: { index, field: 'mealTimeOrder' },
     });
   }

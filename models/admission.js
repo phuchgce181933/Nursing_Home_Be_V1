@@ -30,12 +30,16 @@ const admissionSchema = new Schema(
   {
     requestCode: { type: String, unique: true, uppercase: true, trim: true, index: true },
     residentId: { type: Types.ObjectId, ref: 'Resident', index: true },
-    familyAccountId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
+    // Optional: walk-in admissions (created by front-desk staff for a family that
+    // hasn't registered an account yet) start with this unset — checkInResident
+    // auto-provisions a family User and backfills it once check-in completes.
+    familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
     applicant: applicantSchema,
     preferredAdmissionDate: { type: Date },
     reasonForAdmission: { type: String, trim: true },
     requestedByName: { type: String, trim: true },
     requestedByPhone: { type: String, trim: true },
+    requestedByEmail: { type: String, trim: true, lowercase: true },
     requestedAt: { type: Date, default: Date.now },
     consultationScheduledAt: { type: Date },
     tourScheduledAt: { type: Date },

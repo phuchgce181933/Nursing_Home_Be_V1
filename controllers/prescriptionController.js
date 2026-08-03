@@ -46,7 +46,7 @@ const resolveMedicationsFromDB = async (items) => {
   }
   if (duplicates.size) {
     throw Object.assign(
-      new Error(`Duplicate medication(s) in items: a medication can only appear once per prescription (medicationId: ${[...duplicates].join(', ')})`),
+      new Error(`Thuốc bị trùng lặp trong items: mỗi loại thuốc chỉ được xuất hiện một lần trong đơn thuốc (medicationId: ${[...duplicates].join(', ')})`),
       { statusCode: 400 }
     );
   }
@@ -58,7 +58,7 @@ const resolveMedicationsFromDB = async (items) => {
     const foundIds = new Set(meds.map((m) => m._id.toString()));
     const missing = ids.filter((id) => !foundIds.has(id));
     throw Object.assign(
-      new Error(`Medication(s) not found in pharmacy database or inactive: ${missing.join(', ')}`),
+      new Error(`Không tìm thấy thuốc trong cơ sở dữ liệu dược phẩm hoặc thuốc đã ngừng hoạt động: ${missing.join(', ')}`),
       { statusCode: 400 }
     );
   }
@@ -81,16 +81,16 @@ const createPrescription = async (req, res) => {
     // 1. Scope check — doctor can only prescribe for their assigned residents
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     // 2. Resident exists
     const resident = await Resident.findById(residentId).select('_id residencyStatus');
     if (!resident) {
-      return res.status(404).json({ success: false, message: 'Resident not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy cư dân' });
     }
     if (resident.residencyStatus !== 'admitted') {
-      return res.status(400).json({ success: false, message: 'Resident is not currently admitted' });
+      return res.status(400).json({ success: false, message: 'Cư dân hiện chưa được tiếp nhận' });
     }
 
     // 3. Resolve medications from pharmacy DB — prevents free-text drug names
@@ -211,7 +211,7 @@ const editPrescription = async (req, res) => {
   try {
     const { id } = req.params;
     if (!isValidObjectId(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid prescription id' });
+      return res.status(400).json({ success: false, message: 'ID đơn thuốc không hợp lệ' });
     }
 
     const role = req.user.role;
@@ -219,16 +219,16 @@ const editPrescription = async (req, res) => {
 
     const prescription = await Prescription.findById(id);
     if (!prescription) {
-      return res.status(404).json({ success: false, message: 'Prescription not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn thuốc' });
     }
     if (prescription.status !== 'ACTIVE') {
-      return res.status(400).json({ success: false, message: 'Only ACTIVE prescriptions can be edited' });
+      return res.status(400).json({ success: false, message: 'Chỉ có thể chỉnh sửa đơn thuốc đang hoạt động (ACTIVE)' });
     }
 
     // Scope check
     const scope = await getResidentScope(req.user._id, role);
     if (!isInScope(prescription.residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     const changeLog = [];
@@ -239,7 +239,7 @@ const editPrescription = async (req, res) => {
       if (!Array.isArray(items) || !items.length) {
         return res.status(400).json({
           success: false,
-          message: 'Nurse edits require items[] with item _id references',
+          message: 'Chỉnh sửa của điều dưỡng yêu cầu items[] kèm tham chiếu _id của item',
         });
       }
 
@@ -249,7 +249,7 @@ const editPrescription = async (req, res) => {
         if (!existing) {
           return res.status(400).json({
             success: false,
-            message: `Item _id ${patch._id} not found in this prescription`,
+            message: `Không tìm thấy _id ${patch._id} trong đơn thuốc này`,
           });
         }
         if (
@@ -258,7 +258,7 @@ const editPrescription = async (req, res) => {
         ) {
           return res.status(400).json({
             success: false,
-            message: `items[${patch._id}].times must have exactly ${existing.frequency} entries`,
+            message: `items[${patch._id}].times phải có đúng ${existing.frequency} mục`,
           });
         }
       }
@@ -283,7 +283,7 @@ const editPrescription = async (req, res) => {
       }
 
       if (!changeLog.length) {
-        return res.status(200).json({ success: true, message: 'No changes detected', data: prescription, warnings: [] });
+        return res.status(200).json({ success: true, message: 'Không có thay đổi nào được phát hiện', data: prescription, warnings: [] });
       }
 
       prescription.editHistory.push({ editedBy: req.user._id, editedAt: new Date(), changes: changeLog.join('; ') });
@@ -321,7 +321,7 @@ const editPrescription = async (req, res) => {
       if (!ALLOWED_STATUSES.includes(status)) {
         return res.status(400).json({
           success: false,
-          message: `status must be one of: ${ALLOWED_STATUSES.join(', ')}`,
+          message: `status phải thuộc một trong: ${ALLOWED_STATUSES.join(', ')}`,
         });
       }
       changeLog.push(`Changed status from ${prescription.status} to ${status}`);
@@ -345,7 +345,7 @@ const editPrescription = async (req, res) => {
           if (!existing) {
             return res.status(400).json({
               success: false,
-              message: `Item _id ${entry._id} not found in this prescription`,
+              message: `Không tìm thấy _id ${entry._id} trong đơn thuốc này`,
             });
           }
         }
@@ -353,7 +353,7 @@ const editPrescription = async (req, res) => {
           if (!existing) {
             return res.status(400).json({
               success: false,
-              message: 'Soft-deleting an item requires its _id',
+              message: 'Xóa mềm một item yêu cầu phải có _id',
             });
           }
           softDeletePatches.push(existing);
@@ -363,7 +363,7 @@ const editPrescription = async (req, res) => {
           if (!existing) {
             return res.status(400).json({
               success: false,
-              message: 'Each item must include medicationId from the pharmacy database (unless soft-deleting with isActive:false)',
+              message: 'Mỗi item phải bao gồm medicationId từ cơ sở dữ liệu dược phẩm (trừ khi xóa mềm với isActive:false)',
             });
           }
           // No medicationId + an existing _id: treat as a lightweight patch
@@ -520,7 +520,7 @@ const editPrescription = async (req, res) => {
     }
 
     if (!changeLog.length) {
-      return res.status(200).json({ success: true, message: 'No changes detected', data: prescription, warnings: allWarnings });
+      return res.status(200).json({ success: true, message: 'Không có thay đổi nào được phát hiện', data: prescription, warnings: allWarnings });
     }
 
     prescription.editHistory.push({
@@ -558,10 +558,10 @@ const listPrescriptions = async (req, res) => {
     const filter = {};
     if (residentId) {
       if (!isValidObjectId(residentId)) {
-        return res.status(400).json({ success: false, message: 'Invalid residentId' });
+        return res.status(400).json({ success: false, message: 'residentId không hợp lệ' });
       }
       if (!isInScope(residentId, scope)) {
-        return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+        return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
       }
       filter.residentId = residentId;
     } else if (scope !== null) {
@@ -644,7 +644,7 @@ const listPrescriptions = async (req, res) => {
 const getPrescription = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
-      return res.status(400).json({ success: false, message: 'Invalid prescription id' });
+      return res.status(400).json({ success: false, message: 'ID đơn thuốc không hợp lệ' });
     }
 
     const prescription = await Prescription.findById(req.params.id)
@@ -655,13 +655,13 @@ const getPrescription = async (req, res) => {
       .populate('editHistory.editedBy', 'fullName role');
 
     if (!prescription) {
-      return res.status(404).json({ success: false, message: 'Prescription not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn thuốc' });
     }
 
     // Scope check
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(prescription.residentId._id || prescription.residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     const [takenCount, lateTakenCount, missedCount] = await Promise.all([
@@ -693,15 +693,15 @@ const estimatePrescriptionCost = async (req, res, next) => {
     const { residentId } = req.query;
 
     if (!isValidObjectId(id)) {
-      return res.status(400).json({ success: false, message: 'Invalid prescription id' });
+      return res.status(400).json({ success: false, message: 'ID đơn thuốc không hợp lệ' });
     }
     if (!residentId || !isValidObjectId(residentId)) {
-      return res.status(400).json({ success: false, message: 'residentId query parameter is required' });
+      return res.status(400).json({ success: false, message: 'residentId là tham số bắt buộc trong query' });
     }
 
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     const medicationCost = await paymentService.estimateMedicationCostForPrescription(id, residentId);

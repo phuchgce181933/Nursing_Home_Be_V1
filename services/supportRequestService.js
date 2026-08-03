@@ -5,12 +5,12 @@ const FAMILY_POPULATE = { path: 'familyAccountId', select: 'fullName email phone
 
 const submitSupportRequest = async (user, payload /*, req */) => {
   const { fullName, age, phone, address, notes } = payload || {};
-  if (!fullName || typeof fullName !== 'string') throw { statusCode: 400, message: 'fullName is required' };
-  if (age === undefined || Number.isNaN(Number(age))) throw { statusCode: 400, message: 'age is required' };
-  if (!phone || !phone.trim()) throw { statusCode: 400, message: 'phone is required' };
-  if (!address || !address.trim()) throw { statusCode: 400, message: 'address is required' };
+  if (!fullName || typeof fullName !== 'string') throw { statusCode: 400, message: 'fullName là bắt buộc' };
+  if (age === undefined || Number.isNaN(Number(age))) throw { statusCode: 400, message: 'age là bắt buộc' };
+  if (!phone || !phone.trim()) throw { statusCode: 400, message: 'phone là bắt buộc' };
+  if (!address || !address.trim()) throw { statusCode: 400, message: 'address là bắt buộc' };
 
-  const subject = `Support request from ${fullName}`;
+  const subject = `Yêu cầu hỗ trợ từ ${fullName}`;
   const doc = await supportRequestRepo.create({
     familyAccountId: new mongoose.Types.ObjectId(user._id || user.id),
     subject,
@@ -50,13 +50,13 @@ const listSupportRequests = async (user, query) => {
 const assertRequestAccess = (doc, user) => {
   const isOwner = String(doc.familyAccountId) === String(user._id || user.id);
   if (!isOwner && !isStaffRole(user.role)) {
-    throw { statusCode: 403, message: 'Forbidden' };
+    throw { statusCode: 403, message: 'Truy cập bị từ chối' };
   }
 };
 
 const getSupportRequest = async (user, requestId) => {
   const doc = await supportRequestRepo.findDocById(requestId);
-  if (!doc) throw { statusCode: 404, message: 'Support request not found' };
+  if (!doc) throw { statusCode: 404, message: 'Không tìm thấy yêu cầu hỗ trợ' };
   assertRequestAccess(doc, user);
 
   await doc.populate(FAMILY_POPULATE);
@@ -65,14 +65,14 @@ const getSupportRequest = async (user, requestId) => {
 
 const closeSupportRequest = async (user, requestId, body /*, req */) => {
   const action = body && body.action ? body.action : 'close';
-  if (!['close', 'cancel'].includes(action)) throw { statusCode: 400, message: 'Invalid action' };
+  if (!['close', 'cancel'].includes(action)) throw { statusCode: 400, message: 'Hành động không hợp lệ' };
 
   const doc = await supportRequestRepo.findDocById(requestId);
-  if (!doc) throw { statusCode: 404, message: 'Support request not found' };
+  if (!doc) throw { statusCode: 404, message: 'Không tìm thấy yêu cầu hỗ trợ' };
   assertRequestAccess(doc, user);
 
   if (doc.status === 'closed' || doc.status === 'resolved') {
-    throw { statusCode: 400, message: 'Request already closed' };
+    throw { statusCode: 400, message: 'Yêu cầu đã được đóng' };
   }
 
   doc.status = action === 'cancel' ? 'closed' : 'resolved';
@@ -85,10 +85,10 @@ const closeSupportRequest = async (user, requestId, body /*, req */) => {
 
 const addMessage = async (user, requestId, body) => {
   const text = body?.text?.trim();
-  if (!text) throw { statusCode: 400, message: 'text is required' };
+  if (!text) throw { statusCode: 400, message: 'text là bắt buộc' };
 
   const doc = await supportRequestRepo.findDocById(requestId);
-  if (!doc) throw { statusCode: 404, message: 'Support request not found' };
+  if (!doc) throw { statusCode: 404, message: 'Không tìm thấy yêu cầu hỗ trợ' };
   assertRequestAccess(doc, user);
 
   doc.messages.push({

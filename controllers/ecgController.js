@@ -15,7 +15,7 @@ const listECG = async (req, res) => {
 const getECG = async (req, res) => {
   try {
     const e = await ECG.findById(req.params.id).lean();
-    if (!e) return res.status(404).json({ message: 'ECG not found' });
+    if (!e) return res.status(404).json({ message: 'Không tìm thấy kết quả ECG' });
     return res.json({ success: true, data: e });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -35,7 +35,7 @@ const createECG = async (req, res) => {
 const updateECG = async (req, res) => {
   try {
     const e = await ECG.findById(req.params.id);
-    if (!e) return res.status(404).json({ message: 'ECG not found' });
+    if (!e) return res.status(404).json({ message: 'Không tìm thấy kết quả ECG' });
     Object.assign(e, req.body);
     await e.save();
     return res.json({ success: true, data: e });
@@ -47,7 +47,7 @@ const updateECG = async (req, res) => {
 const finalizeECG = async (req, res) => {
   try {
     const e = await ECG.findById(req.params.id);
-    if (!e) return res.status(404).json({ message: 'ECG not found' });
+    if (!e) return res.status(404).json({ message: 'Không tìm thấy kết quả ECG' });
     e.status = 'FINALIZED';
     await e.save();
     return res.json({ success: true, data: e });

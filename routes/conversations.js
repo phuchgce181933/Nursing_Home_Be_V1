@@ -15,7 +15,7 @@ const multipart = multer({ storage: multer.memoryStorage(), limits: { fileSize: 
 const requireContentOrAttachments = body('content').custom((value, { req }) => {
 	const hasText = typeof value === 'string' && value.trim().length > 0;
 	const hasAttachments = Array.isArray(req.body.attachments) && req.body.attachments.length > 0;
-	if (!hasText && !hasAttachments) throw new Error('content or attachments is required');
+	if (!hasText && !hasAttachments) throw new Error('Nội dung hoặc tệp đính kèm là bắt buộc');
 	return true;
 });
 
@@ -42,7 +42,7 @@ const handleAttachments = (fieldName = 'attachments') => async (req, res, next) 
 		return next();
 	} catch (err) {
 		console.error('Attachment upload failed', err);
-		return res.status(500).json({ message: 'Attachment upload failed: ' + err.message });
+		return res.status(500).json({ message: 'Tải tệp đính kèm thất bại: ' + err.message });
 	}
 };
 
@@ -54,18 +54,18 @@ const handleAttachments = (fieldName = 'attachments') => async (req, res, next) 
 const MIME_TYPE_SHAPE = /^[-\w.]+\/[-\w.+]+$/;
 const validateAttachmentsShape = body('attachments').custom((value) => {
 	if (value === undefined) return true;
-	if (!Array.isArray(value)) throw new Error('attachments must be an array');
-	if (value.length > 6) throw new Error('A message may have at most 6 attachments');
+	if (!Array.isArray(value)) throw new Error('attachments phải là một mảng');
+	if (value.length > 6) throw new Error('Một tin nhắn chỉ được đính kèm tối đa 6 tệp');
 	for (const att of value) {
-		if (!att || typeof att !== 'object') throw new Error('Each attachment must be an object');
+		if (!att || typeof att !== 'object') throw new Error('Mỗi tệp đính kèm phải là một object');
 		if (typeof att.fileUrl !== 'string' || !att.fileUrl.startsWith('https://res.cloudinary.com/')) {
-			throw new Error('attachment fileUrl must be a Cloudinary-hosted URL');
+			throw new Error('fileUrl của tệp đính kèm phải được lưu trữ trên Cloudinary');
 		}
 		if (att.mimeType && !MIME_TYPE_SHAPE.test(String(att.mimeType))) {
-			throw new Error('attachment mimeType is not a valid MIME type');
+			throw new Error('mimeType của tệp đính kèm không hợp lệ');
 		}
 		if (att.sizeInBytes != null && (typeof att.sizeInBytes !== 'number' || att.sizeInBytes < 0 || att.sizeInBytes > 10 * 1024 * 1024)) {
-			throw new Error('attachment sizeInBytes is invalid');
+			throw new Error('sizeInBytes của tệp đính kèm không hợp lệ');
 		}
 	}
 	return true;
@@ -74,7 +74,7 @@ const validateAttachmentsShape = body('attachments').custom((value) => {
 const validate = (checks) => async (req, res, next) => {
 	await Promise.all(checks.map((c) => c.run(req)));
 	const errors = validationResult(req);
-	if (!errors.isEmpty()) return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
+	if (!errors.isEmpty()) return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors: errors.array() });
 	next();
 };
 
@@ -82,13 +82,13 @@ const validate = (checks) => async (req, res, next) => {
 const guestCreationLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, // 15 minutes
 	max: 10, // limit each IP to 10 create attempts per windowMs
-	message: { message: 'Too many guest requests from this IP, please try again later' },
+	message: { message: 'Quá nhiều yêu cầu từ địa chỉ IP này, vui lòng thử lại sau' },
 });
 
 const guestMessageLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, // 15 minutes
 	max: 30, // limit each IP to 30 messages per window
-	message: { message: 'Too many messages from this IP, please slow down' },
+	message: { message: 'Quá nhiều tin nhắn từ địa chỉ IP này, vui lòng chậm lại' },
 });
 
 // Authenticated senders are keyed by user id (not IP) so shared-office IPs don't throttle
@@ -96,7 +96,7 @@ const guestMessageLimiter = rateLimit({
 const authenticatedMessageLimiter = rateLimit({
 	windowMs: 1 * 60 * 1000, // 1 minute
 	max: 30,
-	message: { message: 'Too many messages sent, please slow down' },
+	message: { message: 'Bạn đã gửi quá nhiều tin nhắn, vui lòng chậm lại' },
 	keyGenerator: (req) => (req.user && req.user._id ? String(req.user._id) : req.ip),
 });
 
@@ -188,7 +188,7 @@ router.get('/', protect, controller.listConversations);
  *         description: Search results
  */
 // Search conversations (q)
-router.get('/search', protect, validate([query('q').notEmpty().withMessage('q is required')]), controller.searchConversations);
+router.get('/search', protect, validate([query('q').notEmpty().withMessage('Từ khóa tìm kiếm (q) là bắt buộc')]), controller.searchConversations);
 
 /**
  * @swagger
@@ -230,7 +230,7 @@ router.post(
 	multipart.fields([{ name: 'attachments', maxCount: 6 }]),
 	handleAttachments('attachments'),
 	validate([
-		body('guestName').notEmpty().withMessage('guestName is required'),
+		body('guestName').notEmpty().withMessage('guestName là bắt buộc'),
 		// either email or phone must be provided - we'll validate in controller as well
 		validateAttachmentsShape,
 	]),
@@ -243,12 +243,12 @@ router.post(
 	guestMessageLimiter,
 	multipart.fields([{ name: 'attachments', maxCount: 6 }]),
 	handleAttachments('attachments'),
-	validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id'), requireContentOrAttachments, validateAttachmentsShape]),
+	validate([param('conversationId').isMongoId().withMessage('conversationId phải là một id hợp lệ'), requireContentOrAttachments, validateAttachmentsShape]),
 	controller.createGuestMessage
 );
 
 // Public: get guest conversation messages
-router.get('/guest/:conversationId/messages', validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id')]), controller.getGuestMessages);
+router.get('/guest/:conversationId/messages', validate([param('conversationId').isMongoId().withMessage('conversationId phải là một id hợp lệ')]), controller.getGuestMessages);
 
 /**
  * @swagger
@@ -289,7 +289,7 @@ router.post(
 	authenticatedMessageLimiter,
 	multipart.fields([{ name: 'attachments', maxCount: 6 }]),
 	handleAttachments('attachments'),
-	validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id'), requireContentOrAttachments, validateAttachmentsShape]),
+	validate([param('conversationId').isMongoId().withMessage('conversationId phải là một id hợp lệ'), requireContentOrAttachments, validateAttachmentsShape]),
 	controller.createMessage
 );
 
@@ -313,10 +313,10 @@ router.post(
  *         description: Conversation detail
  */
 // Get conversation detail
-router.get('/:conversationId', protect, validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id')]), controller.getConversationDetail);
+router.get('/:conversationId', protect, validate([param('conversationId').isMongoId().withMessage('conversationId phải là một id hợp lệ')]), controller.getConversationDetail);
 
 // Delete a conversation (admin or owning family)
-router.delete('/:conversationId', protect, validate([param('conversationId').isMongoId().withMessage('conversationId must be a valid id')]), controller.deleteConversation);
+router.delete('/:conversationId', protect, validate([param('conversationId').isMongoId().withMessage('conversationId phải là một id hợp lệ')]), controller.deleteConversation);
 
 /**
  * @swagger
@@ -347,6 +347,32 @@ router.delete('/:conversationId', protect, validate([param('conversationId').isM
  */
 // Get messages for a conversation (paginated)
 router.get('/:conversationId/messages', protect, controller.getMessages);
+
+/**
+ * @swagger
+ * /conversations/{conversationId}/messages/read:
+ *   patch:
+ *     tags:
+ *       - Conversations
+ *     summary: Mark all messages in a conversation (not sent by the caller) as read by the caller
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: conversationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Messages marked read
+ */
+router.patch(
+	'/:conversationId/messages/read',
+	protect,
+	validate([param('conversationId').isMongoId().withMessage('conversationId phải là một id hợp lệ')]),
+	controller.markMessagesRead
+);
 
 // Search messages (global or within a conversation)
 /**
@@ -382,6 +408,6 @@ router.get('/:conversationId/messages', protect, controller.getMessages);
  *       200:
  *         description: Paginated messages search results
  */
-router.get('/messages/search', protect, validate([query('q').notEmpty().withMessage('q is required')] ), controller.searchMessages);
+router.get('/messages/search', protect, validate([query('q').notEmpty().withMessage('Từ khóa tìm kiếm (q) là bắt buộc')] ), controller.searchMessages);
 
 module.exports = router;

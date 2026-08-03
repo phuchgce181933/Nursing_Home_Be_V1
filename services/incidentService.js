@@ -123,7 +123,7 @@ const isIncidentAccessibleToUser = async (incident, currentUser) => {
 const validateStatus = (status) => {
   const allowed = ['open', 'investigating', 'resolved', 'closed'];
   if (!allowed.includes(status)) {
-    throw new ServiceError('Invalid incident status', 400);
+    throw new ServiceError('Trạng thái sự cố không hợp lệ', 400);
   }
 };
 
@@ -376,12 +376,12 @@ const getAssignmentConflictsForStaff = async ({ incidentAt, residentIds = [], st
 
 const getAssignmentConflicts = async (currentUser, payload = {}) => {
   if (!currentUser || currentUser.role !== 'admin') {
-    throw new ServiceError('Only admins can check assignment conflicts', 403);
+    throw new ServiceError('Chỉ quản trị viên mới có thể kiểm tra xung đột phân công', 403);
   }
 
   const incidentAt = payload.incidentAt ? new Date(payload.incidentAt) : null;
   if (!incidentAt || Number.isNaN(incidentAt.getTime())) {
-    throw new ServiceError('incidentAt is required', 400);
+    throw new ServiceError('incidentAt là bắt buộc', 400);
   }
 
   const residentIds = normalizeResidentIds(payload.residentIds || payload.residentId || []);
@@ -405,7 +405,7 @@ const getResidentsForIncident = async (residentIds) => {
   if (!ids.length) return [];
   ids.forEach((id) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      throw new ServiceError('Invalid residentId', 400);
+      throw new ServiceError('residentId không hợp lệ', 400);
     }
   });
 
@@ -418,7 +418,7 @@ const getResidentsForIncident = async (residentIds) => {
   console.log('[DEBUG] getResidentsForIncident - first resident _id type:', residents[0]?._id?.constructor?.name);
 
   if (residents.length !== uniqueIds.length) {
-    throw new ServiceError('Resident not found', 404);
+    throw new ServiceError('Không tìm thấy cư dân', 404);
   }
 
   return residents;
@@ -442,7 +442,7 @@ const getStaffProfileByUserId = async (userId, user = null) => {
   
   if (!profile) {
     console.error('[ERROR] Staff profile not found and cannot be created for user:', userId);
-    throw new ServiceError('Staff profile not found for current user', 403);
+    throw new ServiceError('Không tìm thấy hồ sơ nhân viên cho người dùng hiện tại', 403);
   }
   
   console.log('[DEBUG] getStaffProfileByUserId - Returning profile:', profile._id);
@@ -514,6 +514,7 @@ const sendNotifications = async (incident, recipients, options = {}) => {
         to: recipient.email,
         incident,
         recipientName: recipient.fullName,
+        recipientRole: recipient.role,
         subject: options.emailSubject,
         message: options.content,
         assignedStaffNames: options.assignedStaffNames,
@@ -614,7 +615,7 @@ const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000; // allow small clock-skew, but block c
 
 const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
   if (value && value.length > max) {
-    throw new ServiceError(`${fieldName} must be at most ${max} characters`, 400);
+    throw new ServiceError(`${fieldName} không được vượt quá ${max} ký tự`, 400);
   }
 };
 
@@ -623,16 +624,16 @@ const createIncident = async (currentUser, payload) => {
   console.log('[DEBUG] currentUser:', { _id: currentUser._id, role: currentUser.role, email: currentUser.email });
   console.log('[DEBUG] payload:', { incidentType: payload?.incidentType, description: payload?.description?.substring(0, 50), residentIds: payload?.residentIds, residentId: payload?.residentId });
   
-  if (!payload?.incidentType?.trim()) throw new ServiceError('incidentType is required', 400);
-  if (!payload?.description?.trim()) throw new ServiceError('description is required', 400);
-  if (!payload?.incidentAt) throw new ServiceError('incidentAt is required', 400);
+  if (!payload?.incidentType?.trim()) throw new ServiceError('incidentType là bắt buộc', 400);
+  if (!payload?.description?.trim()) throw new ServiceError('description là bắt buộc', 400);
+  if (!payload?.incidentAt) throw new ServiceError('incidentAt là bắt buộc', 400);
 
   const incidentAtDate = new Date(payload.incidentAt);
   if (Number.isNaN(incidentAtDate.getTime())) {
-    throw new ServiceError('incidentAt is invalid', 400);
+    throw new ServiceError('incidentAt không hợp lệ', 400);
   }
   if (incidentAtDate.getTime() > Date.now() + MAX_FUTURE_SKEW_MS) {
-    throw new ServiceError('incidentAt cannot be in the future', 400);
+    throw new ServiceError('incidentAt không được ở tương lai', 400);
   }
 
   assertMaxLength(payload.incidentType.trim(), 'incidentType', 200);
@@ -689,7 +690,7 @@ const createIncident = async (currentUser, payload) => {
       ? residents.map((resident) => {
           const id = resident._id;
           if (!mongoose.Types.ObjectId.isValid(id)) {
-            throw new ServiceError(`Invalid resident ObjectId: ${id}`, 400);
+            throw new ServiceError(`ObjectId cư dân không hợp lệ: ${id}`, 400);
           }
           return new mongoose.Types.ObjectId(String(id));
         })
@@ -782,10 +783,10 @@ const listIncidents = async (currentUser, query) => {
 
 const getIncident = async (currentUser, id) => {
   const incident = await incidentRepo.findById(id);
-  if (!incident) throw new ServiceError('Incident not found', 404);
+  if (!incident) throw new ServiceError('Không tìm thấy sự cố', 404);
 
   const canView = await isIncidentAccessibleToUser(incident, currentUser);
-  if (!canView) throw new ServiceError('Incident not found', 404);
+  if (!canView) throw new ServiceError('Không tìm thấy sự cố', 404);
 
   return incident;
 };
@@ -794,14 +795,14 @@ const updateIncidentStatus = async (currentUser, id, payload) => {
   validateStatus(payload.status);
 
   const existing = await incidentRepo.findById(id);
-  if (!existing) throw new ServiceError('Incident not found', 404);
+  if (!existing) throw new ServiceError('Không tìm thấy sự cố', 404);
 
   // Prevent backward status transitions. Allowed statuses in order:
   const STATUS_ORDER = ['open', 'investigating', 'resolved', 'closed'];
   const currentIndex = STATUS_ORDER.indexOf(existing.status);
   const newIndex = STATUS_ORDER.indexOf(payload.status);
   if (newIndex < currentIndex) {
-    throw new ServiceError('Invalid status transition: cannot move to a previous state', 400);
+    throw new ServiceError('Chuyển đổi trạng thái không hợp lệ: không thể quay lại trạng thái trước đó', 400);
   }
 
   // Prevent direct transition to 'resolved' unless there is a valid resolution
@@ -840,20 +841,20 @@ const exportIncidents = async (currentUser, query) => {
 const assignHandlers = async (currentUser, id, payload) => {
   // Only admin can assign handlers
   if (!currentUser || currentUser.role !== 'admin') {
-    throw new ServiceError('Only admins can assign handlers', 403);
+    throw new ServiceError('Chỉ quản trị viên mới có thể chỉ định người xử lý', 403);
   }
 
   const existing = await incidentRepo.findById(id);
-  if (!existing) throw new ServiceError('Incident not found', 404);
+  if (!existing) throw new ServiceError('Không tìm thấy sự cố', 404);
 
   // Check if handlers are already assigned
   if (existing.assignedStaffIds && existing.assignedStaffIds.length > 0) {
-    throw new ServiceError('Handlers already assigned to this incident', 400);
+    throw new ServiceError('Sự cố này đã được chỉ định người xử lý', 400);
   }
 
   const assignedStaffIds = normalizeAssignedStaffIds(payload.assignedStaffIds);
   if (!assignedStaffIds || assignedStaffIds.length === 0) {
-    throw new ServiceError('At least one handler must be specified', 400);
+    throw new ServiceError('Phải chỉ định ít nhất một người xử lý', 400);
   }
 
   // Convert user IDs to staff profile IDs if needed
@@ -889,10 +890,10 @@ const assignHandlers = async (currentUser, id, payload) => {
 
 const updateIncidentResolution = async (currentUser, id, payload = {}, files = []) => {
   const existing = await incidentRepo.findById(id);
-  if (!existing) throw new ServiceError('Incident not found', 404);
+  if (!existing) throw new ServiceError('Không tìm thấy sự cố', 404);
 
   const canEdit = await isIncidentAccessibleToUser(existing, currentUser);
-  if (!canEdit) throw new ServiceError('Incident not found', 404);
+  if (!canEdit) throw new ServiceError('Không tìm thấy sự cố', 404);
 
   // Only allow entering resolution when incident is in 'investigating' state
   if (existing.status !== 'investigating') {
@@ -988,7 +989,7 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
 
 const reopenIncident = async (currentUser, id, payload) => {
   const existing = await incidentRepo.findById(id);
-  if (!existing) throw new ServiceError('Incident not found', 404);
+  if (!existing) throw new ServiceError('Không tìm thấy sự cố', 404);
 
   // Only allow reopening resolved incidents that have escalation requested
   if (existing.status !== 'resolved') {

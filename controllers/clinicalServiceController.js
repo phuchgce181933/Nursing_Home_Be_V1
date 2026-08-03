@@ -71,7 +71,7 @@ const listServices = async (req, res) => {
 const getService = async (req, res) => {
   try {
     const svc = await ClinicalService.findById(req.params.id).lean();
-    if (!svc) return res.status(404).json({ message: 'Service not found' });
+    if (!svc) return res.status(404).json({ message: 'Không tìm thấy dịch vụ' });
     return res.json({ success: true, data: svc });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -101,7 +101,7 @@ const createService = async (req, res) => {
 const updateService = async (req, res) => {
   try {
     const svc = await ClinicalService.findById(req.params.id);
-    if (!svc) return res.status(404).json({ message: 'Service not found' });
+    if (!svc) return res.status(404).json({ message: 'Không tìm thấy dịch vụ' });
     if (Array.isArray(req.body.fields)) {
       for (const field of req.body.fields) {
         const error = validateFieldThresholds(field);
@@ -122,7 +122,7 @@ const updateService = async (req, res) => {
 const deleteService = async (req, res) => {
   try {
     const svc = await ClinicalService.findById(req.params.id);
-    if (!svc) return res.status(404).json({ message: 'Service not found' });
+    if (!svc) return res.status(404).json({ message: 'Không tìm thấy dịch vụ' });
     svc.active = false;
     await svc.save();
     return res.json({ success: true });

@@ -59,7 +59,7 @@ const getCareTeamForFamily = async (familyUserId) => {
 // to populate the "message care staff" picker on the family side.
 const getCareTeam = async (req, res) => {
   try {
-    if (req.user.role !== 'family') return res.status(403).json({ message: 'Access forbidden' });
+    if (req.user.role !== 'family') return res.status(403).json({ message: 'Truy cập bị từ chối' });
     const careTeam = await getCareTeamForFamily(req.user._id);
     return res.json({ success: true, data: careTeam });
   } catch (err) {
@@ -108,10 +108,10 @@ const createConversation = async (req, res) => {
     // Staff direct conversation with a colleague (no family involved)
     if (targetUserId && !familyAccountId) {
       if (String(targetUserId) === String(req.user._id)) {
-        return res.status(400).json({ message: 'targetUserId must be a different user' });
+        return res.status(400).json({ message: 'targetUserId phải là một người dùng khác' });
       }
       const targetUser = await User.findById(targetUserId).select('_id role');
-      if (!targetUser) return res.status(404).json({ message: 'Target user not found' });
+      if (!targetUser) return res.status(404).json({ message: 'Không tìm thấy người dùng đích' });
 
       let conversation = await Conversation.findOne({
         familyAccountId: null,
@@ -128,7 +128,7 @@ const createConversation = async (req, res) => {
     }
 
     // Staff conversation about/with a specific family account
-    if (!familyAccountId) return res.status(400).json({ message: 'familyAccountId or targetUserId is required' });
+    if (!familyAccountId) return res.status(400).json({ message: 'familyAccountId hoặc targetUserId là bắt buộc' });
 
     let conversation = await Conversation.findOne({ familyAccountId, subject: subject || null });
     if (!conversation) {
@@ -164,8 +164,8 @@ const getStaffDirectory = async (req, res) => {
 const createGuestConversation = async (req, res) => {
   try {
     const { guestName, guestEmail, guestPhone, subject, content, attachments = [] } = req.body;
-    if (!guestName) return res.status(400).json({ message: 'guestName is required' });
-    if (!guestEmail && !guestPhone) return res.status(400).json({ message: 'guestEmail or guestPhone is required' });
+    if (!guestName) return res.status(400).json({ message: 'guestName là bắt buộc' });
+    if (!guestEmail && !guestPhone) return res.status(400).json({ message: 'guestEmail hoặc guestPhone là bắt buộc' });
     // guestEmail/guestPhone are alternatives (only one required above), so only check
     // format for whichever one was actually provided — mirrors the frontend widget's
     // validation to keep spam/garbage contacts from ever reaching the database.
@@ -237,11 +237,11 @@ const createGuestMessage = async (req, res) => {
     const { content, attachments = [], guestName, guestEmail, guestPhone } = req.body;
     const hasContent = typeof content === 'string' && content.trim().length > 0;
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
-    if (!hasContent && !hasAttachments) return res.status(400).json({ message: 'content or attachments is required' });
+    if (!hasContent && !hasAttachments) return res.status(400).json({ message: 'Nội dung hoặc tệp đính kèm là bắt buộc' });
 
     const conversation = await Conversation.findById(conversationId);
-    if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
-    if (!conversation.isGuest) return res.status(403).json({ message: 'Not a guest conversation' });
+    if (!conversation) return res.status(404).json({ message: 'Không tìm thấy cuộc trò chuyện' });
+    if (!conversation.isGuest) return res.status(403).json({ message: 'Không phải cuộc trò chuyện của khách' });
 
     // store guest message in-memory (temporary)
     const msgObj = {
@@ -288,8 +288,8 @@ const getGuestMessages = async (req, res) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50')));
 
     const conversation = await Conversation.findById(conversationId);
-    if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
-    if (!conversation.isGuest) return res.status(403).json({ message: 'Not a guest conversation' });
+    if (!conversation) return res.status(404).json({ message: 'Không tìm thấy cuộc trò chuyện' });
+    if (!conversation.isGuest) return res.status(403).json({ message: 'Không phải cuộc trò chuyện của khách' });
 
     // Merge messages persisted by staff (DB) with guest in-memory messages,
     // so staff replies are visible to the guest (mirrors getMessages below).
@@ -328,13 +328,13 @@ const createMessage = async (req, res) => {
     const { content, attachments = [], participantUserIds = [] } = req.body;
     const hasContent = typeof content === 'string' && content.trim().length > 0;
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
-    if (!hasContent && !hasAttachments) return res.status(400).json({ message: 'content or attachments is required' });
+    if (!hasContent && !hasAttachments) return res.status(400).json({ message: 'Nội dung hoặc tệp đính kèm là bắt buộc' });
 
     const conversation = await Conversation.findById(conversationId);
-    if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
+    if (!conversation) return res.status(404).json({ message: 'Không tìm thấy cuộc trò chuyện' });
 
     if (!assertConversationAccess(req.user, conversation)) {
-      return res.status(403).json({ message: 'Access forbidden' });
+      return res.status(403).json({ message: 'Truy cập bị từ chối' });
     }
 
     const message = await Message.create({
@@ -394,7 +394,50 @@ const listConversations = async (req, res) => {
       .populate('participantUserIds', 'fullName email role')
       .lean();
 
-    return res.json({ success: true, data: conversations });
+    const unreadCounts = await getUnreadCountsByConversation(conversations.map((c) => c._id), req.user._id);
+    const withUnread = conversations.map((c) => ({ ...c, unreadCount: unreadCounts.get(String(c._id)) || 0 }));
+
+    return res.json({ success: true, data: withUnread });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// Count of messages in each of `conversationIds` that `userId` neither sent nor has
+// marked read yet — powers the unread badge/dot on the conversation list.
+const getUnreadCountsByConversation = async (conversationIds, userId) => {
+  if (!conversationIds.length) return new Map();
+  const rows = await Message.aggregate([
+    {
+      $match: {
+        conversationId: { $in: conversationIds },
+        senderUserId: { $ne: userId },
+        readByUserIds: { $ne: userId },
+      },
+    },
+    { $group: { _id: '$conversationId', count: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((r) => [String(r._id), r.count]));
+};
+
+// Mark every message in a conversation not sent by the caller as read by them —
+// clears the unread dot/badge on the conversation list for this user.
+const markMessagesRead = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) return res.status(404).json({ message: 'Không tìm thấy cuộc trò chuyện' });
+    if (!assertConversationAccess(req.user, conversation)) {
+      return res.status(403).json({ message: 'Truy cập bị từ chối' });
+    }
+
+    await Message.updateMany(
+      { conversationId: conversation._id, senderUserId: { $ne: req.user._id } },
+      { $addToSet: { readByUserIds: req.user._id } }
+    );
+
+    return res.json({ success: true });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: err.message });
@@ -405,9 +448,9 @@ const getConversationDetail = async (req, res) => {
   try {
     const { conversationId } = req.params;
     const conversation = await Conversation.findById(conversationId).populate('participantUserIds', 'fullName email role').lean();
-    if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
+    if (!conversation) return res.status(404).json({ message: 'Không tìm thấy cuộc trò chuyện' });
     if (!assertConversationAccess(req.user, conversation)) {
-      return res.status(403).json({ message: 'Access forbidden' });
+      return res.status(403).json({ message: 'Truy cập bị từ chối' });
     }
     return res.json({ success: true, data: conversation });
   } catch (err) {
@@ -423,10 +466,10 @@ const getMessages = async (req, res) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50')));
 
     const conversation = await Conversation.findById(conversationId);
-    if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
+    if (!conversation) return res.status(404).json({ message: 'Không tìm thấy cuộc trò chuyện' });
 
     if (!assertConversationAccess(req.user, conversation)) {
-      return res.status(403).json({ message: 'Access forbidden' });
+      return res.status(403).json({ message: 'Truy cập bị từ chối' });
     }
 
     // If this is a guest conversation, merge messages persisted by admins (DB)
@@ -478,7 +521,7 @@ const getMessages = async (req, res) => {
 const searchConversations = async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
-    if (!q) return res.status(400).json({ message: 'q is required' });
+    if (!q) return res.status(400).json({ message: 'Từ khóa tìm kiếm (q) là bắt buộc' });
 
     const regex = new RegExp(escapeRegex(q), 'i');
     const scopeFilter = buildConversationScopeFilter(req.user);
@@ -515,7 +558,7 @@ const searchConversations = async (req, res) => {
 const searchMessages = async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
-    if (!q) return res.status(400).json({ message: 'q is required' });
+    if (!q) return res.status(400).json({ message: 'Từ khóa tìm kiếm (q) là bắt buộc' });
     const conversationId = req.query.conversationId;
     const page = Math.max(1, parseInt(req.query.page || '1'));
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50')));
@@ -524,9 +567,9 @@ const searchMessages = async (req, res) => {
     // if conversationId provided, restrict to that conversation
     if (conversationId) {
       const conversation = await Conversation.findById(conversationId);
-      if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
+      if (!conversation) return res.status(404).json({ message: 'Không tìm thấy cuộc trò chuyện' });
       if (!assertConversationAccess(req.user, conversation)) {
-        return res.status(403).json({ message: 'Access forbidden' });
+        return res.status(403).json({ message: 'Truy cập bị từ chối' });
       }
 
       // search persisted messages
@@ -612,11 +655,11 @@ const deleteConversation = async (req, res) => {
   try {
     const { conversationId } = req.params;
     const conversation = await Conversation.findById(conversationId);
-    if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
+    if (!conversation) return res.status(404).json({ message: 'Không tìm thấy cuộc trò chuyện' });
 
     // Admin, the owning family, or a staff participant may delete their own conversation.
     if (!assertConversationAccess(req.user, conversation)) {
-      return res.status(403).json({ message: 'Access forbidden' });
+      return res.status(403).json({ message: 'Truy cập bị từ chối' });
     }
 
     // delete persisted messages
@@ -635,7 +678,7 @@ const deleteConversation = async (req, res) => {
       }
     } catch (e) {}
 
-    return res.json({ success: true, message: 'Conversation deleted' });
+    return res.json({ success: true, message: 'Đã xóa cuộc trò chuyện' });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: err.message });
@@ -656,4 +699,5 @@ module.exports = {
   deleteConversation,
   searchConversations,
   searchMessages,
+  markMessagesRead,
 };

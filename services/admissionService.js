@@ -1,9 +1,12 @@
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const ServiceError = require('./serviceError');
 const admissionRepo = require('../repositories/admissionRepository');
 const invoiceRepo = require('../repositories/invoiceRepository');
 const { GENDERS, BLOOD_TYPES, ADMISSION_STATUSES, ADMISSION_ELIGIBILITY_STATUSES } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
-const { validatePhone } = require('../utils/validators');
+const { validatePhone, validateEmail } = require('../utils/validators');
+const mailService = require('./mailService');
 const User = require('../models/user');
 const Resident = require('../models/resident');
 const Bed = require('../models/bed');
@@ -20,7 +23,7 @@ const CITIZEN_ID_REGEX = /^(\d{12}|[A-Za-z0-9]{8,12})$/;
 
 const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
   if (value && value.length > max) {
-    throw new ServiceError(`${fieldName} must be at most ${max} characters`, 400);
+    throw new ServiceError(`${fieldName} phải có tối đa ${max} ký tự`, 400);
   }
 };
 
@@ -190,7 +193,7 @@ const generateRequestCode = async () => {
     const exists = await admissionRepo.findByRequestCode(code);
     if (!exists) return code;
   }
-  throw new ServiceError('Unable to generate request code', 500);
+  throw new ServiceError('Không thể tạo mã yêu cầu', 500);
 };
 
 const normalizeStringArray = (value) => {
@@ -213,33 +216,33 @@ const buildApplicant = (applicant, relationshipToRequester) => {
         ? Object.keys(applicant).join(', ') || '(empty object)'
         : typeof applicant;
     throw new ServiceError(
-      `applicant.fullName is required. Received applicant keys: ${receivedKeys}. Send JSON body with Content-Type: application/json.`,
+      `applicant.fullName là bắt buộc. Các khóa nhận được trong applicant: ${receivedKeys}. Vui lòng gửi JSON body với Content-Type: application/json.`,
       400
     );
   }
 
   const relationship = (applicant.relationshipToRequester || relationshipToRequester)?.trim();
   if (!relationship) {
-    throw new ServiceError('applicant.relationshipToRequester is required', 400);
+    throw new ServiceError('applicant.relationshipToRequester là bắt buộc', 400);
   }
 
   if (applicant.gender && !GENDERS.includes(applicant.gender)) {
-    throw new ServiceError(`applicant.gender must be one of: ${GENDERS.join(', ')}`, 400);
+    throw new ServiceError(`applicant.gender phải thuộc một trong: ${GENDERS.join(', ')}`, 400);
   }
   if (applicant.bloodType && !BLOOD_TYPES.includes(applicant.bloodType)) {
-    throw new ServiceError(`applicant.bloodType must be one of: ${BLOOD_TYPES.join(', ')}`, 400);
+    throw new ServiceError(`applicant.bloodType phải thuộc một trong: ${BLOOD_TYPES.join(', ')}`, 400);
   }
 
   const citizenId = applicant.citizenId?.trim();
   if (citizenId && !CITIZEN_ID_REGEX.test(citizenId)) {
-    throw new ServiceError('applicant.citizenId must be a 12-digit CCCD or 8-12 alphanumeric passport number', 400);
+    throw new ServiceError('applicant.citizenId phải là CCCD 12 chữ số hoặc số hộ chiếu 8-12 ký tự chữ và số', 400);
   }
 
   assertMaxLength(applicant.initialHealthCondition?.trim(), 'applicant.initialHealthCondition');
 
   const dateOfBirth = applicant.dateOfBirth ? new Date(applicant.dateOfBirth) : undefined;
   if (applicant.dateOfBirth && Number.isNaN(dateOfBirth?.getTime())) {
-    throw new ServiceError('applicant.dateOfBirth is invalid', 400);
+    throw new ServiceError('applicant.dateOfBirth không hợp lệ', 400);
   }
   if (dateOfBirth) {
     const today = new Date();
@@ -278,7 +281,7 @@ const buildApplicant = (applicant, relationshipToRequester) => {
 const submitAdmissionRequest = async (user, body, req) => {
   if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
     throw new ServiceError(
-      'Request body is empty or not parsed. Use POST with Header Content-Type: application/json and Body type raw → JSON.',
+      'Nội dung yêu cầu trống hoặc chưa được phân tích. Vui lòng dùng POST với Header Content-Type: application/json và Body type raw → JSON.',
       400
     );
   }
@@ -294,7 +297,7 @@ const submitAdmissionRequest = async (user, body, req) => {
   } = body;
 
   if (!residentId && (!applicant || typeof applicant !== 'object')) {
-    throw new ServiceError('applicant object is required in request body', 400);
+    throw new ServiceError('applicant object là bắt buộc trong request body', 400);
   }
 
   // Handle base64 avatar upload for applicant
@@ -326,15 +329,15 @@ const submitAdmissionRequest = async (user, body, req) => {
   if (resolvedResidentId) {
     const resident = await admissionRepo.assertFamilyResidentAccess(user._id, resolvedResidentId);
     if (!resident) {
-      throw new ServiceError('Access denied: resident is not linked to your account', 403);
+      throw new ServiceError('Truy cập bị từ chối: cư dân không được liên kết với tài khoản của bạn', 403);
     }
     if (resident.residencyStatus === 'admitted') {
-      throw new ServiceError('This resident is already admitted', 400);
+      throw new ServiceError('Cư dân này đã được tiếp nhận', 400);
     }
 
     const activeForResident = await admissionRepo.findActiveAdmission({ residentId: resolvedResidentId });
     if (activeForResident) {
-      throw new ServiceError('An active admission request already exists for this resident', 409);
+      throw new ServiceError('Đã tồn tại yêu cầu nhập viện đang hoạt động cho cư dân này', 409);
     }
 
     resolvedApplicant = buildApplicant(
@@ -364,7 +367,7 @@ const submitAdmissionRequest = async (user, body, req) => {
     }
     const activeDuplicate = await admissionRepo.findActiveAdmission(duplicateFilter);
     if (activeDuplicate) {
-      throw new ServiceError('You already have a pending admission request for this person', 409);
+      throw new ServiceError('Bạn đã có yêu cầu nhập viện đang chờ xử lý cho người này', 409);
     }
   }
 
@@ -372,10 +375,10 @@ const submitAdmissionRequest = async (user, body, req) => {
   if (preferredAdmissionDate) {
     preferredDate = new Date(preferredAdmissionDate);
     if (Number.isNaN(preferredDate.getTime())) {
-      throw new ServiceError('preferredAdmissionDate is invalid', 400);
+      throw new ServiceError('preferredAdmissionDate không hợp lệ', 400);
     }
     if (preferredDate < getStartOfTodayVN()) {
-      throw new ServiceError('preferredAdmissionDate must be today or in the future', 400);
+      throw new ServiceError('preferredAdmissionDate phải là hôm nay hoặc trong tương lai', 400);
     }
   }
 
@@ -418,7 +421,237 @@ const submitAdmissionRequest = async (user, body, req) => {
   });
 
   return {
-    message: 'Admission request submitted successfully',
+    message: 'Đã gửi yêu cầu nhập viện thành công',
+    admission: formatAdmission(admission),
+  };
+};
+
+// Front-desk staff create this on behalf of a walk-in family that hasn't
+// registered an account yet — familyAccountId stays unset until checkInResident
+// auto-provisions one (see there for why: the family only needs login access
+// once the resident is actually admitted, not for every earlier pipeline stage).
+const createWalkInAdmission = async (admin, body, req) => {
+  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
+    throw new ServiceError('Nội dung yêu cầu trống hoặc chưa được phân tích. Vui lòng sử dụng Content-Type: application/json.', 400);
+  }
+
+  const {
+    applicant,
+    relationshipToRequester,
+    preferredAdmissionDate,
+    reasonForAdmission,
+    notes,
+    requestedByName,
+    requestedByPhone,
+    requestedByEmail,
+  } = body;
+
+  if (!applicant || typeof applicant !== 'object') {
+    throw new ServiceError('applicant object là bắt buộc trong request body', 400);
+  }
+
+  const resolvedApplicant = buildApplicant(applicant, relationshipToRequester);
+
+  const contactName = requestedByName?.trim();
+  if (!contactName) {
+    throw new ServiceError('requestedByName là bắt buộc (người thân liên hệ gửi yêu cầu nhập viện này)', 400);
+  }
+
+  const contactPhone = requestedByPhone?.trim();
+  const contactEmail = requestedByEmail?.trim().toLowerCase();
+  if (!contactPhone && !contactEmail) {
+    throw new ServiceError('Vui lòng cung cấp requestedByEmail hoặc requestedByPhone cho người thân liên hệ', 400);
+  }
+  if (contactPhone) {
+    const phoneError = validatePhone(contactPhone);
+    if (phoneError) throw new ServiceError(`requestedByPhone: ${phoneError}`, 400);
+  }
+  if (contactEmail) {
+    const emailError = validateEmail(contactEmail);
+    if (emailError) throw new ServiceError(`requestedByEmail: ${emailError}`, 400);
+  }
+
+  let preferredDate;
+  if (preferredAdmissionDate) {
+    preferredDate = new Date(preferredAdmissionDate);
+    if (Number.isNaN(preferredDate.getTime())) {
+      throw new ServiceError('preferredAdmissionDate không hợp lệ', 400);
+    }
+    if (preferredDate < getStartOfTodayVN()) {
+      throw new ServiceError('preferredAdmissionDate phải là hôm nay hoặc trong tương lai', 400);
+    }
+  }
+
+  assertMaxLength(reasonForAdmission?.trim(), 'reasonForAdmission');
+  assertMaxLength(notes?.trim(), 'notes');
+
+  const requestCode = await generateRequestCode();
+  const admission = await admissionRepo.createAdmission({
+    requestCode,
+    residentId: null,
+    familyAccountId: null,
+    applicant: resolvedApplicant,
+    preferredAdmissionDate: preferredDate,
+    reasonForAdmission: reasonForAdmission?.trim(),
+    requestedByName: contactName,
+    requestedByPhone: contactPhone,
+    requestedByEmail: contactEmail,
+    notes: notes?.trim(),
+    status: 'new_request',
+    eligibilityStatus: 'pending',
+  });
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'CREATE_WALK_IN_ADMISSION',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    afterData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      applicantName: admission.applicant?.fullName,
+      requestedByName: contactName,
+    },
+    req,
+  });
+
+  return {
+    message: 'Đã tạo yêu cầu nhập viện trực tiếp thành công',
+    admission: formatAdmission(admission),
+  };
+};
+
+// Public, unauthenticated self-service admission: unlike createWalkInAdmission (staff-entered,
+// account provisioned later at check-in), this creates the family account and sends the login
+// credentials immediately, since there's no staff member to hand a temp password to in person.
+const submitGuestAdmissionRequest = async (body, req) => {
+  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
+    throw new ServiceError('Nội dung yêu cầu trống hoặc chưa được phân tích. Vui lòng sử dụng Content-Type: application/json.', 400);
+  }
+
+  const {
+    applicant,
+    relationshipToRequester,
+    preferredAdmissionDate,
+    reasonForAdmission,
+    notes,
+    requestedByName,
+    requestedByPhone,
+    requestedByEmail,
+  } = body;
+
+  if (!applicant || typeof applicant !== 'object') {
+    throw new ServiceError('applicant object là bắt buộc trong request body', 400);
+  }
+
+  const resolvedApplicant = buildApplicant(applicant, relationshipToRequester);
+
+  const contactName = requestedByName?.trim();
+  if (!contactName) {
+    throw new ServiceError('requestedByName là bắt buộc (người thân liên hệ gửi yêu cầu nhập viện này)', 400);
+  }
+
+  const contactPhone = requestedByPhone?.trim();
+  const contactEmail = requestedByEmail?.trim().toLowerCase();
+  if (!contactPhone && !contactEmail) {
+    throw new ServiceError('Vui lòng cung cấp requestedByEmail hoặc requestedByPhone cho người thân liên hệ', 400);
+  }
+  if (contactPhone) {
+    const phoneError = validatePhone(contactPhone);
+    if (phoneError) throw new ServiceError(`requestedByPhone: ${phoneError}`, 400);
+  }
+  if (contactEmail) {
+    const emailError = validateEmail(contactEmail);
+    if (emailError) throw new ServiceError(`requestedByEmail: ${emailError}`, 400);
+  }
+
+  const existing = contactEmail
+    ? await User.findOne({ email: contactEmail })
+    : await User.findOne({ phone: contactPhone });
+  if (existing) {
+    throw new ServiceError(
+      'Email/số điện thoại này đã có tài khoản — vui lòng đăng nhập để gửi yêu cầu nhập viện',
+      409
+    );
+  }
+
+  let preferredDate;
+  if (preferredAdmissionDate) {
+    preferredDate = new Date(preferredAdmissionDate);
+    if (Number.isNaN(preferredDate.getTime())) {
+      throw new ServiceError('preferredAdmissionDate không hợp lệ', 400);
+    }
+    if (preferredDate < getStartOfTodayVN()) {
+      throw new ServiceError('preferredAdmissionDate phải là hôm nay hoặc trong tương lai', 400);
+    }
+  }
+
+  assertMaxLength(reasonForAdmission?.trim(), 'reasonForAdmission');
+  assertMaxLength(notes?.trim(), 'notes');
+
+  const tempPassword = generateTempPassword();
+  const passwordHash = await bcrypt.hash(tempPassword, 10);
+  const newUser = await User.create({
+    fullName: contactName,
+    email: contactEmail || undefined,
+    phone: contactPhone || undefined,
+    passwordHash,
+    role: 'family',
+    isActive: true,
+  });
+
+  const requestCode = await generateRequestCode();
+  const admission = await admissionRepo.createAdmission({
+    requestCode,
+    residentId: null,
+    familyAccountId: newUser._id,
+    applicant: resolvedApplicant,
+    preferredAdmissionDate: preferredDate,
+    reasonForAdmission: reasonForAdmission?.trim(),
+    requestedByName: contactName,
+    requestedByPhone: contactPhone,
+    requestedByEmail: contactEmail,
+    notes: notes?.trim(),
+    status: 'new_request',
+    eligibilityStatus: 'pending',
+  });
+
+  if (contactEmail) {
+    await mailService.sendFamilyAccountCreatedEmail({
+      to: contactEmail,
+      fullName: newUser.fullName,
+      residentName: resolvedApplicant.fullName,
+      email: contactEmail,
+      password: tempPassword,
+    }).catch((err) => console.error('Failed to send guest admission account email:', err.message));
+  } else if (contactPhone) {
+    const loginUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    await mailService.sendTextBeeSms({
+      to: contactPhone,
+      message: `An Nhien: Tai khoan cua ban da duoc tao de gui yeu cau nhap vien cho ${resolvedApplicant.fullName || ''}. SDT dang nhap: ${contactPhone} - Mat khau tam: ${tempPassword}. Vui long doi mat khau sau khi dang nhap tai ${loginUrl}.`,
+    }).catch((err) => console.error('Failed to send guest admission account SMS:', err.message));
+  }
+
+  await createAuditLog({
+    actorUserId: newUser._id,
+    actorRole: newUser.role,
+    action: 'SUBMIT_GUEST_ADMISSION_REQUEST',
+    module: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    afterData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      applicantName: admission.applicant?.fullName,
+      requestedByName: contactName,
+    },
+    req,
+  });
+
+  return {
+    message: 'Đã gửi yêu cầu nhập viện thành công. Thông tin đăng nhập đã được gửi qua email/số điện thoại của bạn.',
     admission: formatAdmission(admission),
   };
 };
@@ -428,7 +661,7 @@ const listAdmissionHistory = async (user, query) => {
 
   if (query.status) {
     if (!ADMISSION_STATUSES.includes(query.status)) {
-      throw new ServiceError(`status must be one of: ${ADMISSION_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${ADMISSION_STATUSES.join(', ')}`, 400);
     }
     filter.status = query.status;
   }
@@ -437,12 +670,12 @@ const listAdmissionHistory = async (user, query) => {
     filter.requestedAt = {};
     if (query.from) {
       const from = new Date(query.from);
-      if (Number.isNaN(from.getTime())) throw new ServiceError('from date is invalid', 400);
+      if (Number.isNaN(from.getTime())) throw new ServiceError('from không hợp lệ', 400);
       filter.requestedAt.$gte = from;
     }
     if (query.to) {
       const to = new Date(query.to);
-      if (Number.isNaN(to.getTime())) throw new ServiceError('to date is invalid', 400);
+      if (Number.isNaN(to.getTime())) throw new ServiceError('to không hợp lệ', 400);
       filter.requestedAt.$lte = to;
     }
   }
@@ -476,7 +709,7 @@ const listAdmissionHistory = async (user, query) => {
 const getAdmissionRequest = async (user, admissionId) => {
   const admission = await admissionRepo.findByIdForFamily(admissionId, user._id);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
   await admission.populate([
     { path: 'residentId', select: 'residentCode fullName residencyStatus avatarUrl' },
@@ -497,19 +730,19 @@ const getAdmissionRequest = async (user, admissionId) => {
 const cancelAdmissionRequest = async (user, admissionId, body, req) => {
   const admission = await admissionRepo.findByIdForFamily(admissionId, user._id);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (admission.status === 'cancelled') {
-    throw new ServiceError('This admission request is already cancelled', 400);
+    throw new ServiceError('Yêu cầu nhập viện này đã bị hủy', 400);
   }
 
   if (admission.status === 'checked_in') {
-    throw new ServiceError('Cannot cancel an admission request that has already been checked in', 400);
+    throw new ServiceError('Không thể hủy yêu cầu nhập viện đã được nhận vào', 400);
   }
 
   if (!admissionRepo.CANCELLABLE_STATUSES.includes(admission.status)) {
-    throw new ServiceError(`Cannot cancel request with status: ${admission.status}`, 400);
+    throw new ServiceError(`Không thể hủy yêu cầu với trạng thái: ${admission.status}`, 400);
   }
 
   // Block cancellation if the intake clinical appointment has already been completed by the doctor
@@ -549,7 +782,7 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
   });
 
   return {
-    message: 'Admission request cancelled successfully',
+    message: 'Đã hủy yêu cầu nhập viện thành công',
     admission: formatAdmission(updated),
   };
 };
@@ -576,7 +809,7 @@ const adminListAdmissions = async (query, user) => {
       .filter(Boolean);
     for (const s of statuses) {
       if (!ADMISSION_STATUSES.includes(s)) {
-        throw new ServiceError(`status must be one of: ${ADMISSION_STATUSES.join(', ')}`, 400);
+        throw new ServiceError(`status phải thuộc một trong: ${ADMISSION_STATUSES.join(', ')}`, 400);
       }
     }
     filter.status = statuses.length === 1 ? statuses[0] : { $in: statuses };
@@ -585,7 +818,7 @@ const adminListAdmissions = async (query, user) => {
   if (query.eligibilityStatus) {
     const { ADMISSION_ELIGIBILITY_STATUSES } = require('../models/enums');
     if (!ADMISSION_ELIGIBILITY_STATUSES.includes(query.eligibilityStatus)) {
-      throw new ServiceError(`eligibilityStatus must be one of: ${ADMISSION_ELIGIBILITY_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`eligibilityStatus phải thuộc một trong: ${ADMISSION_ELIGIBILITY_STATUSES.join(', ')}`, 400);
     }
     filter.eligibilityStatus = query.eligibilityStatus;
   }
@@ -594,12 +827,12 @@ const adminListAdmissions = async (query, user) => {
     filter.requestedAt = {};
     if (query.from) {
       const from = new Date(query.from);
-      if (Number.isNaN(from.getTime())) throw new ServiceError('from date is invalid', 400);
+      if (Number.isNaN(from.getTime())) throw new ServiceError('from không hợp lệ', 400);
       filter.requestedAt.$gte = from;
     }
     if (query.to) {
       const to = new Date(query.to);
-      if (Number.isNaN(to.getTime())) throw new ServiceError('to date is invalid', 400);
+      if (Number.isNaN(to.getTime())) throw new ServiceError('to không hợp lệ', 400);
       filter.requestedAt.$lte = to;
     }
   }
@@ -670,12 +903,12 @@ const adminListAdmissions = async (query, user) => {
 const adminGetAdmission = async (admissionId, user) => {
   const admission = await admissionRepo.findByIdForAdmin(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
   if (user && ['doctor', 'nurse'].includes(user.role)) {
     const medicalStatuses = ADMISSION_STATUSES;
     if (!medicalStatuses.includes(admission.status)) {
-      throw new ServiceError('Access denied: medical staff can only view requests in allowed phases', 403);
+      throw new ServiceError('Truy cập bị từ chối: nhân viên y tế chỉ có thể xem các yêu cầu trong giai đoạn được phép', 403);
     }
   }
   const formatted = formatAdmission(admission, { includeFamily: true });
@@ -699,12 +932,12 @@ const adminGetAdmission = async (admissionId, user) => {
 const approveAdmission = async (admin, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (!admissionRepo.APPROVABLE_STATUSES.includes(admission.status)) {
     throw new ServiceError(
-      `Cannot approve admission with status: ${admission.status}. Only ${admissionRepo.APPROVABLE_STATUSES.join(', ')} are allowed.`,
+      `Không thể duyệt yêu cầu nhập viện với trạng thái: ${admission.status}. Chỉ cho phép: ${admissionRepo.APPROVABLE_STATUSES.join(', ')}.`,
       400
     );
   }
@@ -745,7 +978,9 @@ const approveAdmission = async (admin, admissionId, body, req) => {
       chronicConditions: applicant.chronicConditions || [],
       initialHealthCondition: applicant.initialHealthCondition,
       residencyStatus: 'pending',
-      familyPortalAccountIds: [admission.familyAccountId],
+      // Walk-in admissions don't have a family account yet at this stage
+      // (checkInResident provisions one once the resident is actually admitted).
+      familyPortalAccountIds: admission.familyAccountId ? [admission.familyAccountId] : [],
       avatarUrl: applicant.avatarUrl,
       phone: applicant.phone,
     });
@@ -791,7 +1026,7 @@ const approveAdmission = async (admin, admissionId, body, req) => {
   });
 
   return {
-    message: 'Admission request approved successfully',
+    message: 'Đã duyệt yêu cầu nhập viện thành công',
     admission: formatAdmission(updated, { includeFamily: true }),
   };
 };
@@ -799,19 +1034,19 @@ const approveAdmission = async (admin, admissionId, body, req) => {
 const rejectAdmission = async (admin, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (!admissionRepo.REJECTABLE_STATUSES.includes(admission.status)) {
     throw new ServiceError(
-      `Cannot reject admission with status: ${admission.status}. Only ${admissionRepo.REJECTABLE_STATUSES.join(', ')} are allowed.`,
+      `Không thể từ chối yêu cầu nhập viện với trạng thái: ${admission.status}. Chỉ cho phép: ${admissionRepo.REJECTABLE_STATUSES.join(', ')}.`,
       400
     );
   }
 
   const rejectionReason = body?.rejectionReason?.trim() || '';
   if (!rejectionReason) {
-    throw new ServiceError('rejectionReason is required when rejecting an admission request', 400);
+    throw new ServiceError('rejectionReason là bắt buộc khi từ chối yêu cầu nhập viện', 400);
   }
   assertMaxLength(rejectionReason, 'rejectionReason');
 
@@ -837,7 +1072,7 @@ const rejectAdmission = async (admin, admissionId, body, req) => {
   });
 
   return {
-    message: 'Admission request rejected successfully',
+    message: 'Đã từ chối yêu cầu nhập viện thành công',
     admission: formatAdmission(updated, { includeFamily: true }),
   };
 };
@@ -846,20 +1081,20 @@ const rejectAdmission = async (admin, admissionId, body, req) => {
 const preAdmissionConsultation = async (user, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   // Allow consultation when admission is in any medical phase or contracting/checked_in
   if (!['new_request', 'consulting', 'assessing', 'contracting', 'checked_in'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot perform consultation on admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting, checked_in are allowed.`,
+      `Không thể thực hiện tư vấn cho yêu cầu nhập viện với trạng thái: ${admission.status}. Chỉ cho phép: new_request, consulting, assessing, contracting, checked_in.`,
       400
     );
   }
 
   const consultationNotes = body?.consultationNotes?.trim();
   if (!consultationNotes) {
-    throw new ServiceError('consultationNotes is required', 400);
+    throw new ServiceError('consultationNotes là bắt buộc', 400);
   }
   assertMaxLength(consultationNotes, 'consultationNotes');
   assertMaxLength(body?.notes?.trim(), 'notes');
@@ -898,7 +1133,7 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
   });
 
   return {
-    message: 'Pre-admission consultation recorded successfully',
+    message: 'Đã ghi nhận tư vấn trước nhập viện thành công',
     admission: formatAdmission(updated),
   };
 };
@@ -907,23 +1142,23 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
 const scheduleInitialAssessment = async (user, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (!['new_request', 'consulting', 'assessing'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot schedule assessment for admission with status: ${admission.status}`,
+      `Không thể đặt lịch đánh giá cho yêu cầu nhập viện với trạng thái: ${admission.status}`,
       400
     );
   }
 
   const scheduledAt = body?.scheduledAt ? new Date(body.scheduledAt) : null;
   if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
-    throw new ServiceError('scheduledAt is required and must be a valid date', 400);
+    throw new ServiceError('scheduledAt là bắt buộc và phải là ngày hợp lệ', 400);
   }
 
   if (scheduledAt <= new Date()) {
-    throw new ServiceError('scheduledAt must be a future date', 400);
+    throw new ServiceError('scheduledAt phải là ngày trong tương lai', 400);
   }
 
   assertMaxLength(body?.initialAssessmentNotes?.trim(), 'initialAssessmentNotes');
@@ -951,7 +1186,7 @@ const scheduleInitialAssessment = async (user, admissionId, body, req) => {
   });
 
   return {
-    message: 'Initial assessment scheduled successfully',
+    message: 'Đã lên lịch đánh giá ban đầu thành công',
     admission: formatAdmission(updated),
   };
 };
@@ -960,24 +1195,24 @@ const scheduleInitialAssessment = async (user, admissionId, body, req) => {
 const assignConsultant = async (admin, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (['cancelled', 'checked_in'].includes(admission.status)) {
-    throw new ServiceError(`Cannot assign consultant to admission with status: ${admission.status}`, 400);
+    throw new ServiceError(`Không thể chỉ định tư vấn viên cho yêu cầu nhập viện với trạng thái: ${admission.status}`, 400);
   }
 
   const consultantId = body?.consultantId;
   if (!consultantId) {
-    throw new ServiceError('consultantId is required', 400);
+    throw new ServiceError('consultantId là bắt buộc', 400);
   }
 
   const consultant = await User.findById(consultantId);
   if (!consultant) {
-    throw new ServiceError('Consultant user not found', 404);
+    throw new ServiceError('Không tìm thấy người dùng tư vấn viên', 404);
   }
   if (!['doctor', 'nurse'].includes(consultant.role)) {
-    throw new ServiceError('Consultant must be a doctor or nurse', 400);
+    throw new ServiceError('Tư vấn viên phải là bác sĩ hoặc điều dưỡng', 400);
   }
 
   // Anti-spam: Chặn gán lại cùng consultant
@@ -1005,7 +1240,7 @@ const assignConsultant = async (admin, admissionId, body, req) => {
   });
 
   return {
-    message: 'Consultant assigned successfully',
+    message: 'Đã phân công tư vấn viên thành công',
     admission: formatAdmission(updated),
   };
 };
@@ -1014,12 +1249,12 @@ const assignConsultant = async (admin, admissionId, body, req) => {
 const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (!['new_request', 'consulting', 'assessing', 'contracting', 'checked_in'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot evaluate eligibility for admission with status: ${admission.status}. Only new_request, consulting, assessing, contracting, checked_in are allowed.`,
+      `Không thể đánh giá điều kiện nhập viện cho yêu cầu với trạng thái: ${admission.status}. Chỉ cho phép: new_request, consulting, assessing, contracting, checked_in.`,
       400
     );
   }
@@ -1031,7 +1266,7 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
 
   const assessmentResult = body?.assessmentResult?.trim();
   if (!assessmentResult) {
-    throw new ServiceError('assessmentResult is required', 400);
+    throw new ServiceError('assessmentResult là bắt buộc', 400);
   }
   assertMaxLength(assessmentResult, 'assessmentResult');
   assertMaxLength(body?.rejectionReason?.trim(), 'rejectionReason');
@@ -1121,27 +1356,27 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
 const assignServicePackage = async (admin, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (!['assessing', 'contracting'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot assign service package to admission with status: ${admission.status}. Only assessing, contracting are allowed.`,
+      `Không thể gán gói dịch vụ cho yêu cầu nhập viện với trạng thái: ${admission.status}. Chỉ cho phép: assessing, contracting.`,
       400
     );
   }
 
   const servicePackageId = body?.servicePackageId;
   if (!servicePackageId) {
-    throw new ServiceError('servicePackageId is required', 400);
+    throw new ServiceError('servicePackageId là bắt buộc', 400);
   }
 
   const pkg = await servicePackageRepo.findById(servicePackageId);
   if (!pkg) {
-    throw new ServiceError('Service package not found', 404);
+    throw new ServiceError('Không tìm thấy gói dịch vụ', 404);
   }
   if (!pkg.isActive) {
-    throw new ServiceError('Cannot assign an inactive service package', 400);
+    throw new ServiceError('Không thể gán gói dịch vụ đã ngừng hoạt động', 400);
   }
 
   const updateData = {
@@ -1154,7 +1389,7 @@ const assignServicePackage = async (admin, admissionId, body, req) => {
     : undefined;
   if (contractDurationMonths !== undefined) {
     if (!Number.isFinite(contractDurationMonths) || contractDurationMonths < 1) {
-      throw new ServiceError('contractDurationMonths must be a positive number', 400);
+      throw new ServiceError('contractDurationMonths phải là số dương', 400);
     }
     updateData.contractDurationMonths = Math.floor(contractDurationMonths);
   }
@@ -1166,7 +1401,7 @@ const assignServicePackage = async (admin, admissionId, body, req) => {
       : undefined;
   if (contractDiscountPercent !== undefined) {
     if (!Number.isFinite(contractDiscountPercent) || contractDiscountPercent < 0 || contractDiscountPercent > 100) {
-      throw new ServiceError('contractDiscountPercent must be a number between 0 and 100', 400);
+      throw new ServiceError('contractDiscountPercent phải là số trong khoảng từ 0 đến 100', 400);
     }
     updateData.contractDiscountPercent = Math.round(contractDiscountPercent * 100) / 100;
   }
@@ -1198,7 +1433,7 @@ const assignServicePackage = async (admin, admissionId, body, req) => {
   });
 
   return {
-    message: 'Service package assigned successfully',
+    message: 'Đã gán gói dịch vụ thành công',
     admission: formatAdmission(updated),
   };
 };
@@ -1207,19 +1442,19 @@ const assignServicePackage = async (admin, admissionId, body, req) => {
 const createAdmissionContract = async (admin, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (!['assessing', 'contracting'].includes(admission.status)) {
     throw new ServiceError(
-      `Cannot create contract for admission with status: ${admission.status}. Only assessing, contracting are allowed.`,
+      `Không thể tạo hợp đồng cho yêu cầu nhập viện với trạng thái: ${admission.status}. Chỉ cho phép: assessing, contracting.`,
       400
     );
   }
 
   const contractNumber = body?.contractNumber?.trim();
   if (!contractNumber) {
-    throw new ServiceError('contractNumber is required', 400);
+    throw new ServiceError('contractNumber là bắt buộc', 400);
   }
 
   // Anti-spam: Nếu hồ sơ đã có số hợp đồng, chặn tạo trùng
@@ -1242,13 +1477,13 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
       : undefined;
 
   if (contractStartDate && Number.isNaN(contractStartDate.getTime())) {
-    throw new ServiceError('contractStartDate is invalid', 400);
+    throw new ServiceError('contractStartDate không hợp lệ', 400);
   }
   if (contractEndDate && Number.isNaN(contractEndDate.getTime())) {
-    throw new ServiceError('contractEndDate is invalid', 400);
+    throw new ServiceError('contractEndDate không hợp lệ', 400);
   }
   if (contractStartDate && contractEndDate && contractEndDate <= contractStartDate) {
-    throw new ServiceError('contractEndDate must be after contractStartDate', 400);
+    throw new ServiceError('contractEndDate phải sau contractStartDate', 400);
   }
   if (contractStartDate && contractEndDate) {
     const minimumEndDate = new Date(contractStartDate);
@@ -1259,12 +1494,12 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   }
   if (contractDurationMonths !== undefined) {
     if (!Number.isFinite(contractDurationMonths) || contractDurationMonths < 1) {
-      throw new ServiceError('contractDurationMonths must be a positive number', 400);
+      throw new ServiceError('contractDurationMonths phải là số dương', 400);
     }
   }
   if (contractDiscountPercent !== undefined) {
     if (!Number.isFinite(contractDiscountPercent) || contractDiscountPercent < 0 || contractDiscountPercent > 100) {
-      throw new ServiceError('contractDiscountPercent must be a number between 0 and 100', 400);
+      throw new ServiceError('contractDiscountPercent phải là số trong khoảng từ 0 đến 100', 400);
     }
   }
   assertMaxLength(body?.contractTerms?.trim(), 'contractTerms');
@@ -1309,7 +1544,7 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   });
 
   return {
-    message: 'Admission contract created successfully',
+    message: 'Đã tạo hợp đồng nhập viện thành công',
     admission: formatAdmission(updated),
   };
 };
@@ -1321,24 +1556,84 @@ const generateResidentCode = async () => {
     const exists = await Resident.findOne({ residentCode: code });
     if (!exists) return code;
   }
-  throw new ServiceError('Unable to generate resident code', 500);
+  throw new ServiceError('Không thể tạo mã cư dân', 500);
+};
+
+const generateTempPassword = () =>
+  // 10 random bytes → 14-char base64url string, always contains mixed case +
+  // digits (good enough entropy for a one-time credential the user must change).
+  crypto.randomBytes(10).toString('base64').replace(/[+/=]/g, '').slice(0, 12) + 'A1!';
+
+// Resolves the family account to link on check-in: reuses admission.familyAccountId
+// when already set (the normal self-registration flow), reuses an existing User
+// found by the walk-in contact's email/phone (avoids duplicate accounts if the
+// same family walked in before for a different resident), or creates a brand new
+// family account and emails/texts the temporary password to the contact — this is
+// the "hoàn tất thủ tục nhập viện thì gửi tài khoản cho người nhà" requirement.
+const resolveFamilyAccountForCheckIn = async (admission, residentFullName) => {
+  if (admission.familyAccountId) {
+    return { userId: admission.familyAccountId, isNew: false };
+  }
+
+  const email = admission.requestedByEmail || null;
+  const phone = admission.requestedByPhone || null;
+  if (!email && !phone) {
+    // Nothing to provision from — leave unlinked rather than block check-in.
+    return { userId: null, isNew: false };
+  }
+
+  const existing = email
+    ? await User.findOne({ email })
+    : await User.findOne({ phone });
+  if (existing) {
+    return { userId: existing._id, isNew: false };
+  }
+
+  const tempPassword = generateTempPassword();
+  const passwordHash = await bcrypt.hash(tempPassword, 10);
+  const newUser = await User.create({
+    fullName: admission.requestedByName || 'Người thân',
+    email: email || undefined,
+    phone: phone || undefined,
+    passwordHash,
+    role: 'family',
+    isActive: true,
+  });
+
+  if (email) {
+    await mailService.sendFamilyAccountCreatedEmail({
+      to: email,
+      fullName: newUser.fullName,
+      residentName: residentFullName,
+      email,
+      password: tempPassword,
+    }).catch((err) => console.error('Failed to send family account email:', err.message));
+  } else if (phone) {
+    const loginUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    await mailService.sendTextBeeSms({
+      to: phone,
+      message: `An Nhien: Tai khoan cua ban da duoc tao de theo doi nguoi than ${residentFullName || ''}. SDT dang nhap: ${phone} - Mat khau tam: ${tempPassword}. Vui long doi mat khau sau khi dang nhap tai ${loginUrl}.`,
+    }).catch((err) => console.error('Failed to send family account SMS:', err.message));
+  }
+
+  return { userId: newUser._id, isNew: true };
 };
 
 const checkInResident = async (admin, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
   if (!admission) {
-    throw new ServiceError('Admission request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
   }
 
   if (admission.status !== 'contracting') {
     throw new ServiceError(
-      `Cannot check in resident with admission status: ${admission.status}. Only contracting is allowed.`,
+      `Không thể nhận cư dân vào ở với trạng thái yêu cầu nhập viện: ${admission.status}. Chỉ cho phép: contracting.`,
       400
     );
   }
 
   if (!admission.contractNumber) {
-    throw new ServiceError('Admission must have a contract before check-in', 400);
+    throw new ServiceError('Yêu cầu nhập viện phải có hợp đồng trước khi nhận vào ở', 400);
   }
 
   // Validate bed & room — bedId is mandatory so no resident is checked in without a bed assignment
@@ -1346,19 +1641,19 @@ const checkInResident = async (admin, admissionId, body, req) => {
   let assignedRoomId = body?.roomId || null;
 
   if (!assignedBedId) {
-    throw new ServiceError('bedId is required to check in a resident', 400);
+    throw new ServiceError('bedId là bắt buộc để nhận cư dân vào ở', 400);
   }
 
   if (assignedBedId) {
     const bed = await Bed.findById(assignedBedId);
-    if (!bed) throw new ServiceError('Bed not found', 404);
-    if (bed.status !== 'available') throw new ServiceError('Bed is not available', 400);
+    if (!bed) throw new ServiceError('Không tìm thấy giường', 404);
+    if (bed.status !== 'available') throw new ServiceError('Giường không khả dụng', 400);
     assignedRoomId = assignedRoomId || bed.roomId;
   }
 
   if (assignedRoomId) {
     const room = await Room.findById(assignedRoomId);
-    if (!room) throw new ServiceError('Room not found', 404);
+    if (!room) throw new ServiceError('Không tìm thấy phòng', 404);
 
     // Validate loại phòng phù hợp với Gói dịch vụ đã đăng ký
     if (admission.servicePackageId) {
@@ -1382,6 +1677,15 @@ const checkInResident = async (admin, admissionId, body, req) => {
     }
   }
 
+  // Resolve (or create + notify) the family account before touching the
+  // resident record, so both the "resident already exists" and "create new
+  // resident" branches below can link it the same way.
+  const applicantForAccount = admission.applicant || {};
+  const { userId: familyAccountId } = await resolveFamilyAccountForCheckIn(
+    admission,
+    applicantForAccount.fullName
+  );
+
   // Create or update Resident
   let resident;
   if (admission.residentId) {
@@ -1392,6 +1696,9 @@ const checkInResident = async (admin, admissionId, body, req) => {
       if (assignedBedId) resident.bedId = assignedBedId;
       if (assignedRoomId) resident.roomId = assignedRoomId;
       if (admission.assignedServicePackage) resident.servicePackage = admission.assignedServicePackage;
+      if (familyAccountId && !resident.familyPortalAccountIds?.some((id) => String(id) === String(familyAccountId))) {
+        resident.familyPortalAccountIds = [...(resident.familyPortalAccountIds || []), familyAccountId];
+      }
       await resident.save();
     }
   }
@@ -1415,7 +1722,7 @@ const checkInResident = async (admin, admissionId, body, req) => {
       residencyStatus: 'admitted',
       admittedAt: new Date(),
       servicePackage: admission.assignedServicePackage,
-      familyPortalAccountIds: [admission.familyAccountId],
+      familyPortalAccountIds: familyAccountId ? [familyAccountId] : [],
       avatarUrl: applicant.avatarUrl,
       phone: applicant.phone,
     });
@@ -1438,6 +1745,7 @@ const checkInResident = async (admin, admissionId, body, req) => {
     residentId: resident._id,
     assignedBedId,
     assignedRoomId,
+    ...(familyAccountId && !admission.familyAccountId ? { familyAccountId } : {}),
   });
 
   await createAuditLog({
@@ -1453,7 +1761,7 @@ const checkInResident = async (admin, admissionId, body, req) => {
   });
 
   return {
-    message: 'Resident checked in successfully',
+    message: 'Đã nhận phòng cho cư dân thành công',
     admission: formatAdmission(updated),
     resident: {
       _id: resident._id,
@@ -1466,8 +1774,8 @@ const checkInResident = async (admin, admissionId, body, req) => {
 
 const cancelAdmissionContract = async (admin, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
-  if (!admission) throw new ServiceError('Admission request not found', 404);
-  if (!admission.contractNumber) throw new ServiceError('Admission does not have a contract', 400);
+  if (!admission) throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
+  if (!admission.contractNumber) throw new ServiceError('Yêu cầu nhập viện chưa có hợp đồng', 400);
   if (admission.contractStatus === 'cancelled' || !['contracting', 'checked_in'].includes(admission.status)) {
     throw new ServiceError('Chỉ có thể hủy hợp đồng đang hoạt động.', 400);
   }
@@ -1571,8 +1879,8 @@ const createChangePackageAdjustmentInvoice = async ({ residentId, familyAccountI
 
 const changeContractServicePackage = async (admin, admissionId, body, req) => {
   const admission = await admissionRepo.findById(admissionId);
-  if (!admission) throw new ServiceError('Admission request not found', 404);
-  if (!admission.contractNumber) throw new ServiceError('Admission does not have a contract', 400);
+  if (!admission) throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
+  if (!admission.contractNumber) throw new ServiceError('Yêu cầu nhập viện chưa có hợp đồng', 400);
   if (admission.contractStatus === 'cancelled' || !['contracting', 'checked_in'].includes(admission.status)) {
     throw new ServiceError('Không thể đổi gói dịch vụ cho hợp đồng này.', 400);
   }
@@ -1711,12 +2019,12 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
   const { contractStartDate, contractEndDate, servicePackageId, assignedBedId } = body;
 
   if (!contractEndDate) {
-    throw { statusCode: 400, message: 'contractEndDate is required' };
+    throw { statusCode: 400, message: 'contractEndDate là bắt buộc' };
   }
 
   const newEndDate = new Date(contractEndDate);
   if (isNaN(newEndDate.getTime())) {
-    throw { statusCode: 400, message: 'Invalid contractEndDate format' };
+    throw { statusCode: 400, message: 'Định dạng contractEndDate không hợp lệ' };
   }
 
   // Validate contractStartDate if provided
@@ -1724,23 +2032,23 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
   if (contractStartDate) {
     newStartDate = new Date(contractStartDate);
     if (isNaN(newStartDate.getTime())) {
-      throw { statusCode: 400, message: 'Invalid contractStartDate format' };
+      throw { statusCode: 400, message: 'Định dạng contractStartDate không hợp lệ' };
     }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (newStartDate < today) {
-      throw { statusCode: 400, message: 'Contract start date cannot be in the past' };
+      throw { statusCode: 400, message: 'Ngày bắt đầu hợp đồng không được ở trong quá khứ' };
     }
   }
 
   const now = new Date();
   if (newEndDate <= now) {
-    throw { statusCode: 400, message: 'New contract end date must be in the future' };
+    throw { statusCode: 400, message: 'Ngày kết thúc hợp đồng mới phải ở trong tương lai' };
   }
 
   const admission = await admissionRepo.findByIdForAdmin(admissionId);
   if (!admission) {
-    throw { statusCode: 404, message: 'Admission not found' };
+    throw { statusCode: 404, message: 'Không tìm thấy yêu cầu nhập viện' };
   }
 
   const oldEndDate = admission.contractEndDate;
@@ -1753,10 +2061,10 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
   if (servicePackageId) {
     const pkg = await servicePackageRepo.findById(servicePackageId);
     if (!pkg) {
-      throw { statusCode: 404, message: 'Service package not found' };
+      throw { statusCode: 404, message: 'Không tìm thấy gói dịch vụ' };
     }
     if (!pkg.isActive) {
-      throw { statusCode: 400, message: 'Service package is not active' };
+      throw { statusCode: 400, message: 'Gói dịch vụ hiện không hoạt động' };
     }
     selectedPackage = pkg;
     updateData.servicePackageId = pkg._id;
@@ -1776,13 +2084,13 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
   if (desiredBedId) {
     targetBed = await Bed.findById(desiredBedId);
     if (!targetBed) {
-      throw { statusCode: 404, message: 'Bed not found' };
+      throw { statusCode: 404, message: 'Không tìm thấy giường' };
     }
 
     const bedAssignedToResident = targetBed.assignedResidentId?.toString?.() || null;
     const isSameResidentBed = residentId && bedAssignedToResident && bedAssignedToResident === residentId.toString();
     if (targetBed.status !== 'available' && !isSameResidentBed) {
-      throw { statusCode: 400, message: 'Bed is not available' };
+      throw { statusCode: 400, message: 'Giường hiện không khả dụng' };
     }
 
     targetRoomId = targetBed.roomId;
@@ -1929,13 +2237,15 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
   });
 
   return {
-    message: 'Contract extended successfully',
+    message: 'Đã gia hạn hợp đồng thành công',
     admission: formatAdmission(updated),
   };
 };
 
 module.exports = {
   submitAdmissionRequest,
+  submitGuestAdmissionRequest,
+  createWalkInAdmission,
   listAdmissionHistory,
   getAdmissionRequest,
   cancelAdmissionRequest,

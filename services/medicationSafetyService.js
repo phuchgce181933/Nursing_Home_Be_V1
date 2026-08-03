@@ -7,7 +7,7 @@ const ServiceError = require('./serviceError');
 
 const getResidentOrThrow = async (residentId) => {
   const resident = await Resident.findById(residentId).select('chronicConditions allergies drugAllergies dateOfBirth');
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return resident;
 };
 

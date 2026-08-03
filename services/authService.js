@@ -112,6 +112,25 @@ const listStaffAccounts = async ({ role, isActive, search, page = 1, limit = 20 
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
+// Lightweight search used by admin UIs to link a family account to a resident
+// without staff needing to know/paste the account's raw Mongo ID.
+const searchFamilyAccounts = async ({ search, limit = 20 }) => {
+  const filter = { role: 'family' };
+  const trimmed = String(search || '').trim();
+  if (trimmed) {
+    filter.$or = [
+      { fullName: { $regex: trimmed, $options: 'i' } },
+      { email: { $regex: trimmed, $options: 'i' } },
+      { phone: { $regex: trimmed, $options: 'i' } },
+    ];
+  }
+  const limitNum = Math.min(20, Math.max(1, parseInt(limit, 10) || 20));
+  const users = await userRepo.findStaffUsers(filter, { skip: 0, limit: limitNum });
+  return {
+    data: users.map((u) => ({ _id: u._id, fullName: u.fullName, email: u.email, phone: u.phone })),
+  };
+};
+
 const createStaffAccount = async ({
   fullName,
   email,
@@ -507,33 +526,33 @@ const changePassword = async (
 const forgotPassword = async ({ email }) => {
   const user = await userRepo.findByEmail(email);
 
-  if (!user) {
-    throw apiErr(CODES.AUTH_EMAIL_NOT_FOUND, { statusCode: 404 });
+  // Always respond the same way whether or not the email exists, so callers
+  // can't use this endpoint to enumerate registered accounts.
+  if (user) {
+    const resetToken = crypto
+      .randomBytes(32)
+      .toString('hex');
+
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(resetToken)
+      .digest('hex');
+
+    user.resetPasswordTokenHash = hashedToken;
+
+    user.resetPasswordExpiresAt =
+      Date.now() + 10 * 60 * 1000;
+
+    await userRepo.saveUser(user);
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+
+    await mailService.sendResetPasswordEmail(
+      user.email,
+      resetUrl
+    );
   }
-
-  const resetToken = crypto
-    .randomBytes(32)
-    .toString('hex');
-
-  const hashedToken = crypto
-    .createHash('sha256')
-    .update(resetToken)
-    .digest('hex');
-
-  user.resetPasswordTokenHash = hashedToken;
-
-  user.resetPasswordExpiresAt =
-    Date.now() + 10 * 60 * 1000;
-
-  await userRepo.saveUser(user);
-
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-  const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
-
-  await mailService.sendResetPasswordEmail(
-    user.email,
-    resetUrl
-  );
 
   return apiSuccess(SUCCESS.AUTH_RESET_EMAIL_SENT);
 };
@@ -648,7 +667,7 @@ const createFirebaseCustomToken = async (user) => {
   return { firebaseToken: token };
 };
 
-module.exports = { login, getMe, listStaffAccounts, createStaffAccount, requestRegisterOtp, verifyRegisterOtp,
+module.exports = { login, getMe, listStaffAccounts, searchFamilyAccounts, createStaffAccount, requestRegisterOtp, verifyRegisterOtp,
   toggleStaffActive,
   requestEmailChangeOtp,
   requestPhoneChangeOtp,

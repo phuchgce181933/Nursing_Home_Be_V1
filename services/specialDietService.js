@@ -123,7 +123,7 @@ const assertNoDuplicateResidentEntries = (entries) => {
   const seen = new Set();
   for (const e of entries) {
     if (seen.has(e.residentId)) {
-      throw apiErr(CODES.DUPLICATE_RECORD, { statusCode: 400, message: `Duplicate special diet entry for resident ${e.residentId}` });
+      throw apiErr(CODES.DUPLICATE_RECORD, { statusCode: 400, message: `Trùng lặp mục chế độ ăn đặc biệt cho cư dân ${e.residentId}` });
     }
     seen.add(e.residentId);
   }

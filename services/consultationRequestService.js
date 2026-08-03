@@ -55,7 +55,7 @@ const notifyAdminsOfNewConsultationRequest = async (request) => {
 
 const submitConsultationRequest = async (body, req) => {
   if (!body || typeof body !== 'object') {
-    throw new ServiceError('Request body is required', 400);
+    throw new ServiceError('Nội dung yêu cầu là bắt buộc', 400);
   }
 
   const fullName = typeof body.fullName === 'string' ? body.fullName.trim() : '';
@@ -68,33 +68,33 @@ const submitConsultationRequest = async (body, req) => {
   const age = body.age !== undefined ? Number(body.age) : undefined;
 
   if (!fullName) {
-    throw new ServiceError('fullName is required', 400);
+    throw new ServiceError('fullName là bắt buộc', 400);
   }
   if (fullName.length < 2 || fullName.length > 100) {
-    throw new ServiceError('fullName must be between 2 and 100 characters', 400);
+    throw new ServiceError('fullName phải có độ dài từ 2 đến 100 ký tự', 400);
   }
 
   if (age !== undefined && Number.isNaN(age)) {
-    throw new ServiceError('age must be a number', 400);
+    throw new ServiceError('age phải là một số', 400);
   }
   if (age !== undefined && age < 0) {
-    throw new ServiceError('age cannot be negative', 400);
+    throw new ServiceError('age không được là số âm', 400);
   }
 
   if (!phone) {
-    throw new ServiceError('phone is required', 400);
+    throw new ServiceError('phone là bắt buộc', 400);
   }
   const normalizedPhone = phone.replace(/\s+/g, '');
   if (!/^\+?[0-9]{9,15}$/.test(normalizedPhone)) {
-    throw new ServiceError('phone must be a valid phone number', 400);
+    throw new ServiceError('phone phải là số điện thoại hợp lệ', 400);
   }
 
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    throw new ServiceError('email must be valid', 400);
+    throw new ServiceError('email phải hợp lệ', 400);
   }
 
   if (!serviceInterest && !subject && !message) {
-    throw new ServiceError('Please provide a service interest, subject, or message', 400);
+    throw new ServiceError('Vui lòng cung cấp lĩnh vực quan tâm, chủ đề hoặc nội dung tin nhắn', 400);
   }
 
   const request = await consultationRequestRepo.create({
@@ -111,7 +111,7 @@ const submitConsultationRequest = async (body, req) => {
 
   await notifyAdminsOfNewConsultationRequest(request);
 
-  return { message: 'Consultation request submitted successfully', request: formatRequest(request) };
+  return { message: 'Đã gửi yêu cầu tư vấn thành công', request: formatRequest(request) };
 };
 
 const listConsultationRequests = async (query) => {
@@ -121,7 +121,7 @@ const listConsultationRequests = async (query) => {
 
   if (query.status) {
     if (!REQUEST_STATUSES.includes(query.status)) {
-      throw new ServiceError(`status must be one of: ${REQUEST_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${REQUEST_STATUSES.join(', ')}`, 400);
     }
     filter.status = query.status;
   }
@@ -142,12 +142,12 @@ const listConsultationRequests = async (query) => {
     filter.createdAt = {};
     if (query.from) {
       const fromDate = new Date(query.from);
-      if (Number.isNaN(fromDate.getTime())) throw new ServiceError('from date is invalid', 400);
+      if (Number.isNaN(fromDate.getTime())) throw new ServiceError('Ngày from không hợp lệ', 400);
       filter.createdAt.$gte = fromDate;
     }
     if (query.to) {
       const toDate = new Date(query.to);
-      if (Number.isNaN(toDate.getTime())) throw new ServiceError('to date is invalid', 400);
+      if (Number.isNaN(toDate.getTime())) throw new ServiceError('Ngày to không hợp lệ', 400);
       const endDate = new Date(query.to);
       endDate.setHours(23, 59, 59, 999);
       filter.createdAt.$lte = endDate;
@@ -175,12 +175,12 @@ const listConsultationRequests = async (query) => {
 
 const getConsultationRequest = async (requestId) => {
   if (!mongoose.isValidObjectId(requestId)) {
-    throw new ServiceError('Invalid request ID', 400);
+    throw new ServiceError('ID yêu cầu không hợp lệ', 400);
   }
 
   const request = await consultationRequestRepo.findById(requestId);
   if (!request) {
-    throw new ServiceError('Consultation request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu tư vấn', 404);
   }
 
   return formatRequest(request);
@@ -188,21 +188,21 @@ const getConsultationRequest = async (requestId) => {
 
 const updateConsultationRequest = async (requestId, body) => {
   if (!mongoose.isValidObjectId(requestId)) {
-    throw new ServiceError('Invalid request ID', 400);
+    throw new ServiceError('ID yêu cầu không hợp lệ', 400);
   }
 
   const request = await consultationRequestRepo.findById(requestId);
   if (!request) {
-    throw new ServiceError('Consultation request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu tư vấn', 404);
   }
 
   const update = {};
   if (body.status !== undefined) {
     if (!REQUEST_STATUSES.includes(body.status)) {
-      throw new ServiceError(`status must be one of: ${REQUEST_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${REQUEST_STATUSES.join(', ')}`, 400);
     }
     if (!isValidStatusTransition(request.status, body.status)) {
-      throw new ServiceError(`Invalid status transition from ${request.status} to ${body.status}`, 400);
+      throw new ServiceError(`Không thể chuyển trạng thái từ ${request.status} sang ${body.status}`, 400);
     }
     update.status = body.status;
     if (['resolved', 'closed'].includes(body.status)) {
@@ -217,7 +217,7 @@ const updateConsultationRequest = async (requestId, body) => {
   }
 
   if (Object.keys(update).length === 0) {
-    throw new ServiceError('Nothing to update', 400);
+    throw new ServiceError('Không có gì để cập nhật', 400);
   }
 
   const updated = await consultationRequestRepo.updateById(requestId, update);

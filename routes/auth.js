@@ -4,6 +4,7 @@ const {
   login,
   getMe,
   createStaffAccount,
+  searchFamilyAccounts,
   requestRegisterOtp,
   verifyRegisterOtp,
   listStaffAccounts,
@@ -26,7 +27,13 @@ const rateLimit = require('express-rate-limit');
 const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // limit each IP to 10 registration attempts per windowMs
-  message: { message: 'Too many registration attempts from this IP, please try again later' },
+  message: { message: 'Quá nhiều lần đăng ký từ địa chỉ IP này, vui lòng thử lại sau' },
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // limit each IP to 10 login/forgot-password attempts per windowMs
+  message: { message: 'Quá nhiều lần thử từ địa chỉ IP này, vui lòng thử lại sau' },
 });
 
 /**
@@ -57,7 +64,7 @@ const registerLimiter = rateLimit({
  *       401:
  *         description: Invalid credentials or account inactive/banned
  */
-router.post('/login', login);
+router.post('/login', loginLimiter, login);
 
 /**
  * @swagger
@@ -279,6 +286,31 @@ router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
 
 /**
  * @swagger
+ * /api/auth/family-accounts:
+ *   get:
+ *     summary: Search family accounts by name/email/phone (Admin/Manager only)
+ *     description: Lightweight lookup used to link a family account to a resident without staff needing the account's raw Mongo ID.
+ *     tags: [Auth]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Matching family accounts
+ */
+router.get('/family-accounts', protect, authorize('admin', 'manager'), searchFamilyAccounts);
+
+/**
+ * @swagger
  * /api/auth/staff/{id}/toggle-active:
  *   put:
  *     summary: Toggle staff account active/inactive (Admin/Manager only)
@@ -393,7 +425,7 @@ router.put('/change-password', protect, changePassword);
  *       404:
  *         description: Email not found
  */
-router.post('/forgot-password', forgotPassword);
+router.post('/forgot-password', loginLimiter, forgotPassword);
 // reset mk
 /**
  * @swagger

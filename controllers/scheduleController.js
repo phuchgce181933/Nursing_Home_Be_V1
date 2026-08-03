@@ -173,21 +173,21 @@ const getCurrentMedications = async (req, res) => {
     const { residentId } = req.query;
 
     if (!residentId) {
-      return res.status(400).json({ success: false, message: 'residentId query parameter is required' });
+      return res.status(400).json({ success: false, message: 'residentId là tham số bắt buộc trong query' });
     }
     if (!isValidObjectId(residentId)) {
-      return res.status(400).json({ success: false, message: 'residentId must be a valid ObjectId' });
+      return res.status(400).json({ success: false, message: 'residentId phải là ObjectId hợp lệ' });
     }
 
     // Scope check
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     const resident = await Resident.findById(residentId).select('fullName');
     if (!resident) {
-      return res.status(404).json({ success: false, message: 'Resident not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy cư dân' });
     }
 
     const prescriptions = await Prescription.find({ residentId, status: 'ACTIVE' })
@@ -244,37 +244,37 @@ const setMedicationSchedule = async (req, res) => {
     const { prescriptionId, items } = req.body;
 
     if (!prescriptionId || !isValidObjectId(prescriptionId)) {
-      return res.status(400).json({ success: false, message: 'prescriptionId must be a valid ObjectId' });
+      return res.status(400).json({ success: false, message: 'prescriptionId phải là ObjectId hợp lệ' });
     }
     if (!Array.isArray(items) || !items.length) {
-      return res.status(400).json({ success: false, message: 'items must be a non-empty array' });
+      return res.status(400).json({ success: false, message: 'items phải là một mảng không rỗng' });
     }
 
     const prescription = await Prescription.findById(prescriptionId);
     if (!prescription) {
-      return res.status(404).json({ success: false, message: 'Prescription not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn thuốc' });
     }
     if (prescription.status !== 'ACTIVE') {
-      return res.status(400).json({ success: false, message: 'Only ACTIVE prescriptions can be scheduled' });
+      return res.status(400).json({ success: false, message: 'Chỉ có thể lên lịch cho đơn thuốc đang hoạt động (ACTIVE)' });
     }
 
     // Scope check
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(prescription.residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     // Validate all patches before modifying anything
     for (const patch of items) {
       if (!patch.prescriptionItemId || !isValidObjectId(patch.prescriptionItemId)) {
-        return res.status(400).json({ success: false, message: 'Each item must have a valid prescriptionItemId' });
+        return res.status(400).json({ success: false, message: 'Mỗi item phải có prescriptionItemId hợp lệ' });
       }
 
       const existing = prescription.items.id(patch.prescriptionItemId);
       if (!existing) {
         return res.status(400).json({
           success: false,
-          message: `prescriptionItemId ${patch.prescriptionItemId} not found in this prescription`,
+          message: `Không tìm thấy prescriptionItemId ${patch.prescriptionItemId} trong đơn thuốc này`,
         });
       }
 
@@ -282,20 +282,20 @@ const setMedicationSchedule = async (req, res) => {
         if (!Array.isArray(patch.times) || patch.times.length !== existing.frequency) {
           return res.status(400).json({
             success: false,
-            message: `times for ${existing.medicationName} must have exactly ${existing.frequency} entries`,
+            message: `times của ${existing.medicationName} phải có đúng ${existing.frequency} mục`,
           });
         }
         const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
         if (!patch.times.every((t) => timeRegex.test(t))) {
-          return res.status(400).json({ success: false, message: 'times entries must be in HH:MM format (e.g. "08:00")' });
+          return res.status(400).json({ success: false, message: 'Các mục times phải đúng định dạng HH:MM (ví dụ "08:00")' });
         }
       }
 
       if (patch.startDate && !isValidDateStr(patch.startDate)) {
-        return res.status(400).json({ success: false, message: 'startDate must be YYYY-MM-DD' });
+        return res.status(400).json({ success: false, message: 'startDate phải đúng định dạng YYYY-MM-DD' });
       }
       if (patch.endDate && !isValidDateStr(patch.endDate)) {
-        return res.status(400).json({ success: false, message: 'endDate must be YYYY-MM-DD' });
+        return res.status(400).json({ success: false, message: 'endDate phải đúng định dạng YYYY-MM-DD' });
       }
 
       const effectiveStart = patch.startDate ? new Date(patch.startDate) : existing.startDate;
@@ -304,13 +304,13 @@ const setMedicationSchedule = async (req, res) => {
       if (effectiveStart && effectiveEnd && effectiveEnd <= effectiveStart) {
         return res.status(400).json({
           success: false,
-          message: `endDate must be after startDate for ${existing.medicationName}`,
+          message: `endDate phải sau startDate đối với ${existing.medicationName}`,
         });
       }
       if (effectiveEnd && effectiveEnd > prescription.validUntil) {
         return res.status(400).json({
           success: false,
-          message: `endDate for ${existing.medicationName} cannot be after prescription validUntil (${prescription.validUntil.toISOString().slice(0, 10)})`,
+          message: `endDate của ${existing.medicationName} không được sau ngày hết hạn đơn thuốc (validUntil) (${prescription.validUntil.toISOString().slice(0, 10)})`,
         });
       }
     }
@@ -333,7 +333,7 @@ const setMedicationSchedule = async (req, res) => {
     }
 
     if (!changeLog.length) {
-      return res.status(200).json({ success: true, message: 'No schedule changes detected', data: prescription });
+      return res.status(200).json({ success: true, message: 'Không có thay đổi lịch nào được phát hiện', data: prescription });
     }
 
     prescription.editHistory.push({ editedBy: req.user._id, editedAt: new Date(), changes: changeLog.join('; ') });
@@ -365,7 +365,7 @@ const setMedicationSchedule = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Schedule updated for ${rescheduledItems.length} medication(s), ${schedulesCreated} new slots created`,
+      message: `Đã cập nhật lịch cho ${rescheduledItems.length} loại thuốc, tạo mới ${schedulesCreated} khung giờ`,
       data: populated,
     });
   } catch (err) {
@@ -380,7 +380,7 @@ const getDailySchedule = async (req, res) => {
     const { date = getTodayVN(), residentId, wardId, status } = req.query;
 
     if (!isValidDateStr(date)) {
-      return res.status(400).json({ success: false, message: 'date must be YYYY-MM-DD' });
+      return res.status(400).json({ success: false, message: 'date phải đúng định dạng YYYY-MM-DD' });
     }
 
     const scope = await getResidentScope(req.user._id, req.user.role);
@@ -390,15 +390,15 @@ const getDailySchedule = async (req, res) => {
 
     if (residentId) {
       if (!isValidObjectId(residentId)) {
-        return res.status(400).json({ success: false, message: 'residentId must be a valid ObjectId' });
+        return res.status(400).json({ success: false, message: 'residentId phải là ObjectId hợp lệ' });
       }
       if (!isInScope(residentId, scope)) {
-        return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+        return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
       }
       scheduleFilter.residentId = residentId;
     } else if (wardId) {
       if (!isValidObjectId(wardId)) {
-        return res.status(400).json({ success: false, message: 'wardId must be a valid ObjectId' });
+        return res.status(400).json({ success: false, message: 'wardId phải là ObjectId hợp lệ' });
       }
       const rooms = await Room.find({ floorId: wardId }).select('_id');
       const roomIds = rooms.map((r) => r._id);
@@ -469,19 +469,19 @@ const getSchedules = async (req, res) => {
     const { residentId, date, status } = req.query;
 
     if (!residentId) {
-      return res.status(400).json({ success: false, message: 'residentId query parameter is required' });
+      return res.status(400).json({ success: false, message: 'residentId là tham số bắt buộc trong query' });
     }
     if (!isValidObjectId(residentId)) {
-      return res.status(400).json({ success: false, message: 'residentId must be a valid ObjectId' });
+      return res.status(400).json({ success: false, message: 'residentId phải là ObjectId hợp lệ' });
     }
     if (date && !isValidDateStr(date)) {
-      return res.status(400).json({ success: false, message: 'date must be YYYY-MM-DD' });
+      return res.status(400).json({ success: false, message: 'date phải đúng định dạng YYYY-MM-DD' });
     }
 
     // Scope check
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     const filter = { residentId };
@@ -506,26 +506,26 @@ const getSchedules = async (req, res) => {
 const markTaken = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
-      return res.status(400).json({ success: false, message: 'Invalid schedule id' });
+      return res.status(400).json({ success: false, message: 'ID lịch không hợp lệ' });
     }
 
     const { actualTimeTaken, notes } = req.body;
 
     const schedule = await MedicationSchedule.findById(req.params.id);
     if (!schedule) {
-      return res.status(404).json({ success: false, message: 'Schedule not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy lịch' });
     }
 
     // Scope check — nurse can only mark for assigned residents
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(schedule.residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     if (!['PENDING', 'OVERDUE'].includes(schedule.status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot mark as taken: current status is ${schedule.status}`,
+        message: `Không thể đánh dấu đã dùng: trạng thái hiện tại là ${schedule.status}`,
       });
     }
 
@@ -536,7 +536,7 @@ const markTaken = async (req, res) => {
 
     const takenAt = actualTimeTaken ? new Date(actualTimeTaken) : new Date();
     if (isNaN(takenAt.getTime())) {
-      return res.status(400).json({ success: false, message: 'actualTimeTaken must be a valid ISO date' });
+      return res.status(400).json({ success: false, message: 'actualTimeTaken phải là ngày ISO hợp lệ' });
     }
 
     const diffMs = takenAt.getTime() - schedule.scheduledTime.getTime();
@@ -598,7 +598,7 @@ const markTaken = async (req, res) => {
 const markMissed = async (req, res) => {
   try {
     if (!isValidObjectId(req.params.id)) {
-      return res.status(400).json({ success: false, message: 'Invalid schedule id' });
+      return res.status(400).json({ success: false, message: 'ID lịch không hợp lệ' });
     }
 
     const { reason, notes } = req.body;
@@ -606,25 +606,25 @@ const markMissed = async (req, res) => {
     if (!reason || !MISSED_REASONS.includes(reason)) {
       return res.status(400).json({
         success: false,
-        message: `reason is required and must be one of: ${MISSED_REASONS.join(', ')}`,
+        message: `reason là bắt buộc và phải thuộc một trong: ${MISSED_REASONS.join(', ')}`,
       });
     }
 
     const schedule = await MedicationSchedule.findById(req.params.id);
     if (!schedule) {
-      return res.status(404).json({ success: false, message: 'Schedule not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy lịch' });
     }
 
     // Scope check
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(schedule.residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     if (!['PENDING', 'OVERDUE'].includes(schedule.status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot mark as missed: current status is ${schedule.status}`,
+        message: `Không thể đánh dấu bỏ lỡ: trạng thái hiện tại là ${schedule.status}`,
       });
     }
 
@@ -655,30 +655,30 @@ const getHistory = async (req, res) => {
     const { residentId, from, to, medicationName, prescriptionId } = req.query;
 
     if (!residentId) {
-      return res.status(400).json({ success: false, message: 'residentId query parameter is required' });
+      return res.status(400).json({ success: false, message: 'residentId là tham số bắt buộc trong query' });
     }
     if (!isValidObjectId(residentId)) {
-      return res.status(400).json({ success: false, message: 'residentId must be a valid ObjectId' });
+      return res.status(400).json({ success: false, message: 'residentId phải là ObjectId hợp lệ' });
     }
     if (prescriptionId && !isValidObjectId(prescriptionId)) {
-      return res.status(400).json({ success: false, message: 'prescriptionId must be a valid ObjectId' });
+      return res.status(400).json({ success: false, message: 'prescriptionId phải là ObjectId hợp lệ' });
     }
     if (from && !isValidDateStr(from)) {
-      return res.status(400).json({ success: false, message: 'from must be YYYY-MM-DD' });
+      return res.status(400).json({ success: false, message: 'from phải đúng định dạng YYYY-MM-DD' });
     }
     if (to && !isValidDateStr(to)) {
-      return res.status(400).json({ success: false, message: 'to must be YYYY-MM-DD' });
+      return res.status(400).json({ success: false, message: 'to phải đúng định dạng YYYY-MM-DD' });
     }
 
     // Scope check
     const scope = await getResidentScope(req.user._id, req.user.role);
     if (!isInScope(residentId, scope)) {
-      return res.status(403).json({ success: false, message: 'Resident is not assigned to you' });
+      return res.status(403).json({ success: false, message: 'Cư dân không được phân công cho bạn' });
     }
 
     const resident = await Resident.findById(residentId).select('fullName');
     if (!resident) {
-      return res.status(404).json({ success: false, message: 'Resident not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy cư dân' });
     }
 
     const filter = { residentId };

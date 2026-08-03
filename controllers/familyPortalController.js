@@ -231,7 +231,7 @@ const getWalletTopupCheckoutPage = async (req, res) => {
 
     // Verify checksum
     if (!paymentService.verifyPayosWalletTopupChecksum(topupId, amount, clientId, checksum)) {
-      return res.status(403).json({ message: 'Invalid checksum - payment verification failed' });
+      return res.status(403).json({ message: 'Checksum không hợp lệ - xác minh thanh toán thất bại' });
     }
 
     // Create virtual invoice object for PayOS

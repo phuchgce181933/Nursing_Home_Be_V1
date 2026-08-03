@@ -69,6 +69,7 @@ const deleteById = async (id, recipientUserId) => notificationRepo.deleteById(id
 const deleteMany = async (ids, recipientUserId) => notificationRepo.deleteMany(ids, recipientUserId);
 
 module.exports = {
+  createMany,
   buildListFilter,
   buildSoftDeleteUpdate,
   listForUser,

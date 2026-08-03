@@ -89,12 +89,15 @@ const findForFamilyManagement = async ({
 
   const [data, total] = await Promise.all([
     Resident.find(filter)
-      .select('residentCode fullName roomId residencyStatus emergencyContacts avatarUrl')
+      .select(
+        'residentCode fullName roomId bedId residencyStatus emergencyContacts avatarUrl admittedAt citizenId insuranceNumber bloodType gender'
+      )
       .populate({
         path: 'roomId',
         select: 'roomNumber floorId roomType',
         populate: { path: 'floorId', select: 'name floorNumber' },
       })
+      .populate({ path: 'bedId', select: 'bedCode' })
       .sort({ fullName: 1 })
       .skip(skip)
       .limit(limitNum)

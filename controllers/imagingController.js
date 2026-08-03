@@ -16,7 +16,7 @@ const listImaging = async (req, res) => {
 const getImaging = async (req, res) => {
   try {
     const im = await Imaging.findById(req.params.id).lean();
-    if (!im) return res.status(404).json({ message: 'Imaging not found' });
+    if (!im) return res.status(404).json({ message: 'Không tìm thấy kết quả chẩn đoán hình ảnh' });
     return res.json({ success: true, data: im });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -36,7 +36,7 @@ const createImaging = async (req, res) => {
 // upload file endpoint using multer in route then call this helper
 const uploadFileAndCreate = async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+    if (!req.file) return res.status(400).json({ message: 'Chưa tải lên file nào' });
     const buffer = req.file.buffer;
     const folder = 'nursing-home/imaging';
     const result = await uploadToCloudinary(buffer, folder, { resource_type: 'auto' });
@@ -65,7 +65,7 @@ const uploadFileAndCreate = async (req, res) => {
 const updateImaging = async (req, res) => {
   try {
     const im = await Imaging.findById(req.params.id);
-    if (!im) return res.status(404).json({ message: 'Imaging not found' });
+    if (!im) return res.status(404).json({ message: 'Không tìm thấy kết quả chẩn đoán hình ảnh' });
     Object.assign(im, req.body);
     await im.save();
     return res.json({ success: true, data: im });
@@ -77,7 +77,7 @@ const updateImaging = async (req, res) => {
 const finalizeImaging = async (req, res) => {
   try {
     const im = await Imaging.findById(req.params.id);
-    if (!im) return res.status(404).json({ message: 'Imaging not found' });
+    if (!im) return res.status(404).json({ message: 'Không tìm thấy kết quả chẩn đoán hình ảnh' });
     im.status = 'FINALIZED';
     await im.save();
     return res.json({ success: true, data: im });

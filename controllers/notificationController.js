@@ -7,7 +7,7 @@ const listNotifications = async (req, res) => {
     return res.json(result);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: 'Failed to list notifications' });
+    return res.status(500).json({ message: 'Không thể tải danh sách thông báo' });
   }
 };
 
@@ -16,7 +16,7 @@ const getCategories = async (req, res) => {
     return res.json({ categories: NOTIFICATION_CATEGORIES });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: 'Failed to load categories' });
+    return res.status(500).json({ message: 'Không thể tải danh mục' });
   }
 };
 
@@ -26,7 +26,7 @@ const getSettings = async (req, res) => {
     return res.json(settings);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: 'Failed to get notification settings' });
+    return res.status(500).json({ message: 'Không thể lấy cài đặt thông báo' });
   }
 };
 
@@ -42,7 +42,7 @@ const updateSettings = async (req, res) => {
     return res.json(settings);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: 'Failed to update notification settings' });
+    return res.status(500).json({ message: 'Không thể cập nhật cài đặt thông báo' });
   }
 };
 
@@ -53,17 +53,17 @@ const markRead = async (req, res) => {
     const { id } = req.params;
     if (id === 'bulk') {
       const { ids } = req.body;
-      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: 'ids required' });
-      if (ids.length > MAX_BULK_IDS) return res.status(400).json({ message: `A maximum of ${MAX_BULK_IDS} ids can be processed at once` });
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: 'ids là bắt buộc' });
+      if (ids.length > MAX_BULK_IDS) return res.status(400).json({ message: `Chỉ có thể xử lý tối đa ${MAX_BULK_IDS} ids trong một lần` });
       await notificationService.markManyAsRead(ids, req.user._id);
       return res.json({ success: true });
     }
     const notif = await notificationService.markAsRead(id, req.user._id);
-    if (!notif) return res.status(404).json({ message: 'Notification not found' });
+    if (!notif) return res.status(404).json({ message: 'Không tìm thấy thông báo' });
     return res.json(notif);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: 'Failed to mark notification as read' });
+    return res.status(500).json({ message: 'Không thể đánh dấu thông báo đã đọc' });
   }
 };
 
@@ -72,17 +72,17 @@ const deleteNotification = async (req, res) => {
     const { id } = req.params;
     if (id === 'bulk') {
       const { ids } = req.body;
-      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: 'ids required' });
-      if (ids.length > MAX_BULK_IDS) return res.status(400).json({ message: `A maximum of ${MAX_BULK_IDS} ids can be processed at once` });
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: 'ids là bắt buộc' });
+      if (ids.length > MAX_BULK_IDS) return res.status(400).json({ message: `Chỉ có thể xử lý tối đa ${MAX_BULK_IDS} ids trong một lần` });
       await notificationService.deleteMany(ids, req.user._id);
       return res.json({ success: true });
     }
     const deleted = await notificationService.deleteById(id, req.user._id);
-    if (!deleted) return res.status(404).json({ message: 'Notification not found' });
+    if (!deleted) return res.status(404).json({ message: 'Không tìm thấy thông báo' });
     return res.json({ success: true });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: 'Failed to delete notification' });
+    return res.status(500).json({ message: 'Không thể xóa thông báo' });
   }
 };
 

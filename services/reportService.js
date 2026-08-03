@@ -536,7 +536,7 @@ const getComparisonReport = async (query) => {
   const { from, to } = resolveDateRangeValues(query);
 
   if (!from || !to) {
-    throw new ServiceError('Invalid comparison date range', 400);
+    throw new ServiceError('Khoảng thời gian so sánh không hợp lệ', 400);
   }
 
   const rangeInMs = to.getTime() - from.getTime();
@@ -575,7 +575,7 @@ const buildCsv = (rows) => {
 
 const exportReport = async (query) => {
   const type = query.type || query.reportType;
-  if (!type) throw new ServiceError('Missing report type for export', 400);
+  if (!type) throw new ServiceError('Thiếu loại báo cáo để xuất', 400);
 
   let rows = [];
   let headers = [];
@@ -629,8 +629,8 @@ const exportReport = async (query) => {
 };
 
 const saveReportHistory = async (user, payload) => {
-  if (!payload.reportType) throw new ServiceError('reportType is required', 400);
-  if (!payload.title) throw new ServiceError('title is required', 400);
+  if (!payload.reportType) throw new ServiceError('reportType là bắt buộc', 400);
+  if (!payload.title) throw new ServiceError('title là bắt buộc', 400);
 
   const snapshot = new ReportSnapshot({
     reportType: payload.reportType,

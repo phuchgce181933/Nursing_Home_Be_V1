@@ -8,7 +8,7 @@ const staffProfileRepo = require('../repositories/staffProfileRepository');
 const getResidentScope = async (user) => {
   if (['admin'].includes(user.role)) return null;
   const profile = await staffProfileRepo.findByUserId(user._id);
-  if (!profile) throw new ServiceError('Staff profile not found', 404);
+  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
   return profile.assignedResidentIds || [];
 };
 
@@ -91,29 +91,29 @@ const listPrescriptions = async (user, query) => {
 
 const getPrescription = async (user, id) => {
   const prescription = await medRepo.findPrescriptionById(id);
-  if (!prescription) throw new ServiceError('Prescription not found', 404);
+  if (!prescription) throw new ServiceError('Không tìm thấy đơn thuốc', 404);
   const residentIds = await getResidentScope(user);
   const rid = prescription.residentId?._id || prescription.residentId;
   if (!isResidentAccessible(rid, residentIds)) {
-    throw new ServiceError('Access denied: resident not assigned to you', 403);
+    throw new ServiceError('Từ chối truy cập: cư dân không được phân công cho bạn', 403);
   }
   return prescription;
 };
 
 const createPrescription = async (user, body) => {
-  if (user.role !== 'doctor') throw new ServiceError('Only doctors can create prescriptions', 403);
+  if (user.role !== 'doctor') throw new ServiceError('Chỉ bác sĩ mới có thể tạo đơn thuốc', 403);
   const { residentId, medicationName, dosage, startDate } = body;
   if (!residentId || !medicationName || !dosage || !startDate) {
-    throw new ServiceError('residentId, medicationName, dosage, and startDate are required', 400);
+    throw new ServiceError('residentId, medicationName, dosage và startDate là bắt buộc', 400);
   }
 
   const residentIds = await getResidentScope(user);
   if (!isResidentAccessible(residentId, residentIds)) {
-    throw new ServiceError('Resident is not assigned to you', 403);
+    throw new ServiceError('Cư dân không được phân công cho bạn', 403);
   }
 
   const profile = await staffProfileRepo.findByUserId(user._id);
-  if (!profile) throw new ServiceError('Staff profile not found', 404);
+  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
 
   const prescription = await medRepo.createPrescription({
     residentId,
@@ -134,11 +134,11 @@ const createPrescription = async (user, body) => {
 
 const updatePrescription = async (user, id, body) => {
   const prescription = await medRepo.findPrescriptionById(id);
-  if (!prescription) throw new ServiceError('Prescription not found', 404);
+  if (!prescription) throw new ServiceError('Không tìm thấy đơn thuốc', 404);
   const residentIds = await getResidentScope(user);
   const rid = prescription.residentId?._id || prescription.residentId;
   if (!isResidentAccessible(rid, residentIds)) {
-    throw new ServiceError('Access denied: resident not assigned to you', 403);
+    throw new ServiceError('Từ chối truy cập: cư dân không được phân công cho bạn', 403);
   }
 
   const EDITABLE = ['medicationName', 'dosage', 'route', 'frequency', 'scheduleTimes', 'status', 'notes'];
@@ -184,20 +184,20 @@ const listAdministrations = async (user, query) => {
 
 const markAdministration = async (user, id, body) => {
   if (!['nurse', 'doctor'].includes(user.role)) {
-    throw new ServiceError('Only nurses or doctors can update medication status', 403);
+    throw new ServiceError('Chỉ điều dưỡng hoặc bác sĩ mới có thể cập nhật trạng thái dùng thuốc', 403);
   }
   const { status, notes } = body;
   if (!['taken', 'missed'].includes(status)) {
-    throw new ServiceError('status must be "taken" or "missed"', 400);
+    throw new ServiceError('status phải là "taken" hoặc "missed"', 400);
   }
 
   const admin = await medRepo.findAdministrationById(id);
-  if (!admin) throw new ServiceError('Medication administration record not found', 404);
+  if (!admin) throw new ServiceError('Không tìm thấy bản ghi cấp phát thuốc', 404);
 
   const residentIds = await getResidentScope(user);
   const rid = admin.residentId?._id || admin.residentId;
   if (!isResidentAccessible(rid, residentIds)) {
-    throw new ServiceError('Access denied: resident not assigned to you', 403);
+    throw new ServiceError('Từ chối truy cập: cư dân không được phân công cho bạn', 403);
   }
 
   const profile = await staffProfileRepo.findByUserId(user._id);
@@ -211,11 +211,11 @@ const markAdministration = async (user, id, body) => {
 
 const getAdministrationHistory = async (user, prescriptionId) => {
   const prescription = await medRepo.findPrescriptionById(prescriptionId);
-  if (!prescription) throw new ServiceError('Prescription not found', 404);
+  if (!prescription) throw new ServiceError('Không tìm thấy đơn thuốc', 404);
   const residentIds = await getResidentScope(user);
   const rid = prescription.residentId?._id || prescription.residentId;
   if (!isResidentAccessible(rid, residentIds)) {
-    throw new ServiceError('Access denied: resident not assigned to you', 403);
+    throw new ServiceError('Từ chối truy cập: cư dân không được phân công cho bạn', 403);
   }
   return medRepo.findHistoryByPrescription(prescriptionId);
 };

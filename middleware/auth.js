@@ -13,19 +13,19 @@ const protect = async (req, res, next) => {
   }
 
   if (!token) {
-    return res.status(401).json({ message: 'Not authenticated' });
+    return res.status(401).json({ message: 'Chưa xác thực' });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id).select('-passwordHash -resetPasswordTokenHash');
     if (!user || !user.isActive || user.isBanned) {
-      return res.status(401).json({ message: 'Account is inactive or banned' });
+      return res.status(401).json({ message: 'Tài khoản đã bị vô hiệu hóa hoặc bị khóa' });
     }
     req.user = user;
     next();
   } catch (err) {
-    return res.status(401).json({ message: 'Invalid or expired token' });
+    return res.status(401).json({ message: 'Token không hợp lệ hoặc đã hết hạn' });
   }
 };
 
@@ -48,39 +48,28 @@ const optionalProtect = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id).select('-passwordHash -resetPasswordTokenHash');
     if (!user || !user.isActive || user.isBanned) {
-      return res.status(401).json({ message: 'Account is inactive or banned' });
+      return res.status(401).json({ message: 'Tài khoản đã bị vô hiệu hóa hoặc bị khóa' });
     }
     req.user = user;
     next();
   } catch (err) {
-    return res.status(401).json({ message: 'Invalid or expired token' });
+    return res.status(401).json({ message: 'Token không hợp lệ hoặc đã hết hạn' });
   }
 };
 
 const authorize = (...roles) => (req, res, next) => {
   if (!req.user) {
-    return res.status(403).json({ message: 'Access forbidden: insufficient role' });
+    return res.status(403).json({ message: 'Truy cập bị từ chối: không đủ quyền' });
   }
-  
-  // Normalize user role to lowercase for comparison
+
+  // models/enums.js ROLES only ever stores plain English enum values, so an
+  // exact (case-insensitive) match is sufficient — no substring/i18n matching needed.
   const userRole = String(req.user.role || '').toLowerCase();
-  
-  // Check if user's role matches any of the required roles
-  // Support both English and Vietnamese role names
   const normalizedRoles = roles.map(r => r.toLowerCase());
-  const isAuthorized = normalizedRoles.some(role => {
-    if (role === userRole) return true;
-    // Support Vietnamese role names
-    if (role === 'nurse' && (userRole.includes('nurse') || userRole.includes('y tá') || userRole.includes('điều dưỡng'))) return true;
-    if (role === 'doctor' && (userRole.includes('doctor') || userRole.includes('bác sĩ'))) return true;
-    if (role === 'admin' && (userRole.includes('admin') || userRole.includes('quản trị'))) return true;
-    if (role === 'family' && (userRole.includes('family') || userRole.includes('gia đình'))) return true;
-    if (role === 'manager' && (userRole.includes('manager') || userRole.includes('quản lý'))) return true;
-    return false;
-  });
-  
+  const isAuthorized = normalizedRoles.includes(userRole);
+
   if (!isAuthorized) {
-    return res.status(403).json({ message: 'Access forbidden: insufficient role' });
+    return res.status(403).json({ message: 'Truy cập bị từ chối: không đủ quyền' });
   }
   next();
 };

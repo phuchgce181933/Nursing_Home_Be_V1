@@ -79,7 +79,7 @@ const recordPayment = async (req, res, next) => {
     const invoice = await paymentService.findInvoiceById(req.user, req.params.invoiceId);
     const amount = Number(requestedAmount != null ? requestedAmount : invoice.totalAmount) || 0;
     if (amount <= 0) {
-      throw new ServiceError('Payment amount must be greater than 0', 400);
+      throw new ServiceError('Số tiền thanh toán phải lớn hơn 0', 400);
     }
 
     if (walletPayment) {
@@ -143,7 +143,7 @@ const batchPayment = async (req, res, next) => {
 
     const amount = Number(requestedAmount != null ? requestedAmount : totalAmount) || 0;
     if (amount <= 0) {
-      throw new ServiceError('Payment amount must be greater than 0', 400);
+      throw new ServiceError('Số tiền thanh toán phải lớn hơn 0', 400);
     }
 
     if (walletPayment) {

@@ -58,14 +58,14 @@ const buildAuditLogFilter = (query = {}) => {
     if (query.fromDate) {
       const fromDate = new Date(query.fromDate);
       if (Number.isNaN(fromDate.getTime())) {
-        throw new ServiceError('fromDate is invalid', 400);
+        throw new ServiceError('fromDate không hợp lệ', 400);
       }
       filter.createdAt.$gte = fromDate;
     }
     if (query.toDate) {
       const toDate = new Date(query.toDate);
       if (Number.isNaN(toDate.getTime())) {
-        throw new ServiceError('toDate is invalid', 400);
+        throw new ServiceError('toDate không hợp lệ', 400);
       }
       filter.createdAt.$lte = toDate;
     }
@@ -157,12 +157,12 @@ const getAuditLogFilters = async (query = {}) => {
 
 const getAuditLogById = async (id) => {
   if (!Types.ObjectId.isValid(id)) {
-    throw new ServiceError('Invalid audit log id', 400);
+    throw new ServiceError('ID nhật ký kiểm tra không hợp lệ', 400);
   }
 
   const auditLog = await AuditLog.findById(id).lean();
   if (!auditLog) {
-    throw new ServiceError('Audit log entry not found', 404);
+    throw new ServiceError('Không tìm thấy bản ghi nhật ký kiểm tra', 404);
   }
 
   return auditLog;

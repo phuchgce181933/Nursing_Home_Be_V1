@@ -34,7 +34,7 @@ router.get('/wallet/topup/payos/checkout/:topupId', getWalletTopupCheckoutPage);
 // Proxy QR image from PayOS to avoid CORS on mobile/web
 router.get('/wallet/qr-proxy', async (req, res) => {
   const { url } = req.query;
-  if (!url || typeof url !== 'string') return res.status(400).json({ message: 'url required' });
+  if (!url || typeof url !== 'string') return res.status(400).json({ message: 'url là bắt buộc' });
   try {
     const https = require('https');
     const http = require('http');
@@ -43,9 +43,9 @@ router.get('/wallet/qr-proxy', async (req, res) => {
       res.set('Content-Type', upstream.headers['content-type'] || 'image/png');
       res.set('Cache-Control', 'public, max-age=600');
       upstream.pipe(res);
-    }).on('error', () => res.status(502).json({ message: 'Failed to fetch QR' }));
+    }).on('error', () => res.status(502).json({ message: 'Không thể tải mã QR' }));
   } catch {
-    res.status(502).json({ message: 'Failed to fetch QR' });
+    res.status(502).json({ message: 'Không thể tải mã QR' });
   }
 });
 

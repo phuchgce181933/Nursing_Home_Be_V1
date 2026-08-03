@@ -348,7 +348,7 @@ const approveLeaveRequest = async (
             fieldsChanged: ['assignedStaffId'],
             oldValues: { assignedStaffId: previousStaffProfileId },
             newValues: { assignedStaffId: replacementProfileId },
-            reason: `Reassigned to cover approved leave (LeaveRequest: ${id})`,
+            reason: `Phân công lại để thay thế đơn nghỉ phép đã duyệt (LeaveRequest: ${id})`,
           },
         },
       });

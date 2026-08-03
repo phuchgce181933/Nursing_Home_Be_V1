@@ -7,11 +7,11 @@ const ServiceError = require('../services/serviceError');
 const initiateWalletPayment = async (req, res, next) => {
   try {
     const { amount, invoiceIds } = req.body;
-    if (!amount || amount <= 0) throw new ServiceError('Invalid amount', 400);
+    if (!amount || amount <= 0) throw new ServiceError('Số tiền không hợp lệ', 400);
     // store payment intent in meta so verify step can perform the payment
     const meta = { amount, invoiceIds };
     const phone = req.user.phoneNumber || req.user.phone || '';
-    if (!phone) throw new ServiceError('User has no phone number', 400);
+    if (!phone) throw new ServiceError('Người dùng chưa có số điện thoại', 400);
 
     const result = await otpService.createOtp({ userId: req.user._id, phone, purpose: 'wallet_payment', meta });
     return res.json({ success: true, data: result });
@@ -24,13 +24,13 @@ const initiateWalletPayment = async (req, res, next) => {
 const verifyWalletPayment = async (req, res, next) => {
   try {
     const { otpId, code } = req.body;
-    if (!otpId || !code) throw new ServiceError('otpId and code required', 400);
+    if (!otpId || !code) throw new ServiceError('otpId và code là bắt buộc', 400);
 
     const { meta } = await otpService.verifyOtp({ userId: req.user._id, otpId, code, purpose: 'wallet_payment' });
 
     // meta contains amount and invoiceIds (optional)
     const amount = Number(meta.amount) || 0;
-    if (amount <= 0) throw new ServiceError('Invalid payment amount in OTP meta', 400);
+    if (amount <= 0) throw new ServiceError('Số tiền thanh toán trong OTP không hợp lệ', 400);
 
     // If invoiceIds provided and single invoice, call recordPayment logic
     if (Array.isArray(meta.invoiceIds) && meta.invoiceIds.length > 0) {
@@ -50,7 +50,7 @@ const verifyWalletPayment = async (req, res, next) => {
 
     // No invoices specified — use a generic wallet deduction (e.g., for topups or other payments)
     await walletService.deductFromWallet(req.user._id, amount, `Thanh toán bằng ví (OTP)`, null);
-    return res.json({ success: true, data: { message: 'Payment completed' } });
+    return res.json({ success: true, data: { message: 'Đã hoàn tất thanh toán' } });
   } catch (error) {
     return next(error);
   }

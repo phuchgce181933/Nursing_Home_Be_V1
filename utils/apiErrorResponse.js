@@ -30,7 +30,7 @@ const formatApiError = (err) => {
     return {
       statusCode: statusCode || 500,
       payload: {
-        message: err.message || 'Internal server error',
+        message: err.message || 'Đã xảy ra lỗi hệ thống',
         ...(err.errorCode ? { errorCode: err.errorCode } : {}),
         ...(err.params && Object.keys(err.params).length ? { params: err.params } : {}),
       },
@@ -40,7 +40,7 @@ const formatApiError = (err) => {
   return {
     statusCode: 500,
     payload: {
-      message: err?.message || 'Internal server error',
+      message: err?.message || 'Đã xảy ra lỗi hệ thống',
       errorCode: CODES.INTERNAL_ERROR,
     },
   };

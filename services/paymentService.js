@@ -51,7 +51,7 @@ const isUnpaidInvoice = (invoice) => ['DRAFT', 'ISSUED', 'PARTIALLY_PAID'].inclu
 const markInvoiceAsPaid = async (invoiceId) => {
   const invoice = await invoiceRepo.findById(invoiceId);
   if (!invoice) {
-    throw new ServiceError('Invoice not found', 404);
+    throw new ServiceError('Không tìm thấy hóa đơn', 404);
   }
 
   if (invoice.status === 'PAID') {
@@ -291,7 +291,7 @@ const getPayosCredentials = () => {
     // No hardcoded fallback on purpose — a previous version of this code fell back to real
     // credentials that ended up committed to the repo. Fail fast instead of silently reusing
     // (now-untrusted) leaked keys.
-    throw new ServiceError('PayOS is not configured: set PAYOS_CLIENT_ID, PAYOS_API_KEY, and PAYOS_CHECKSUM_KEY', 500);
+    throw new ServiceError('PayOS chưa được cấu hình: vui lòng thiết lập PAYOS_CLIENT_ID, PAYOS_API_KEY và PAYOS_CHECKSUM_KEY', 500);
   }
   return {
     clientId: PAYOS_CLIENT_ID,
@@ -309,7 +309,7 @@ const getPayosPublicUrl = (req) => {
     return publicUrl.replace(/\/$/, '');
   }
   if (!req) {
-    throw new ServiceError('PAYOS_CHECKOUT_URL is not configured and request context is unavailable');
+    throw new ServiceError('PAYOS_CHECKOUT_URL chưa được cấu hình và không có ngữ cảnh request');
   }
   return `${req.protocol}://${req.get('host')}`;
 };
@@ -415,17 +415,17 @@ const createPayosPaymentRequest = async ({ invoice, req }) => {
         try {
           const parsed = JSON.parse(responseBody || '{}');
           if (response.statusCode >= 400 || parsed.code !== '00') {
-            const message = parsed.desc || `PayOS request failed with status ${response.statusCode}`;
+            const message = parsed.desc || `Yêu cầu PayOS thất bại với mã trạng thái ${response.statusCode}`;
             return reject(new ServiceError(message, response.statusCode || 502));
           }
           return resolve(parsed.data || parsed);
         } catch (err) {
-          return reject(new ServiceError(`Invalid PayOS response: ${err.message}`, 502));
+          return reject(new ServiceError(`Phản hồi PayOS không hợp lệ: ${err.message}`, 502));
         }
       });
     });
 
-    request.on('error', (err) => reject(new ServiceError(`PayOS request error: ${err.message}`, 502)));
+    request.on('error', (err) => reject(new ServiceError(`Lỗi yêu cầu PayOS: ${err.message}`, 502)));
     request.write(payload);
     request.end();
   });
@@ -514,15 +514,15 @@ const estimateMedicationCostFromPrescription = async (prescription) => {
 
 const estimateMedicationCostForPrescription = async (prescriptionId, residentId) => {
   if (!prescriptionId || !Types.ObjectId.isValid(prescriptionId)) {
-    throw new ServiceError('Invalid prescriptionId provided', 400);
+    throw new ServiceError('prescriptionId không hợp lệ', 400);
   }
 
   const prescription = await Prescription.findById(prescriptionId).populate('residentId');
   if (!prescription) {
-    throw new ServiceError('Prescription not found', 404);
+    throw new ServiceError('Không tìm thấy đơn thuốc', 404);
   }
   if (String(prescription.residentId._id || prescription.residentId) !== String(residentId)) {
-    throw new ServiceError('Prescription does not belong to the resident', 400);
+    throw new ServiceError('Đơn thuốc không thuộc về cư dân này', 400);
   }
 
   return await estimateMedicationCostFromPrescription(prescription);
@@ -530,16 +530,16 @@ const estimateMedicationCostForPrescription = async (prescriptionId, residentId)
 
 const createInvoice = async (user, residentId, body) => {
   const resident = await residentRepo.findById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   if (body.admissionId) {
     if (!Types.ObjectId.isValid(body.admissionId)) {
-      throw new ServiceError('Invalid admissionId provided', 400);
+      throw new ServiceError('admissionId không hợp lệ', 400);
     }
     const admission = await Admission.findById(body.admissionId).select('residentId contractNumber').lean();
-    if (!admission) throw new ServiceError('Admission request not found', 404);
+    if (!admission) throw new ServiceError('Không tìm thấy yêu cầu tiếp nhận', 404);
     if (String(admission.residentId) !== String(residentId)) {
-      throw new ServiceError('Admission request does not belong to the resident', 400);
+      throw new ServiceError('Yêu cầu tiếp nhận không thuộc về cư dân này', 400);
     }
     if (!admission.contractNumber) {
       throw new ServiceError('Vui lòng tạo hợp đồng trước khi tạo hóa đơn.', 400);
@@ -549,7 +549,7 @@ const createInvoice = async (user, residentId, body) => {
   if (user.role === 'family') {
     const familyResidentIds = await familyPortalRepo.getFamilyResidentIds(user._id);
     if (!familyResidentIds.includes(residentId.toString())) {
-      throw new ServiceError('Access denied: not authorized to create invoice for this resident', 403);
+      throw new ServiceError('Truy cập bị từ chối: không có quyền tạo hóa đơn cho cư dân này', 403);
     }
   }
 
@@ -576,15 +576,15 @@ const createInvoice = async (user, residentId, body) => {
   if (body.prescriptionId) {
     prescriptionId = resolveObjectIdString(body.prescriptionId);
     if (!prescriptionId || !Types.ObjectId.isValid(prescriptionId)) {
-      throw new ServiceError('Invalid prescriptionId provided', 400);
+      throw new ServiceError('prescriptionId không hợp lệ', 400);
     }
 
     const prescription = await Prescription.findById(prescriptionId).populate('residentId');
     if (!prescription) {
-      throw new ServiceError('Prescription not found', 404);
+      throw new ServiceError('Không tìm thấy đơn thuốc', 404);
     }
     if (String(prescription.residentId._id || prescription.residentId) !== String(residentId)) {
-      throw new ServiceError('Prescription does not belong to the resident', 400);
+      throw new ServiceError('Đơn thuốc không thuộc về cư dân này', 400);
     }
 
     if (medicationCostRaw === undefined || medicationCostRaw === '' || medicationCostRaw === null) {
@@ -827,23 +827,23 @@ const assertInvoiceAccess = async (user, invoice) => {
 
   if (user.role === 'resident' && invoiceResidentId === residentUserIdString) return;
 
-  throw new ServiceError('Access denied: not authorized to view this invoice', 403);
+  throw new ServiceError('Truy cập bị từ chối: không có quyền xem hóa đơn này', 403);
 };
 
 const findInvoiceById = async (user, invoiceId) => {
   const invoice = await invoiceRepo.findById(invoiceId);
-  if (!invoice) throw new ServiceError('Invoice not found', 404);
+  if (!invoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
   await assertInvoiceAccess(user, invoice);
   return invoice;
 };
 
 const findInvoiceForCheckout = async (user, residentId, invoiceId, query = {}) => {
   const invoice = await invoiceRepo.findById(invoiceId);
-  if (!invoice) throw new ServiceError('Invoice not found', 404);
+  if (!invoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
 
   const invoiceResidentId = resolveObjectIdString(invoice.residentId);
   if (!invoiceResidentId || invoiceResidentId !== residentId) {
-    throw new ServiceError('Invoice does not belong to the requested resident', 403);
+    throw new ServiceError('Hóa đơn không thuộc về cư dân được yêu cầu', 403);
   }
   if (invoice.status === 'CANCELLED') {
     throw new ServiceError('Không thể mở thanh toán cho hóa đơn đã bị hủy.', 400);
@@ -858,26 +858,26 @@ const findInvoiceForCheckout = async (user, residentId, invoiceId, query = {}) =
     return invoice;
   }
 
-  throw new ServiceError('Access denied: not authorized to view this invoice', 403);
+  throw new ServiceError('Truy cập bị từ chối: không có quyền xem hóa đơn này', 403);
 };
 
 const recordPayment = async (user, invoiceId, body) => {
   const invoice = await findInvoiceById(user, invoiceId);
 
   if (invoice.status === 'PAID') {
-    throw new ServiceError('Invoice is already fully paid', 400);
+    throw new ServiceError('Hóa đơn đã được thanh toán đầy đủ', 400);
   }
   if (invoice.status === 'CANCELLED') {
     throw new ServiceError('Không thể thanh toán hóa đơn đã bị hủy.', 400);
   }
 
   const amount = normalizeCost(body.amount || invoice.totalAmount);
-  if (amount <= 0) throw new ServiceError('Payment amount must be greater than 0', 400);
+  if (amount <= 0) throw new ServiceError('Số tiền thanh toán phải lớn hơn 0', 400);
 
   if (body.transactionRef) {
     const existingPayment = await paymentRepo.findByTransactionRef(body.transactionRef);
     if (existingPayment) {
-      throw new ServiceError('Duplicate payment: transactionRef already exists', 409);
+      throw new ServiceError('Thanh toán trùng lặp: transactionRef đã tồn tại', 409);
     }
   }
 
@@ -940,7 +940,7 @@ const adminListInvoices = async (query) => {
 
 const adminGetInvoice = async (invoiceId) => {
   const invoice = await invoiceRepo.findById(invoiceId);
-  if (!invoice) throw new ServiceError('Invoice not found', 404);
+  if (!invoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
   return normalizeInvoiceIssueDate(invoice);
 };
 
@@ -949,11 +949,11 @@ const listInvoicesByResident = async (user, residentId) => {
     if (user.role === 'family') {
       const familyResidentIds = await familyPortalRepo.getFamilyResidentIds(user._id);
       if (!familyResidentIds.includes(String(residentId))) {
-        throw new ServiceError('Access denied: not authorized to view invoices for this resident', 403);
+        throw new ServiceError('Truy cập bị từ chối: không có quyền xem hóa đơn của cư dân này', 403);
       }
     } else if (user.role === 'resident') {
       if (String(user.residentId || user._id) !== String(residentId)) {
-        throw new ServiceError('Access denied: not authorized to view invoices for this resident', 403);
+        throw new ServiceError('Truy cập bị từ chối: không có quyền xem hóa đơn của cư dân này', 403);
       }
     }
   }
@@ -988,30 +988,30 @@ const getPayosPaymentStatus = async (orderCode) => {
         try {
           const parsed = JSON.parse(responseBody || '{}');
           if (parsed.code !== '00') {
-            return reject(new ServiceError(parsed.desc || `PayOS status check failed: ${response.statusCode}`, 502));
+            return reject(new ServiceError(parsed.desc || `Kiểm tra trạng thái PayOS thất bại: ${response.statusCode}`, 502));
           }
           return resolve(parsed.data || {});
         } catch (err) {
-          return reject(new ServiceError(`Invalid PayOS response: ${err.message}`, 502));
+          return reject(new ServiceError(`Phản hồi PayOS không hợp lệ: ${err.message}`, 502));
         }
       });
     });
 
-    request.on('error', (err) => reject(new ServiceError(`PayOS request error: ${err.message}`, 502)));
+    request.on('error', (err) => reject(new ServiceError(`Lỗi yêu cầu PayOS: ${err.message}`, 502)));
     request.end();
   });
 };
 
 const batchPayment = async (user, residentId, invoiceIds, body, req) => {
   if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
-    throw new ServiceError('No invoices selected for payment', 400);
+    throw new ServiceError('Chưa chọn hóa đơn nào để thanh toán', 400);
   }
 
   // Fetch all invoices
   const invoices = await invoiceRepo.findAll({ _id: { $in: invoiceIds }, residentId });
   
   if (invoices.length !== invoiceIds.length) {
-    throw new ServiceError('Some invoices not found or do not belong to this resident', 404);
+    throw new ServiceError('Một số hóa đơn không tồn tại hoặc không thuộc về cư dân này', 404);
   }
 
   // Calculate total amount
@@ -1022,7 +1022,7 @@ const batchPayment = async (user, residentId, invoiceIds, body, req) => {
 
   const amount = body.amount ? normalizeCost(body.amount) : totalAmount;
   if (amount <= 0) {
-    throw new ServiceError('Payment amount must be greater than 0', 400);
+    throw new ServiceError('Số tiền thanh toán phải lớn hơn 0', 400);
   }
 
   // For PayOS payment, return checkout URL without creating payment records yet

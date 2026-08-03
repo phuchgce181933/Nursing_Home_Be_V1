@@ -50,7 +50,7 @@ const replaceEmergencyContacts = async (req, res) => {
   try {
     const contacts = req.body.contacts ?? req.body.emergencyContacts;
     if (!Array.isArray(contacts)) {
-      return res.status(400).json({ message: 'contacts must be an array' });
+      return res.status(400).json({ message: 'contacts phải là một mảng' });
     }
     const result = await residentService.replaceEmergencyContacts(req.params.residentId, contacts);
     res.json(result);

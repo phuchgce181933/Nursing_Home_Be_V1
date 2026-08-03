@@ -16,11 +16,11 @@ const addPhotos = async (userId, residentId, uploadedPhotos, caption) => {
   await assertResidentsAssignedToUser(userId, [residentId]);
 
   if (!uploadedPhotos || !uploadedPhotos.length) {
-    throw new ServiceError('At least one photo is required', 400);
+    throw new ServiceError('Phải cung cấp ít nhất một ảnh', 400);
   }
 
   const resident = await Resident.findById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const entries = uploadedPhotos.map((p) => ({
     url: p.url,
@@ -40,7 +40,7 @@ const addPhotos = async (userId, residentId, uploadedPhotos, caption) => {
 const listPhotosForCaregiver = async (userId, residentId) => {
   await assertResidentsAssignedToUser(userId, [residentId]);
   const resident = await Resident.findById(residentId).select('photos');
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return resident.photos.slice().reverse().map(formatPhoto);
 };
 
@@ -49,11 +49,11 @@ const deletePhoto = async (userId, residentId, photoId) => {
   await assertResidentsAssignedToUser(userId, [residentId]);
 
   const resident = await Resident.findById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const target = resident.photos.find((p) => String(p._id) === String(photoId));
   if (!target) {
-    throw new ServiceError('Photo not found', 404);
+    throw new ServiceError('Không tìm thấy ảnh', 404);
   }
 
   resident.photos = resident.photos.filter((p) => String(p._id) !== String(photoId));
@@ -67,10 +67,10 @@ const deletePhoto = async (userId, residentId, photoId) => {
 // ── Family: view photos for their relative ──────────────────────────────────────
 const listPhotosForFamily = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Từ chối truy cập: không phải người thân của bạn', 403);
   }
   const resident = await Resident.findById(residentId).select('photos');
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return resident.photos.slice().reverse().map(formatPhoto);
 };
 

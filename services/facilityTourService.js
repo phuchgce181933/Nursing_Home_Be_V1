@@ -6,7 +6,7 @@ const { validateEmail } = require('../utils/validators');
 const MAX_TEXT_LENGTH = 500;
 const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
   if (value && value.length > max) {
-    throw new ServiceError(`${fieldName} must be at most ${max} characters`, 400);
+    throw new ServiceError(`${fieldName} không được vượt quá ${max} ký tự`, 400);
   }
 };
 
@@ -67,7 +67,7 @@ const formatTour = (tour, { includeFamily = true } = {}) => {
 const scheduleTour = async (user, body, req) => {
   if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
     throw new ServiceError(
-      'Request body is empty. Use POST with Content-Type: application/json.',
+      'Nội dung yêu cầu (request body) trống. Vui lòng dùng POST với Content-Type: application/json.',
       400
     );
   }
@@ -84,7 +84,7 @@ const scheduleTour = async (user, body, req) => {
 
   // Validate required fields
   const name = typeof contactName === 'string' ? contactName.trim() : '';
-  if (!name) throw new ServiceError('contactName is required', 400);
+  if (!name) throw new ServiceError('contactName là bắt buộc', 400);
   if (name.length < 2 || name.length > 50) {
     throw new ServiceError('Tên phải từ 2 đến 50 ký tự', 400);
   }
@@ -93,7 +93,7 @@ const scheduleTour = async (user, body, req) => {
   }
 
   const phone = typeof contactPhone === 'string' ? contactPhone.trim() : '';
-  if (!phone) throw new ServiceError('contactPhone is required', 400);
+  if (!phone) throw new ServiceError('contactPhone là bắt buộc', 400);
   // Matches the admission-request page's phone format (Stage 1) so the two forms validate
   // phone numbers identically instead of each having its own slightly different regex.
   if (!/^(0|\+84)(3|5|7|8|9)\d{8}$/.test(phone)) {
@@ -108,16 +108,16 @@ const scheduleTour = async (user, body, req) => {
   assertMaxLength(name, 'contactName');
   assertMaxLength(notes?.trim(), 'notes');
 
-  if (!preferredDate) throw new ServiceError('preferredDate is required', 400);
+  if (!preferredDate) throw new ServiceError('preferredDate là bắt buộc', 400);
   const parsedDate = new Date(preferredDate);
   if (Number.isNaN(parsedDate.getTime())) {
-    throw new ServiceError('preferredDate is invalid (use ISO format: YYYY-MM-DD)', 400);
+    throw new ServiceError('preferredDate không hợp lệ (dùng định dạng ISO: YYYY-MM-DD)', 400);
   }
   const now = new Date();
   const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
   const startOfToday = new Date(Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth(), vnNow.getUTCDate(), 0, 0, 0, 0) - 7 * 60 * 60 * 1000);
   if (parsedDate < startOfToday) {
-    throw new ServiceError('preferredDate must be today or in the future', 400);
+    throw new ServiceError('preferredDate phải là hôm nay hoặc trong tương lai', 400);
   }
 
   const y = vnNow.getUTCFullYear();
@@ -132,14 +132,14 @@ const scheduleTour = async (user, body, req) => {
       const curHour = vnNow.getUTCHours();
       const curMin = vnNow.getUTCMinutes();
       if (curHour > slotStart.hour || (curHour === slotStart.hour && curMin >= slotStart.minute)) {
-        throw new ServiceError('The selected time slot for today has already passed', 400);
+        throw new ServiceError('Khung giờ đã chọn cho hôm nay đã qua', 400);
       }
     }
   }
 
   const visitors = numberOfVisitors ? parseInt(numberOfVisitors, 10) : 1;
   if (Number.isNaN(visitors) || visitors < 1 || visitors > 20) {
-    throw new ServiceError('numberOfVisitors must be between 1 and 20', 400);
+    throw new ServiceError('numberOfVisitors phải trong khoảng từ 1 đến 20', 400);
   }
 
   // Anti-spam: Check if there is already a pending or confirmed tour request on the same preferredDate for this family
@@ -155,7 +155,7 @@ const scheduleTour = async (user, body, req) => {
   const duplicateTour = await tourRepo.findActiveTourOnDate(user._id, startOfDate, endOfDate);
   if (duplicateTour) {
     throw new ServiceError(
-      `You already have a ${duplicateTour.status} facility tour request scheduled on this date (${preferredDate.split('T')[0]}). Please cancel it or contact support to modify.`,
+      `Bạn đã có một yêu cầu tham quan cơ sở ở trạng thái ${duplicateTour.status} được đặt lịch vào ngày này (${preferredDate.split('T')[0]}). Vui lòng hủy yêu cầu đó hoặc liên hệ hỗ trợ để thay đổi.`,
       400
     );
   }
@@ -164,7 +164,7 @@ const scheduleTour = async (user, body, req) => {
   const pendingCount = await tourRepo.countByFamily(user._id, { status: 'pending' });
   if (pendingCount >= 3) {
     throw new ServiceError(
-      'You cannot have more than 3 pending facility tour requests at the same time. Please wait for them to be processed or cancel an existing request.',
+      'Bạn không thể có quá 3 yêu cầu tham quan cơ sở đang chờ xử lý cùng lúc. Vui lòng chờ xử lý hoặc hủy một yêu cầu hiện có.',
       400
     );
   }
@@ -192,7 +192,7 @@ const scheduleTour = async (user, body, req) => {
     req,
   });
 
-  return { message: 'Facility tour scheduled successfully', tour: formatTour(tour) };
+  return { message: 'Đã đặt lịch tham quan cơ sở thành công', tour: formatTour(tour) };
 };
 
 // ── List Tour History ────────────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ const listTourHistory = async (user, query) => {
     for (const s of statuses) {
       if (!tourRepo.FACILITY_TOUR_STATUSES.includes(s)) {
         throw new ServiceError(
-          `status must be one of: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
+          `status phải thuộc một trong: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
           400
         );
       }
@@ -219,12 +219,12 @@ const listTourHistory = async (user, query) => {
     filter.preferredDate = {};
     if (query.from) {
       const from = new Date(query.from);
-      if (Number.isNaN(from.getTime())) throw new ServiceError('from date is invalid', 400);
+      if (Number.isNaN(from.getTime())) throw new ServiceError('from không hợp lệ', 400);
       filter.preferredDate.$gte = from;
     }
     if (query.to) {
       const to = new Date(query.to);
-      if (Number.isNaN(to.getTime())) throw new ServiceError('to date is invalid', 400);
+      if (Number.isNaN(to.getTime())) throw new ServiceError('to không hợp lệ', 400);
       filter.preferredDate.$lte = to;
     }
   }
@@ -250,12 +250,12 @@ const listTourHistory = async (user, query) => {
 const cancelTour = async (user, tourId, body, req) => {
   const tour = await tourRepo.findByIdForFamily(tourId, user._id);
   if (!tour) {
-    throw new ServiceError('Facility tour request not found', 404);
+    throw new ServiceError('Không tìm thấy yêu cầu tham quan cơ sở', 404);
   }
 
   if (!tourRepo.CANCELLABLE_STATUSES.includes(tour.status)) {
     throw new ServiceError(
-      `Cannot cancel a tour with status: ${tour.status}. Only ${tourRepo.CANCELLABLE_STATUSES.join(', ')} can be cancelled.`,
+      `Không thể hủy yêu cầu tham quan ở trạng thái: ${tour.status}. Chỉ có thể hủy khi ở trạng thái ${tourRepo.CANCELLABLE_STATUSES.join(', ')}.`,
       400
     );
   }
@@ -281,7 +281,7 @@ const cancelTour = async (user, tourId, body, req) => {
     req,
   });
 
-  return { message: 'Facility tour cancelled successfully', tour: formatTour(updated) };
+  return { message: 'Đã hủy lịch tham quan cơ sở thành công', tour: formatTour(updated) };
 };
 
 // ── Admin services ──────────────────────────────────────────────────────────────
@@ -296,7 +296,7 @@ const adminListTours = async (query) => {
     for (const s of statuses) {
       if (!tourRepo.FACILITY_TOUR_STATUSES.includes(s)) {
         throw new ServiceError(
-          `status must be one of: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
+          `status phải thuộc một trong: ${tourRepo.FACILITY_TOUR_STATUSES.join(', ')}`,
           400
         );
       }
@@ -308,12 +308,12 @@ const adminListTours = async (query) => {
     filter.preferredDate = {};
     if (query.from) {
       const from = new Date(query.from);
-      if (Number.isNaN(from.getTime())) throw new ServiceError('from date is invalid', 400);
+      if (Number.isNaN(from.getTime())) throw new ServiceError('from không hợp lệ', 400);
       filter.preferredDate.$gte = from;
     }
     if (query.to) {
       const to = new Date(query.to);
-      if (Number.isNaN(to.getTime())) throw new ServiceError('to date is invalid', 400);
+      if (Number.isNaN(to.getTime())) throw new ServiceError('to không hợp lệ', 400);
       filter.preferredDate.$lte = to;
     }
   }
@@ -346,17 +346,17 @@ const adminListTours = async (query) => {
 
 const adminGetTour = async (tourId) => {
   const tour = await tourRepo.findByIdForAdmin(tourId);
-  if (!tour) throw new ServiceError('Facility tour request not found', 404);
+  if (!tour) throw new ServiceError('Không tìm thấy yêu cầu tham quan cơ sở', 404);
   return { tour: formatTour(tour, { includeFamily: true }) };
 };
 
 const approveTour = async (admin, tourId, body, req) => {
   const tour = await tourRepo.findByIdForAdmin(tourId);
-  if (!tour) throw new ServiceError('Facility tour request not found', 404);
+  if (!tour) throw new ServiceError('Không tìm thấy yêu cầu tham quan cơ sở', 404);
 
   if (!tourRepo.APPROVABLE_STATUSES.includes(tour.status)) {
     throw new ServiceError(
-      `Cannot approve a tour with status: ${tour.status}. Only ${tourRepo.APPROVABLE_STATUSES.join(', ')} can be approved.`,
+      `Không thể duyệt yêu cầu tham quan ở trạng thái: ${tour.status}. Chỉ có thể duyệt khi ở trạng thái ${tourRepo.APPROVABLE_STATUSES.join(', ')}.`,
       400
     );
   }
@@ -385,16 +385,16 @@ const approveTour = async (admin, tourId, body, req) => {
     req,
   });
 
-  return { message: 'Facility tour approved successfully', tour: formatTour(updated) };
+  return { message: 'Đã duyệt lịch tham quan cơ sở thành công', tour: formatTour(updated) };
 };
 
 const completeTour = async (admin, tourId, body, req) => {
   const tour = await tourRepo.findByIdForAdmin(tourId);
-  if (!tour) throw new ServiceError('Facility tour request not found', 404);
+  if (!tour) throw new ServiceError('Không tìm thấy yêu cầu tham quan cơ sở', 404);
 
   if (!tourRepo.COMPLETABLE_STATUSES.includes(tour.status)) {
     throw new ServiceError(
-      `Cannot complete a tour with status: ${tour.status}. Only ${tourRepo.COMPLETABLE_STATUSES.join(', ')} tours can be marked as completed.`,
+      `Không thể hoàn tất yêu cầu tham quan ở trạng thái: ${tour.status}. Chỉ có thể đánh dấu hoàn tất khi ở trạng thái ${tourRepo.COMPLETABLE_STATUSES.join(', ')}.`,
       400
     );
   }
@@ -422,23 +422,23 @@ const completeTour = async (admin, tourId, body, req) => {
     req,
   });
 
-  return { message: 'Facility tour marked as completed', tour: formatTour(updated) };
+  return { message: 'Đã đánh dấu lịch tham quan cơ sở là hoàn thành', tour: formatTour(updated) };
 };
 
 const rejectTour = async (admin, tourId, body, req) => {
   const tour = await tourRepo.findByIdForAdmin(tourId);
-  if (!tour) throw new ServiceError('Facility tour request not found', 404);
+  if (!tour) throw new ServiceError('Không tìm thấy yêu cầu tham quan cơ sở', 404);
 
   if (!tourRepo.REJECTABLE_STATUSES.includes(tour.status)) {
     throw new ServiceError(
-      `Cannot reject a tour with status: ${tour.status}. Only ${tourRepo.REJECTABLE_STATUSES.join(', ')} can be rejected.`,
+      `Không thể từ chối yêu cầu tham quan ở trạng thái: ${tour.status}. Chỉ có thể từ chối khi ở trạng thái ${tourRepo.REJECTABLE_STATUSES.join(', ')}.`,
       400
     );
   }
 
   const rejectionReason = body?.rejectionReason?.trim() || '';
   if (!rejectionReason) {
-    throw new ServiceError('rejectionReason is required when rejecting a tour request', 400);
+    throw new ServiceError('rejectionReason là bắt buộc khi từ chối yêu cầu tham quan', 400);
   }
   assertMaxLength(rejectionReason, 'rejectionReason');
 
@@ -462,7 +462,7 @@ const rejectTour = async (admin, tourId, body, req) => {
     req,
   });
 
-  return { message: 'Facility tour rejected successfully', tour: formatTour(updated) };
+  return { message: 'Đã từ chối lịch tham quan cơ sở thành công', tour: formatTour(updated) };
 };
 
 module.exports = {

@@ -83,6 +83,14 @@ const generateTopupPaymentUrl = async (user, amount, req) => {
     amount,
     topupId,
     orderCode: payosData.orderCode || null,
+    // Real PayOS bank-transfer details for this specific payment link — used to render
+    // a banking-app-style receipt on the client (never fabricated placeholder data).
+    bankBin: payosData.bin || null,
+    bankAccountNumber: payosData.accountNumber || null,
+    bankAccountName: payosData.accountName || null,
+    description: payosData.description || null,
+    payerName: user.fullName || null,
+    createdAt: new Date().toISOString(),
   };
 };
 
@@ -111,7 +119,7 @@ const confirmTopup = async (userId, topupId, paymentId) => {
 const confirmTopupByTopupId = async (topupId, paymentId) => {
   const parts = String(topupId).split('_');
   if (parts.length < 3) {
-    throw new ServiceError('Invalid topupId format', 400);
+    throw new ServiceError('Định dạng topupId không hợp lệ', 400);
   }
   const userId = parts[1];
   return confirmTopup(userId, topupId, paymentId);

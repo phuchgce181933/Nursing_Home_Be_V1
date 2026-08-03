@@ -438,7 +438,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     conflicts.push({
       type: 'OVERTIME',
       severity: 'WARNING',
-      message: `Total working hours this week would be ${weeklyHours.toFixed(1)}h, exceeding the 48h limit.`,
+      message: `Tổng giờ làm việc trong tuần sẽ là ${weeklyHours.toFixed(1)} giờ, vượt quá giới hạn 48 giờ.`,
       details: { totalHours: weeklyHours },
     });
   }
@@ -572,7 +572,7 @@ const createShift = async (body, actorUserId) => {
         fieldsChanged: ['created'],
         oldValues: {},
         newValues: shiftPayload,
-        reason: 'Initial creation',
+        reason: 'Tạo mới ban đầu',
       },
     ],
   });

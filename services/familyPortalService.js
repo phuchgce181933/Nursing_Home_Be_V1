@@ -30,20 +30,20 @@ const getResidents = async (user) => {
 
 const getResident = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
   const resident = await familyPortalRepo.getResidentById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   await attachServicePackagePrice(resident);
   return resident;
 };
 
 const getResidentBillingSummary = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
   const resident = await familyPortalRepo.getResidentById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   await attachServicePackagePrice(resident);
 
   const [latestInvoice, invoiceCount] = await Promise.all([
@@ -68,7 +68,7 @@ const getResidentBillingSummary = async (user, residentId) => {
 
 const getResidentInvoices = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
   const { pageNum, limitNum, skip } = parsePagination(query);
   const [data, total] = await Promise.all([
@@ -80,12 +80,12 @@ const getResidentInvoices = async (user, residentId, query) => {
 
 const getInvoicePaymentUrl = async (user, residentId, invoiceId, req) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
   
   const invoices = await familyPortalRepo.findInvoicesByResidentId(residentId, { limit: 100 });
   const foundInvoice = invoices.find(inv => String(inv._id) === String(invoiceId));
-  if (!foundInvoice) throw new ServiceError('Invoice not found', 404);
+  if (!foundInvoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
   
   // Use paymentService to generate the checkout URL with checksum
   const paymentUrl = paymentService.buildPayosCheckoutUrl(req, foundInvoice);
@@ -94,7 +94,7 @@ const getInvoicePaymentUrl = async (user, residentId, invoiceId, req) => {
 
 const getVitals = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
   const records = await familyPortalRepo.findMedicalRecords({ residentId }, { sort: { measuredAt: -1 }, limit: 1 });
   return records.length ? records[0] : null;
@@ -102,7 +102,7 @@ const getVitals = async (user, residentId) => {
 
 const getHealthHistory = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   const filter = { residentId };
@@ -124,7 +124,7 @@ const getHealthHistory = async (user, residentId, query) => {
 
 const getHealthChart = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   const VALID_METRICS = [
@@ -138,7 +138,7 @@ const getHealthChart = async (user, residentId, query) => {
   ];
 
   if (query.metric && !VALID_METRICS.includes(query.metric)) {
-    throw new ServiceError(`metric must be one of: ${VALID_METRICS.join(', ')}`, 400);
+    throw new ServiceError(`metric phải thuộc một trong: ${VALID_METRICS.join(', ')}`, 400);
   }
 
   const now = new Date();
@@ -168,13 +168,13 @@ const getHealthChart = async (user, residentId, query) => {
 
 const getCareNotes = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   const filter = { residentId };
   if (query.noteType) {
     if (!CARE_NOTE_TYPES.includes(query.noteType)) {
-      throw new ServiceError(`noteType must be one of: ${CARE_NOTE_TYPES.join(', ')}`, 400);
+      throw new ServiceError(`noteType phải thuộc một trong: ${CARE_NOTE_TYPES.join(', ')}`, 400);
     }
     filter.noteType = query.noteType;
   }
@@ -198,13 +198,13 @@ const VALID_MED_STATUSES = ['PENDING', 'TAKEN', 'LATE_TAKEN', 'MISSED', 'SKIPPED
 
 const getMedications = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   const filter = { residentId };
   if (query.status) {
     if (!VALID_MED_STATUSES.includes(query.status)) {
-      throw new ServiceError(`status must be one of: ${VALID_MED_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${VALID_MED_STATUSES.join(', ')}`, 400);
     }
     filter.status = query.status;
   }
@@ -227,13 +227,13 @@ const VALID_PRESCRIPTION_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];
 
 const getPrescriptions = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   const filter = { residentId };
   if (query.status) {
     if (!VALID_PRESCRIPTION_STATUSES.includes(query.status)) {
-      throw new ServiceError(`status must be one of: ${VALID_PRESCRIPTION_STATUSES.join(', ')}`, 400);
+      throw new ServiceError(`status phải thuộc một trong: ${VALID_PRESCRIPTION_STATUSES.join(', ')}`, 400);
     }
     filter.status = query.status;
   }
@@ -255,10 +255,10 @@ const isoWeekKey = (date) => {
 // doctor/nurse ScheduleController.getHistory, scoped to the family's own relative.
 const getMedicationHistory = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
   const resident = await familyPortalRepo.getResidentById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const filter = { residentId };
   if (query.prescriptionId) filter.prescriptionId = query.prescriptionId;
@@ -320,7 +320,7 @@ const getMedicationHistory = async (user, residentId, query) => {
 // Today's (or a chosen day's) medication doses for the family's own relative.
 const getDailyMedicationSchedule = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   let dateFilter = buildWorkDateFilter(query);
@@ -358,7 +358,7 @@ const getDailyMedicationSchedule = async (user, residentId, query) => {
 
 const getActivities = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   const filter = { participantResidentIds: residentId };
@@ -374,7 +374,7 @@ const getActivities = async (user, residentId, query) => {
 
 const getCareAppointments = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   const filter = { residentId };
@@ -406,7 +406,7 @@ const buildWorkDateFilter = (query) => {
 
 const getDailyActivities = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   // Default to today when no date params provided
@@ -441,7 +441,7 @@ const getDailyActivities = async (user, residentId, query) => {
 
 const getCareSchedule = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   // Default to today when no date params provided
@@ -490,7 +490,7 @@ const row = (...cols) => cols.map(escapeCSV).join(',');
 
 const buildResidentReportCSV = async (residentId, query) => {
   const resident = await familyPortalRepo.getResidentById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const dateRange = {};
   if (query.from) dateRange.$gte = new Date(query.from);
@@ -599,7 +599,7 @@ const buildResidentReportCSV = async (residentId, query) => {
 
 const downloadReport = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
   return buildResidentReportCSV(residentId, query);
 };
@@ -607,13 +607,13 @@ const downloadReport = async (user, residentId, query) => {
 // UC-132: Doctor/Nurse export of a resident's health report (reuses the same CSV builder as the family export).
 const staffDownloadReport = async (user, residentId, query) => {
   const resident = await familyPortalRepo.getResidentById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return buildResidentReportCSV(residentId, query);
 };
 
 const getHealthReport = async (user, residentId, query) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
-    throw new ServiceError('Access denied: not your relative', 403);
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
   }
 
   const dateRange = {};
@@ -622,7 +622,7 @@ const getHealthReport = async (user, residentId, query) => {
   const hasRange = Object.keys(dateRange).length > 0;
 
   const resident = await familyPortalRepo.getResidentById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const vitalsFilter = { residentId, ...(hasRange && { measuredAt: dateRange }) };
   const notesFilter  = { residentId, ...(hasRange && { noteAt: dateRange }) };

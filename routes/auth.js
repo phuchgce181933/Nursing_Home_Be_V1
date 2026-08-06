@@ -199,7 +199,7 @@ router.post('/firebase-token', protect, authorize('admin'), createFirebaseToken)
  *               role:
  *                 type: string
  *                 enum: [doctor, nurse, manager, staff, pharmacist, caregiver, family, admin]
- *                 description: Manager callers may only use doctor, nurse, staff
+ *                 description: Manager callers may only use doctor, nurse, staff. Admin may also create family accounts.
  *               phone:
  *                 type: string
  *                 example: "0901234567"
@@ -235,6 +235,10 @@ router.post('/firebase-token', protect, authorize('admin'), createFirebaseToken)
  *               avatar:
  *                 type: string
  *                 format: binary
+ *               residentName:
+ *                 type: string
+ *                 description: Optional. Only used when role is 'family' — the resident name shown in the welcome email.
+ *                 example: "Nguyễn Văn B"
  *     responses:
  *       201:
  *         description: Staff account created

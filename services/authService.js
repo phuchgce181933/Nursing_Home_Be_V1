@@ -6,8 +6,8 @@ const staffProfileRepo = require('../repositories/staffProfileRepository');
 const mailService = require('./mailService');
 const otpService = require('./otpService');
 const { validatePhone, validateUsername, validateStaffDateOfBirth, validateStaffCertifications, validateFullName, validateEmail, validatePassword, collectErrors } = require('../utils/validators');
-const STAFF_ROLES = ['doctor', 'nurse', 'pharmacist', 'caregiver'];
-const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', pharmacist: 'PHA', caregiver: 'CAR', admin: 'ADM' };
+const STAFF_ROLES = ['doctor', 'nurse', 'pharmacist', 'caregiver', 'family'];
+const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', pharmacist: 'PHA', caregiver: 'CAR', admin: 'ADM', family: 'FAM' };
 const VALID_ROLES = [...STAFF_ROLES, 'admin', 'system'];
 const crypto = require('crypto');
 const generateStaffCode = (role) => {
@@ -147,6 +147,7 @@ const createStaffAccount = async ({
   avatarUrl,
   avatarPublicId,
   certificationDocuments,
+  residentName,
 }, currentUser) => {
   if (!fullName || !email || !password || !role) {
     throw apiErr(CODES.AUTH_CREATE_STAFF_REQUIRED, { statusCode: 400 });
@@ -185,17 +186,25 @@ const createStaffAccount = async ({
     if (usernameConflict) throw apiErr(CODES.AUTH_USERNAME_IN_USE, { statusCode: 409 });
   }
 
-  const resolvedStaffCode = staffCode ? staffCode.toUpperCase().trim() : generateStaffCode(role);
-  const codeConflict = await staffProfileRepo.findByStaffCode(resolvedStaffCode);
-  if (codeConflict) {
-    throw apiErr(CODES.AUTH_STAFF_CODE_EXISTS, {
-      statusCode: 409,
-      params: { code: resolvedStaffCode },
-    });
+  // Family accounts don't need a StaffProfile or staffCode; skip those validations and steps below.
+  const isFamilyRole = role === 'family';
+
+  let resolvedStaffCode;
+  if (isFamilyRole) {
+    resolvedStaffCode = undefined;
+  } else {
+    resolvedStaffCode = staffCode ? staffCode.toUpperCase().trim() : generateStaffCode(role);
+    const codeConflict = await staffProfileRepo.findByStaffCode(resolvedStaffCode);
+    if (codeConflict) {
+      throw apiErr(CODES.AUTH_STAFF_CODE_EXISTS, {
+        statusCode: 409,
+        params: { code: resolvedStaffCode },
+      });
+    }
   }
 
   const docs = Array.isArray(certificationDocuments) ? certificationDocuments : [];
-  const certError = validateStaffCertifications(role, docs);
+  const certError = isFamilyRole ? null : validateStaffCertifications(role, docs);
   if (certError) throw apiErr(CODES.AUTH_VALIDATION_FAILED, { statusCode: 400, params: { detail: certError } });
 
   const certNamesFromDocs = docs.map((d) => d.fileName).filter(Boolean);
@@ -217,23 +226,34 @@ const createStaffAccount = async ({
     isActive: true,
   });
 
-  const staffProfile = await staffProfileRepo.createStaffProfile({
-    userId: user._id,
-    staffCode: resolvedStaffCode,
-    roleCategory: role,
-    specialty: specialty?.trim(),
-    certifications: certList,
-    certificationDocuments: docs,
-  });
+  let staffProfile = null;
+  if (!isFamilyRole) {
+    staffProfile = await staffProfileRepo.createStaffProfile({
+      userId: user._id,
+      staffCode: resolvedStaffCode,
+      roleCategory: role,
+      specialty: specialty?.trim(),
+      certifications: certList,
+      certificationDocuments: docs,
+    });
 
-  await mailService.sendStaffAccountCreatedEmail({
-    to: user.email,
-    fullName: user.fullName,
-    role: user.role,
-    staffCode: resolvedStaffCode,
-    email: user.email,
-    password,
-  });
+    await mailService.sendStaffAccountCreatedEmail({
+      to: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      staffCode: resolvedStaffCode,
+      email: user.email,
+      password,
+    });
+  } else {
+    await mailService.sendFamilyAccountCreatedEmail({
+      to: user.email,
+      fullName: user.fullName,
+      residentName: residentName?.trim(),
+      email: user.email,
+      password,
+    });
+  }
 
   return {
     ...apiSuccess(SUCCESS.AUTH_STAFF_CREATED),
@@ -245,12 +265,14 @@ const createStaffAccount = async ({
       isActive: user.isActive,
       createdAt: user.createdAt,
     },
-    staffProfile: {
-      _id: staffProfile._id,
-      staffCode: staffProfile.staffCode,
-      roleCategory: staffProfile.roleCategory,
-      specialty: staffProfile.specialty,
-    },
+    staffProfile: staffProfile
+      ? {
+          _id: staffProfile._id,
+          staffCode: staffProfile.staffCode,
+          roleCategory: staffProfile.roleCategory,
+          specialty: staffProfile.specialty,
+        }
+      : null,
   };
 };
 

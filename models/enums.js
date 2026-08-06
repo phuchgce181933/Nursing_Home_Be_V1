@@ -1,5 +1,5 @@
 const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'caregiver', 'pharmacist', 'family', 'system'];
-const NON_ASSIGNABLE_ROLES = ['admin'];
+const NON_ASSIGNABLE_ROLES = ['admin', 'family'];
 const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'caregiver'];
 const CARE_TASK_ASSIGNEE_ROLES = ['nurse', 'doctor', 'caregiver'];
 const GENDERS = ['male', 'female', 'other', 'unknown'];

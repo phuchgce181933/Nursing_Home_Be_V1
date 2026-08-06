@@ -36,7 +36,7 @@ const {
 } = require('../utils/rolePolicy');
 const { isShiftActiveNow, parseWorkDate, getLocalDateString } = require('../utils/shiftTime');
 
-const STAFF_ROLES = ['doctor', 'nurse', 'caregiver', 'pharmacist', 'admin'];
+const STAFF_ROLES = ['doctor', 'nurse', 'caregiver', 'pharmacist', 'admin', 'family'];
 const DEFAULT_SPECIALTY_BY_ROLE = {
   admin: 'Administration',
   doctor: 'General Medicine',

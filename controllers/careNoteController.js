@@ -36,6 +36,15 @@ const getNote = async (req, res) => {
   }
 };
 
+const getNoteAuditHistory = async (req, res) => {
+  try {
+    const result = await careNoteService.getNoteAuditHistory(req.params.id);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const updateNote = async (req, res) => {
   try {
     const result = await careNoteService.updateNote(req.user, req.params.id, req.body, req);
@@ -63,4 +72,4 @@ const getMyNotes = async (req, res) => {
   }
 };
 
-module.exports = { createNote, listNotes, getNoteHistory, getNote, updateNote, deleteNote, getMyNotes };
+module.exports = { createNote, listNotes, getNoteHistory, getNote, getNoteAuditHistory, updateNote, deleteNote, getMyNotes };

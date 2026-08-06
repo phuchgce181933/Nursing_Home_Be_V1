@@ -4,6 +4,7 @@ const { FACILITY_TOUR_STATUSES } = require('../models/enums');
 const CANCELLABLE_STATUSES = ['pending', 'confirmed'];
 const APPROVABLE_STATUSES = ['pending'];
 const REJECTABLE_STATUSES = ['pending'];
+const COMPLETABLE_STATUSES = ['confirmed'];
 
 const createTour = (data) => FacilityTour.create(data);
 
@@ -51,6 +52,7 @@ module.exports = {
   CANCELLABLE_STATUSES,
   APPROVABLE_STATUSES,
   REJECTABLE_STATUSES,
+  COMPLETABLE_STATUSES,
   createTour,
   findByFamily,
   countByFamily,

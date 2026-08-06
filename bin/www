@@ -1,10 +1,78 @@
 #!/usr/bin/env node
+if (process.env.NODE_ENV === 'local') {
+  require('dotenv').config({ path: '.env.local', override: false });
+}
+require('dotenv').config();
+
 const app = require('../app');
 const http = require('http');
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 const server = http.createServer(app);
+
+// Initialize Socket.IO for real-time notifications
+try {
+  const { Server } = require('socket.io');
+  const jwt = require('jsonwebtoken');
+  const User = require('../models/user');
+  const Conversation = require('../models/conversation');
+
+  const io = new Server(server, {
+    cors: {
+      // Reflect any origin: web dev servers, LAN IPs for Expo/React Native testing, etc.
+      // Real access control happens via the JWT check in io.use() below, not CORS.
+      origin: true,
+      methods: ['GET', 'POST'],
+      credentials: true,
+    },
+  });
+  app.set('io', io);
+
+  // Authenticate every socket connection with the same JWT used for REST auth.
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token;
+      if (!token) return next(new Error('Not authenticated'));
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await User.findById(decoded.id).select('_id role isActive isBanned');
+      if (!user || !user.isActive || user.isBanned) return next(new Error('Not authenticated'));
+      socket.user = user;
+      next();
+    } catch (e) {
+      next(new Error('Not authenticated'));
+    }
+  });
+
+  io.on('connection', (socket) => {
+    // clients can join conversation rooms, gated by actual membership/role
+    socket.on('join', async (room) => {
+      try {
+        if (typeof room !== 'string') return;
+        if (room === 'role:admin') {
+          if (socket.user.role === 'admin') socket.join(room);
+          return;
+        }
+        if (room.startsWith('conversation:')) {
+          const conversationId = room.slice('conversation:'.length);
+          if (socket.user.role === 'admin') return socket.join(room);
+          const isMember = await Conversation.exists({
+            _id: conversationId,
+            $or: [{ familyAccountId: socket.user._id }, { participantUserIds: socket.user._id }],
+          });
+          if (isMember) socket.join(room);
+          return;
+        }
+        // unknown room pattern — ignore rather than allow blindly
+      } catch (e) {}
+    });
+    socket.on('leave', (room) => {
+      try { socket.leave(room); } catch (e) {}
+    });
+  });
+} catch (e) {
+  console.warn('Socket.IO not initialized:', e.message);
+}
 
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
@@ -14,6 +82,34 @@ server.listen(PORT, () => {
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`Port ${PORT} is already in use`);
+    // #region agent log
+    let portListeners = [];
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync(`netstat -ano | findstr ":${PORT}"`, { encoding: 'utf8' });
+      portListeners = out
+        .trim()
+        .split('\n')
+        .filter((l) => l.includes('LISTENING'))
+        .map((l) => l.trim());
+    } catch (_) {}
+    fetch('http://127.0.0.1:7774/ingest/dee35c7c-2867-4feb-9059-e3223db025b0', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '67518e' },
+      body: JSON.stringify({
+        sessionId: '67518e',
+        location: 'bin/www:EADDRINUSE',
+        message: 'Port bind failed — already in use',
+        data: { port: PORT, portListeners, errCode: err.code },
+        timestamp: Date.now(),
+        hypothesisId: 'A',
+        runId: 'port-conflict',
+      }),
+    }).catch(() => {});
+    // #endregion
+    console.error(
+      'Another process is already listening on this port. Stop the other dev server (Ctrl+C in its terminal) or run: netstat -ano | findstr ":3000"'
+    );
   } else {
     console.error(err);
   }

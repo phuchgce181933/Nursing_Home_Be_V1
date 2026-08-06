@@ -1,4 +1,4 @@
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const shiftRepo = require('../repositories/shiftRepository');
@@ -20,13 +20,13 @@ const {
   getResidentIdsRemovedByAreaChange,
 } = require('../utils/careTaskGuards');
 const cloudinary = require('../config/cloudinaryConfig');
-const bcrypt = require('bcryptjs');
 const {
   validateFullName,
   validatePhone,
-  validateDateOfBirth,
-  validatePassword,
+  validateStaffDateOfBirth,
+  validateStaffCertifications,
   collectErrors,
+  ROLES_REQUIRING_CERT,
 } = require('../utils/validators');
 const { GENDERS } = require('../models/enums');
 const {
@@ -36,15 +36,13 @@ const {
 } = require('../utils/rolePolicy');
 const { isShiftActiveNow, parseWorkDate, getLocalDateString } = require('../utils/shiftTime');
 
-const STAFF_ROLES = ['doctor', 'nurse', 'caregiver', 'chef', 'manager', 'staff', 'admin'];
+const STAFF_ROLES = ['doctor', 'nurse', 'caregiver', 'pharmacist', 'admin', 'family'];
 const DEFAULT_SPECIALTY_BY_ROLE = {
   admin: 'Administration',
-  manager: 'Operations Management',
   doctor: 'General Medicine',
   nurse: 'Care Nursing',
   caregiver: 'Daily Living Assistance',
-  chef: 'Kitchen Management',
-  staff: 'General Support',
+  pharmacist: 'Clinical Pharmacy',
 };
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -55,6 +53,41 @@ const safeDeleteCloudinaryImage = (publicId) => {
     console.warn(`Could not delete Cloudinary image ${publicId}:`, err.message)
   );
 };
+
+const parseRemovedCertPublicIds = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean).map(String);
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : [];
+    } catch {
+      return value.trim() ? [value.trim()] : [];
+    }
+  }
+  return [];
+};
+
+const parseCertificationIssueDateUpdates = (value) => {
+  if (!value) return [];
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item) => item?.publicId && item?.issueDate)
+    .map((item) => ({
+      publicId: String(item.publicId),
+      issueDate: new Date(item.issueDate),
+    }));
+};
+
+const toPlainCertDoc = (doc) => (doc?.toObject ? doc.toObject() : { ...doc });
 
 const buildFallbackStaffProfile = (user) => ({
   roleCategory: user.role,
@@ -97,7 +130,7 @@ const resolveAssignmentDate = (assignmentDate, date) => {
   try {
     parseWorkDate(assignmentDateStr);
   } catch {
-    throw new ServiceError('assignmentDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.STAFF_ASSIGNMENT_DATE_INVALID, { statusCode: 400 });
   }
 
   return { assignmentDateStr, checkDate: parseWorkDate(assignmentDateStr) };
@@ -117,7 +150,12 @@ const listStaffProfiles = async ({
 }) => {
   const filter = { role: { $in: STAFF_ROLES } };
   if (role) {
-    if (!STAFF_ROLES.includes(role)) throw new ServiceError(`role phải thuộc một trong: ${STAFF_ROLES.join(', ')}`, 400);
+    if (!STAFF_ROLES.includes(role)) {
+      throw apiErr(CODES.STAFF_ROLE_INVALID, {
+        statusCode: 400,
+        params: { allowed: STAFF_ROLES.join(', ') },
+      });
+    }
     filter.role = role;
   }
   if (isActive !== undefined) filter.isActive = isActive === 'true' || isActive === true;
@@ -178,7 +216,7 @@ const listStaffProfiles = async ({
     const item = {
       ...u.toObject(),
       staffProfile: profile,
-      assignable: getAssignableFlags(u.role),
+      assignable: getAssignableFlags(u.role, u),
     };
 
     if (includeShiftSummary) {
@@ -213,7 +251,7 @@ const listStaffProfiles = async ({
 
 const getStaffProfile = async (id) => {
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
 
   const userObj = user.toObject({ versionKey: false });
   // Remove all security-sensitive fields before returning
@@ -229,22 +267,40 @@ const getStaffProfile = async (id) => {
 
 const updateStaffProfile = async (id, body, currentUser) => {
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
   assertActorMayManageUser(currentUser, user);
 
-  const { fullName, phone, gender, dateOfBirth, address, avatarUrl, avatarPublicId, specialty, certifications, password } = body;
+  const { fullName, phone, gender, dateOfBirth, address, avatarUrl, avatarPublicId, specialty, certifications, certificationDocuments, removedCertPublicIds, certificationIssueDateUpdates } = body;
 
   // Validate only the fields that are provided
   const validationError = collectErrors([
     () => (fullName !== undefined ? validateFullName(fullName) : null),
     () => (phone !== undefined ? validatePhone(phone) : null),
-    () => (dateOfBirth !== undefined ? validateDateOfBirth(dateOfBirth) : null),
-    () => (password !== undefined ? validatePassword(password) : null),
+    () => {
+      if (dateOfBirth !== undefined && !dateOfBirth) return 'dateOfBirth is required';
+      const effectiveDob = dateOfBirth !== undefined ? dateOfBirth : user.dateOfBirth;
+      const effectiveGender = gender !== undefined ? gender : user.gender;
+      return validateStaffDateOfBirth(effectiveDob, { role: user.role, gender: effectiveGender });
+    },
   ]);
-  if (validationError) throw new ServiceError(validationError, 400);
+  if (validationError) throw apiErr(CODES.STAFF_VALIDATION_FAILED, { statusCode: 400, params: { detail: validationError } });
 
   if (gender !== undefined && !GENDERS.includes(gender)) {
-    throw new ServiceError(`gender phải thuộc một trong: ${GENDERS.join(', ')}`, 400);
+    throw apiErr(CODES.STAFF_GENDER_INVALID, {
+      statusCode: 400,
+      params: { allowed: GENDERS.join(', ') },
+    });
+  }
+
+  if (phone !== undefined && phone?.trim()) {
+    const normalizedPhone = phone.trim();
+    const currentPhone = String(user.phone || '').trim();
+    if (normalizedPhone !== currentPhone) {
+      const phoneConflict = await userRepo.findOne({ phone: normalizedPhone });
+      if (phoneConflict && phoneConflict._id.toString() !== user._id.toString()) {
+        throw apiErr(CODES.STAFF_PHONE_IN_USE, { statusCode: 409 });
+      }
+    }
   }
 
   // If a new avatar is uploaded and there was an old one on Cloudinary, delete the old one
@@ -255,14 +311,13 @@ const updateStaffProfile = async (id, body, currentUser) => {
   if (fullName !== undefined) user.fullName = fullName.trim();
   if (phone !== undefined) user.phone = phone?.trim() || undefined;
   if (gender !== undefined) user.gender = gender;
-  if (dateOfBirth !== undefined) user.dateOfBirth = dateOfBirth ? new Date(dateOfBirth) : undefined;
+  if (dateOfBirth !== undefined) {
+    if (!dateOfBirth) throw apiErr(CODES.STAFF_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'dateOfBirth is required' } });
+    user.dateOfBirth = new Date(dateOfBirth);
+  }
   if (address !== undefined) user.address = address?.trim() || undefined;
   if (avatarUrl !== undefined) user.avatarUrl = avatarUrl || undefined;
   if (avatarPublicId !== undefined) user.avatarPublicId = avatarPublicId || undefined;
-  if (password !== undefined) {
-    user.passwordHash = await bcrypt.hash(password, 10);
-    user.passwordChangedAt = new Date();
-  }
 
   await userRepo.saveUser(user);
 
@@ -274,6 +329,55 @@ const updateStaffProfile = async (id, body, currentUser) => {
     if (profile.roleCategory !== user.role) {
       profileUpdate.roleCategory = user.role;
     }
+
+    let docsChanged = false;
+    let currentDocs = (profile.certificationDocuments || []).map(toPlainCertDoc);
+    let currentCerts = profile.certifications || [];
+
+    const removedIds = parseRemovedCertPublicIds(removedCertPublicIds);
+    if (removedIds.length) {
+      const toRemove = new Set(removedIds);
+      currentDocs
+        .filter((d) => toRemove.has(d.publicId))
+        .forEach((d) => safeDeleteCloudinaryImage(d.publicId));
+      currentDocs = currentDocs.filter((d) => !toRemove.has(d.publicId));
+      currentCerts = currentDocs.map((d) => d.fileName).filter(Boolean);
+      docsChanged = true;
+    }
+
+    const issueDateUpdates = parseCertificationIssueDateUpdates(certificationIssueDateUpdates);
+    if (issueDateUpdates.length) {
+      const updateMap = new Map(issueDateUpdates.map((u) => [u.publicId, u.issueDate]));
+      currentDocs = currentDocs.map((d) => {
+        if (d.publicId && updateMap.has(d.publicId)) {
+          return { ...d, issueDate: updateMap.get(d.publicId) };
+        }
+        return d;
+      });
+      docsChanged = true;
+    }
+
+    if (Array.isArray(certificationDocuments) && certificationDocuments.length) {
+      currentDocs = [...currentDocs, ...certificationDocuments.map(toPlainCertDoc)];
+      const newNames = certificationDocuments.map((d) => d.fileName).filter(Boolean);
+      if (newNames.length) {
+        currentCerts = [...currentCerts, ...newNames];
+      }
+      docsChanged = true;
+    }
+
+    if (ROLES_REQUIRING_CERT.includes(user.role)) {
+      const certError = validateStaffCertifications(user.role, currentDocs);
+      if (certError) {
+        throw apiErr(CODES.STAFF_VALIDATION_FAILED, { statusCode: 400, params: { detail: certError } });
+      }
+    }
+
+    if (docsChanged) {
+      profileUpdate.certificationDocuments = currentDocs;
+      profileUpdate.certifications = currentCerts;
+    }
+
     if (Object.keys(profileUpdate).length) {
       profile = await staffProfileRepo.updateById(profile._id, profileUpdate);
     }
@@ -284,74 +388,86 @@ const updateStaffProfile = async (id, body, currentUser) => {
   delete userObj.resetPasswordTokenHash;
   delete userObj.resetPasswordExpiresAt;
 
-  return { message: 'Cập nhật hồ sơ nhân viên thành công', user: userObj, staffProfile: profile };
+  return { ...apiSuccess(SUCCESS.STAFF_PROFILE_UPDATED), user: userObj, staffProfile: profile };
 };
 
 // ── STT 2 – classify staff role ─────────────────────────────────────────────
 
 const updateStaffRole = async (id, { role }, currentUser) => {
-  if (!role) throw new ServiceError('role là bắt buộc', 400);
+  if (!role) throw apiErr(CODES.STAFF_ROLE_REQUIRED, { statusCode: 400 });
 
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
   if (user._id.toString() === currentUser._id.toString()) {
-    throw new ServiceError('Không thể tự thay đổi vai trò của chính bạn', 400);
+    throw apiErr(CODES.STAFF_CANNOT_CHANGE_OWN_ROLE, { statusCode: 400 });
   }
   assertActorMayManageUser(currentUser, user);
 
   assertActorMayAssignRole(currentUser, role);
   const allowedRoles = getCreatableRolesForActor(currentUser) || STAFF_ROLES;
   if (!allowedRoles.includes(role)) {
-    throw new ServiceError(`role phải thuộc một trong: ${allowedRoles.join(', ')}`, 400);
+    throw apiErr(CODES.STAFF_ROLE_INVALID, {
+      statusCode: 400,
+      params: { allowed: allowedRoles.join(', ') },
+    });
+  }
+
+  const profile = await staffProfileRepo.findByUserId(id);
+  if (profile && ROLES_REQUIRING_CERT.includes(role)) {
+    const currentDocs = (profile.certificationDocuments || []).map(toPlainCertDoc);
+    const certError = validateStaffCertifications(role, currentDocs);
+    if (certError) {
+      throw apiErr(CODES.STAFF_VALIDATION_FAILED, { statusCode: 400, params: { detail: certError } });
+    }
   }
 
   user.role = role;
   await userRepo.saveUser(user);
 
-  let profile = await staffProfileRepo.findByUserId(id);
-  if (profile) {
-    profile = await staffProfileRepo.updateById(profile._id, { roleCategory: role });
+  let updatedProfile = profile;
+  if (updatedProfile) {
+    updatedProfile = await staffProfileRepo.updateById(updatedProfile._id, { roleCategory: role });
   }
 
-  return { message: 'Cập nhật vai trò nhân viên thành công', user: { _id: user._id, role: user.role }, staffProfile: profile };
+  return { ...apiSuccess(SUCCESS.STAFF_ROLE_UPDATED), user: { _id: user._id, role: user.role }, staffProfile: updatedProfile };
 };
 
 // ── Ban / Unban (replaces delete) ───────────────────────────────────────────
 
 const banStaff = async (id, { banReason } = {}, currentUser) => {
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
   if (user._id.toString() === currentUser._id.toString()) {
-    throw new ServiceError('Không thể tự khóa tài khoản của chính bạn', 400);
+    throw apiErr(CODES.STAFF_CANNOT_BAN_SELF, { statusCode: 400 });
   }
   assertActorMayManageUser(currentUser, user);
-  if (user.isBanned) throw new ServiceError('Tài khoản nhân viên đã bị khóa trước đó', 400);
+  if (user.isBanned) throw apiErr(CODES.STAFF_ALREADY_BANNED, { statusCode: 400 });
 
   user.isBanned = true;
   user.banReason = banReason?.trim() || 'Banned by administrator';
   await userRepo.saveUser(user);
 
   return {
-    message: 'Khóa tài khoản nhân viên thành công',
+    ...apiSuccess(SUCCESS.STAFF_BANNED),
     user: { _id: user._id, fullName: user.fullName, isBanned: user.isBanned, banReason: user.banReason },
   };
 };
 
 const unbanStaff = async (id, currentUser) => {
   const user = await userRepo.findById(id);
-  if (!user || !STAFF_ROLES.includes(user.role)) throw new ServiceError('Không tìm thấy nhân viên', 404);
+  if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
   if (user._id.toString() === currentUser._id.toString()) {
-    throw new ServiceError('Không thể tự mở khóa tài khoản của chính bạn', 400);
+    throw apiErr(CODES.STAFF_CANNOT_UNBAN_SELF, { statusCode: 400 });
   }
   assertActorMayManageUser(currentUser, user);
-  if (!user.isBanned) throw new ServiceError('Tài khoản nhân viên hiện không bị khóa', 400);
+  if (!user.isBanned) throw apiErr(CODES.STAFF_NOT_BANNED, { statusCode: 400 });
 
   user.isBanned = false;
   user.banReason = undefined;
   await userRepo.saveUser(user);
 
   return {
-    message: 'Mở khóa tài khoản nhân viên thành công',
+    ...apiSuccess(SUCCESS.STAFF_UNBANNED),
     user: { _id: user._id, fullName: user.fullName, isBanned: user.isBanned },
   };
 };
@@ -364,7 +480,7 @@ const validateStaffAreaAssignment = async (floorIds, roomIds) => {
   if (floorIds?.length) {
     const floors = await Floor.find({ _id: { $in: floorIds }, isActive: { $ne: false } });
     if (floors.length !== floorIds.length) {
-      throw new ServiceError('Một hoặc nhiều floorIds không hợp lệ hoặc không còn hoạt động', 400);
+      throw apiErr(CODES.STAFF_FLOOR_IDS_INVALID, { statusCode: 400 });
     }
     floors.forEach((f) => allowedFloors.add(String(f._id)));
   }
@@ -372,12 +488,15 @@ const validateStaffAreaAssignment = async (floorIds, roomIds) => {
   if (roomIds?.length) {
     const rooms = await Room.find({ _id: { $in: roomIds }, status: { $nin: ['closed'] } });
     if (rooms.length !== roomIds.length) {
-      throw new ServiceError('Một hoặc nhiều roomIds không hợp lệ hoặc đã đóng', 400);
+      throw apiErr(CODES.STAFF_ROOM_IDS_INVALID, { statusCode: 400 });
     }
     for (const room of rooms) {
       const roomFloor = String(room.floorId);
       if (allowedFloors.size && !allowedFloors.has(roomFloor)) {
-        throw new ServiceError(`Room ${room.roomNumber} does not belong to any assigned floor`, 400);
+        throw apiErr(CODES.STAFF_ROOM_NOT_ON_FLOOR, {
+          statusCode: 400,
+          params: { roomNumber: room.roomNumber },
+        });
       }
       allowedFloors.add(roomFloor);
     }
@@ -394,7 +513,7 @@ const pruneAssignedResidentsToAreas = async (profile) => {
     .populate('responsibleAreaIds', 'floorNumber name')
     .populate('responsibleRoomIds', 'roomNumber roomType');
 
-  if (!populated) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
+  if (!populated) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
   const current = populated.assignedResidentIds || [];
   const kept = current.filter((r) => residentCoversStaffArea(r, populated));
@@ -435,13 +554,13 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
   await assertAssignableStaffByUserId(id);
 
   const profile = await staffProfileRepo.findByUserId(id);
-  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
+  if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
   const updateData = {};
   if (floorIds !== undefined) updateData.responsibleAreaIds = floorIds;
   if (roomIds !== undefined) updateData.responsibleRoomIds = roomIds;
 
-  if (!Object.keys(updateData).length) throw new ServiceError('floorIds hoặc roomIds là bắt buộc', 400);
+  if (!Object.keys(updateData).length) throw apiErr(CODES.STAFF_AREAS_REQUIRED, { statusCode: 400 });
 
   await validateStaffAreaAssignment(floorIds, roomIds);
 
@@ -460,7 +579,7 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
   if (user) {
     const onLeave = await leaveRequestRepo.findApprovedOverlapping(user._id, today, todayEnd);
     if (onLeave.length) {
-      throw new ServiceError('Không thể phân khu vực: nhân viên có đơn nghỉ đã duyệt trong hôm nay', 400);
+      throw apiErr(CODES.STAFF_LEAVE_BLOCKS_AREA, { statusCode: 400 });
     }
   }
 
@@ -474,7 +593,7 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
   const { staffProfile, removedResidents, removedCount } = await pruneAssignedResidentsToAreas(updated);
 
   return {
-    message: 'Cập nhật khu vực phụ trách thành công',
+    ...apiSuccess(SUCCESS.STAFF_AREAS_UPDATED),
     staffProfile,
     residentsPruned: { count: removedCount, removed: removedResidents },
   };
@@ -484,7 +603,7 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
 
 const listResidentsAvailableForStaff = async (userId, { search, status } = {}) => {
   const profile = await staffProfileRepo.findByUserId(userId);
-  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
+  if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
   const assignedRoomIds = (profile.responsibleRoomIds || []).map((r) => r._id || r);
   const assignedFloorIds = (profile.responsibleAreaIds || []).map((f) => f._id || f);
@@ -519,7 +638,7 @@ const listAssignedResidents = async (userId) => {
       populate: { path: 'roomId', select: 'roomNumber floorId' },
     });
 
-  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
+  if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
   const data = profile.assignedResidentIds || [];
   const result = {
@@ -539,7 +658,7 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
   await assertAssignableStaffByUserId(id);
 
   const profile = await staffProfileRepo.findByUserId(id);
-  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 404);
+  if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
   const parsedIds = parseResidentIds(residentIdsInput);
   const objectIds = validateObjectIds(parsedIds, 'residentId');
@@ -551,16 +670,21 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
     if (residents.length !== objectIds.length) {
       const found = new Set(residents.map((r) => r._id.toString()));
       const missing = parsedIds.filter((rid) => !found.has(rid));
-      throw new ServiceError(`Không tìm thấy cư dân: ${missing.join(', ')}`, 400);
+      throw apiErr(CODES.STAFF_RESIDENTS_NOT_FOUND, {
+        statusCode: 400,
+        params: { missing: missing.join(', ') },
+      });
     }
 
     const outOfArea = residents.filter((r) => !residentCoversStaffArea(r, profile));
     if (outOfArea.length) {
       const names = outOfArea.map((r) => r.fullName || r.residentCode || r._id).join(', ');
-      throw new ServiceError(
-        `Không thể gán cư dân ngoài khu vực phụ trách của nhân viên: ${names}. Hãy gán tầng/phòng trước.`,
-        400
-      );
+      throw apiErr(CODES.STAFF_RESIDENTS_OUTSIDE_AREA, {
+        statusCode: 400,
+        params: {
+          detail: `Không thể gán cư dân ngoài khu vực phụ trách của nhân viên: ${names}. Hãy gán tầng/phòng trước.`,
+        },
+      });
     }
   }
 
@@ -576,7 +700,7 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
     .populate('responsibleAreaIds', 'floorNumber name')
     .populate('responsibleRoomIds', 'roomNumber roomType');
 
-  return { message: 'Cập nhật cư dân phụ trách thành công', staffProfile };
+  return { ...apiSuccess(SUCCESS.STAFF_RESIDENTS_UPDATED), staffProfile };
 };
 
 // ── STT 10 – check doctor/nurse availability (emergency readiness) ───────────
@@ -666,7 +790,7 @@ const getAvailability = async ({ role, date, floorId }) => {
       checkDate = parseWorkDate(date);
       checkDateLocal = date;
     } catch {
-      throw new ServiceError('date phải đúng định dạng YYYY-MM-DD', 400);
+      throw apiErr(CODES.STAFF_DATE_INVALID, { statusCode: 400 });
     }
   } else {
     checkDateLocal = todayLocal;
@@ -676,9 +800,10 @@ const getAvailability = async ({ role, date, floorId }) => {
   const dayEnd = new Date(checkDate.getTime() + 24 * 60 * 60 * 1000 - 1);
   const isToday = checkDateLocal === todayLocal;
 
-  const filter = { role: { $in: ['doctor', 'nurse'] }, isActive: true, isBanned: false };
+  const allowedAvailabilityRoles = ['doctor', 'nurse', 'caregiver', 'pharmacist'];
+  const filter = { role: { $in: allowedAvailabilityRoles }, isActive: true, isBanned: false };
   if (role) {
-    if (!['doctor', 'nurse'].includes(role)) throw new ServiceError('role phải là doctor hoặc nurse', 400);
+    if (!allowedAvailabilityRoles.includes(role)) throw apiErr(CODES.STAFF_AVAILABILITY_ROLE_INVALID, { statusCode: 400 });
     filter.role = role;
   }
 
@@ -715,8 +840,10 @@ const getAvailability = async ({ role, date, floorId }) => {
     shiftsOnDate.map((s) => (s.assignedStaffId?._id || s.assignedStaffId).toString())
   );
 
+  // Only consider confirmed shifts as 'on shift' for readiness. Published-but-unconfirmed shifts
+  // should not mark staff as On Duty until the staff confirms them in My Shifts.
   const activeShifts = shiftsOnDate.filter((s) =>
-    isShiftActiveForCheck(s.startTime, s.endTime, isToday, now)
+    s.status === 'confirmed' && isShiftActiveForCheck(s.startTime, s.endTime, isToday, now)
   );
 
   const onShiftSet = new Set();
@@ -793,7 +920,7 @@ const getAvailability = async ({ role, date, floorId }) => {
 // ── Area coverage status ─────────────────────────────────────────────────────
 
 const getAreaCoverageStatus = async (floorId) => {
-  if (!floorId) throw new ServiceError('floorId là bắt buộc', 400);
+  if (!floorId) throw apiErr(CODES.STAFF_FLOOR_ID_REQUIRED, { statusCode: 400 });
 
   const now = new Date();
   const todayLocal = getLocalDateString(now);

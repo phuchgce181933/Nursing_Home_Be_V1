@@ -3,7 +3,8 @@ const router = express.Router();
 const ctrl = require('../controllers/careTaskController');
 const { protect, authorize } = require('../middleware/auth');
 
-const MANAGER = ['admin', 'manager'];
+const MANAGER = ['admin'];
+const STAFF = ['admin', 'doctor', 'nurse'];
 
 /**
  * @swagger
@@ -17,7 +18,7 @@ const MANAGER = ['admin', 'manager'];
  * /api/care-tasks:
  *   post:
  *     tags: [CareTasks]
- *     summary: Assign a care task linked to a shift (VN rules; auto-missed when shift ends without completion)
+ *     summary: Assign a care task to nurse, doctor, or caregiver (VN rules; auto-missed when shift ends without completion)
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
@@ -42,7 +43,7 @@ const MANAGER = ['admin', 'manager'];
  *               notes: { type: string }
  *     responses:
  *       201: { description: Task created with shiftId }
- *       400: { description: Validation error, past datetime, or ended shift }
+ *       400: { description: Validation error, assignee not nurse/doctor/caregiver, past datetime, or ended shift }
  */
 router.post('/', protect, authorize(...MANAGER), ctrl.assignCareTask);
 
@@ -118,7 +119,7 @@ router.get('/by-shift/:shiftId', protect, authorize(...MANAGER), ctrl.getCareTas
  *     responses:
  *       200: { description: Paginated list }
  */
-router.get('/', protect, authorize(...MANAGER), ctrl.listCareTasks);
+router.get('/', protect, authorize(...STAFF), ctrl.listCareTasks);
 
 /**
  * @swagger
@@ -136,7 +137,7 @@ router.get('/', protect, authorize(...MANAGER), ctrl.listCareTasks);
  *       200: { description: Success }
  *       404: { description: Not found }
  */
-router.get('/:id', protect, authorize(...MANAGER), ctrl.getCareTask);
+router.get('/:id', protect, authorize(...STAFF), ctrl.getCareTask);
 
 /**
  * @swagger
@@ -166,8 +167,9 @@ router.get('/:id', protect, authorize(...MANAGER), ctrl.getCareTask);
  *     responses:
  *       200: { description: Status updated }
  *       400: { description: Invalid transition or attempted manual missed }
+ *       403: { description: in_progress/completed require the assigned nurse, doctor, or caregiver }
  */
-router.put('/:id/status', protect, authorize(...MANAGER), ctrl.updateCareTaskStatus);
+router.put('/:id/status', protect, authorize(...STAFF), ctrl.updateCareTaskStatus);
 
 /**
  * @swagger

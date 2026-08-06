@@ -16,7 +16,22 @@ const generatePackageCode = async () => {
     const exists = await servicePackageRepo.findByCode(code);
     if (!exists) return code;
   }
-  throw new ServiceError('Unable to generate package code', 500);
+  throw new ServiceError('Không thể tạo mã gói dịch vụ', 500);
+};
+
+const TIER_ROOM_TYPES_MAP = {
+  basic: ['standard'],
+  standard: ['standard'],
+  premium: ['premium'],
+  vip: ['icu', 'isolation'],
+};
+
+const resolveAllowedRoomTypes = (tier, inputTypes) => {
+  if (Array.isArray(inputTypes) && inputTypes.length > 0) {
+    const valid = inputTypes.filter((t) => ['standard', 'premium', 'icu', 'isolation'].includes(t));
+    if (valid.length > 0) return valid;
+  }
+  return TIER_ROOM_TYPES_MAP[tier] || ['standard'];
 };
 
 const formatPackage = (pkg) => ({
@@ -25,6 +40,7 @@ const formatPackage = (pkg) => ({
   name: pkg.name,
   description: pkg.description,
   tier: pkg.tier,
+  allowedRoomTypes: pkg.allowedRoomTypes?.length ? pkg.allowedRoomTypes : (TIER_ROOM_TYPES_MAP[pkg.tier] || ['standard']),
   services: pkg.services,
   monthlyPrice: pkg.monthlyPrice,
   isActive: pkg.isActive,
@@ -41,20 +57,20 @@ const formatPackage = (pkg) => ({
 // ── UC-6.20: Create Service Package ─────────────────────────────────────────────
 const createServicePackage = async (admin, body, req) => {
   if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
-    throw new ServiceError('Request body is empty', 400);
+    throw new ServiceError('Nội dung yêu cầu trống', 400);
   }
 
   const name = body.name?.trim();
   if (!name) {
-    throw new ServiceError('name is required', 400);
+    throw new ServiceError('name là bắt buộc', 400);
   }
 
   if (body.tier && !SERVICE_PACKAGE_TIERS.includes(body.tier)) {
-    throw new ServiceError(`tier must be one of: ${SERVICE_PACKAGE_TIERS.join(', ')}`, 400);
+    throw new ServiceError(`tier phải thuộc một trong: ${SERVICE_PACKAGE_TIERS.join(', ')}`, 400);
   }
 
   if (body.monthlyPrice != null && (typeof body.monthlyPrice !== 'number' || body.monthlyPrice < 0)) {
-    throw new ServiceError('monthlyPrice must be a non-negative number', 400);
+    throw new ServiceError('monthlyPrice phải là số không âm', 400);
   }
 
   const services = Array.isArray(body.services)
@@ -72,11 +88,15 @@ const createServicePackage = async (admin, body, req) => {
     );
   }
 
+  const tier = body.tier || 'standard';
+  const allowedRoomTypes = resolveAllowedRoomTypes(tier, body.allowedRoomTypes);
+
   const pkg = await servicePackageRepo.create({
     packageCode,
     name,
     description: body.description?.trim(),
-    tier: body.tier || 'standard',
+    tier,
+    allowedRoomTypes,
     services,
     monthlyPrice: body.monthlyPrice || 0,
     createdBy: admin._id,
@@ -90,26 +110,26 @@ const createServicePackage = async (admin, body, req) => {
     module: 'servicePackage',
     targetEntityType: 'ServicePackage',
     targetEntityId: pkg._id,
-    afterData: { packageCode: pkg.packageCode, name: pkg.name, tier: pkg.tier },
+    afterData: { packageCode: pkg.packageCode, name: pkg.name, tier: pkg.tier, allowedRoomTypes },
     req,
   });
 
-  return { message: 'Service package created successfully', servicePackage: formatPackage(pkg) };
+  return { message: 'Đã tạo gói dịch vụ thành công', servicePackage: formatPackage(pkg) };
 };
 
 // ── UC-6.21: Update Service Package ─────────────────────────────────────────────
 const updateServicePackage = async (admin, packageId, body, req) => {
   const pkg = await servicePackageRepo.findById(packageId);
   if (!pkg) {
-    throw new ServiceError('Service package not found', 404);
+    throw new ServiceError('Không tìm thấy gói dịch vụ', 404);
   }
 
   if (body.tier && !SERVICE_PACKAGE_TIERS.includes(body.tier)) {
-    throw new ServiceError(`tier must be one of: ${SERVICE_PACKAGE_TIERS.join(', ')}`, 400);
+    throw new ServiceError(`tier phải thuộc một trong: ${SERVICE_PACKAGE_TIERS.join(', ')}`, 400);
   }
 
   if (body.monthlyPrice != null && (typeof body.monthlyPrice !== 'number' || body.monthlyPrice < 0)) {
-    throw new ServiceError('monthlyPrice must be a non-negative number', 400);
+    throw new ServiceError('monthlyPrice phải là số không âm', 400);
   }
 
   const updateData = { updatedBy: admin._id };
@@ -126,7 +146,11 @@ const updateServicePackage = async (admin, packageId, body, req) => {
     updateData.name = newName;
   }
   if (body.description !== undefined) updateData.description = String(body.description).trim();
-  if (body.tier) updateData.tier = body.tier;
+  if (body.tier || body.allowedRoomTypes) {
+    const newTier = body.tier || pkg.tier;
+    updateData.tier = newTier;
+    updateData.allowedRoomTypes = resolveAllowedRoomTypes(newTier, body.allowedRoomTypes);
+  }
   if (body.monthlyPrice != null) updateData.monthlyPrice = body.monthlyPrice;
   if (Array.isArray(body.services)) {
     updateData.services = body.services.map((s) => String(s).trim()).filter(Boolean);
@@ -147,18 +171,18 @@ const updateServicePackage = async (admin, packageId, body, req) => {
     req,
   });
 
-  return { message: 'Service package updated successfully', servicePackage: formatPackage(updated) };
+  return { message: 'Đã cập nhật gói dịch vụ thành công', servicePackage: formatPackage(updated) };
 };
 
 // ── UC-6.22: Delete Service Package (soft) ──────────────────────────────────────
 const deleteServicePackage = async (admin, packageId, req) => {
   const pkg = await servicePackageRepo.findById(packageId);
   if (!pkg) {
-    throw new ServiceError('Service package not found', 404);
+    throw new ServiceError('Không tìm thấy gói dịch vụ', 404);
   }
 
   if (!pkg.isActive) {
-    throw new ServiceError('Service package is already deleted', 400);
+    throw new ServiceError('Gói dịch vụ đã bị xóa', 400);
   }
 
   const updated = await servicePackageRepo.softDelete(packageId, admin._id);
@@ -175,7 +199,7 @@ const deleteServicePackage = async (admin, packageId, req) => {
     req,
   });
 
-  return { message: 'Service package deleted successfully', servicePackage: formatPackage(updated) };
+  return { message: 'Đã xóa gói dịch vụ thành công', servicePackage: formatPackage(updated) };
 };
 
 // ── UC-6.23: List Service Packages ──────────────────────────────────────────────
@@ -188,7 +212,7 @@ const listServicePackages = async (query) => {
 
   if (query.tier) {
     if (!SERVICE_PACKAGE_TIERS.includes(query.tier)) {
-      throw new ServiceError(`tier must be one of: ${SERVICE_PACKAGE_TIERS.join(', ')}`, 400);
+      throw new ServiceError(`tier phải thuộc một trong: ${SERVICE_PACKAGE_TIERS.join(', ')}`, 400);
     }
     filter.tier = query.tier;
   }
@@ -223,7 +247,7 @@ const listServicePackages = async (query) => {
 const getServicePackage = async (packageId) => {
   const pkg = await servicePackageRepo.findById(packageId);
   if (!pkg) {
-    throw new ServiceError('Service package not found', 404);
+    throw new ServiceError('Không tìm thấy gói dịch vụ', 404);
   }
   return { servicePackage: formatPackage(pkg) };
 };

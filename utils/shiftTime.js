@@ -102,6 +102,28 @@ const getShiftEndDateTime = (workDateStr, startTime, endTime) => {
 const isShiftEnded = (workDateStr, startTime, endTime, now = nowVN()) =>
   getShiftEndDateTime(workDateStr, startTime, endTime) <= now;
 
+const UNCONFIRMED_AUTO_CANCEL_GRACE_MS = 30 * 60 * 1000;
+const POST_SHIFT_COMPLETE_GRACE_MS = 15 * 60 * 1000;
+
+const getPostShiftCompleteDeadline = (workDateStr, startTime, endTime) =>
+  new Date(getShiftEndDateTime(workDateStr, startTime, endTime).getTime() + POST_SHIFT_COMPLETE_GRACE_MS);
+
+const isWithinPostShiftCompleteWindow = (workDateStr, startTime, endTime, now = nowVN()) => {
+  const end = getShiftEndDateTime(workDateStr, startTime, endTime);
+  const deadline = getPostShiftCompleteDeadline(workDateStr, startTime, endTime);
+  return now >= end && now <= deadline;
+};
+
+const isPastPostShiftCompleteDeadline = (workDateStr, startTime, endTime, now = nowVN()) =>
+  now > getPostShiftCompleteDeadline(workDateStr, startTime, endTime);
+
+const isPastUnconfirmedCancelDeadline = (workDateStr, startTime, now = nowVN()) => {
+  const deadline = new Date(
+    getShiftStartDateTime(workDateStr, startTime).getTime() + UNCONFIRMED_AUTO_CANCEL_GRACE_MS
+  );
+  return deadline <= now;
+};
+
 module.exports = {
   VN_TZ,
   toMinutes,
@@ -116,4 +138,10 @@ module.exports = {
   getShiftStartDateTime,
   getShiftEndDateTime,
   isShiftEnded,
+  UNCONFIRMED_AUTO_CANCEL_GRACE_MS,
+  POST_SHIFT_COMPLETE_GRACE_MS,
+  isWithinPostShiftCompleteWindow,
+  isPastPostShiftCompleteDeadline,
+  isPastUnconfirmedCancelDeadline,
+  addDaysToDateStr,
 };

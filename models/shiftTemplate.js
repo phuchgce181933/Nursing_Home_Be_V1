@@ -16,6 +16,7 @@ const shiftTemplateSchema = new Schema(
     colorLabel: { type: String, trim: true, default: '#607D8B' },
     status: { type: String, enum: SHIFT_TEMPLATE_STATUSES, default: 'active', index: true },
     isSystem: { type: Boolean, default: false, index: true },
+    isFlexibleTime: { type: Boolean, default: false },
     description: { type: String, trim: true },
     createdBy: { type: Types.ObjectId, ref: 'User' },
   },

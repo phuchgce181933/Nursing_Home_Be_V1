@@ -6,8 +6,8 @@ const ElderlyDosageGuideline = require('../models/ElderlyDosageGuideline');
 const ServiceError = require('./serviceError');
 
 const getResidentOrThrow = async (residentId) => {
-  const resident = await Resident.findById(residentId).select('chronicConditions allergies dateOfBirth');
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  const resident = await Resident.findById(residentId).select('chronicConditions allergies drugAllergies dateOfBirth');
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return resident;
 };
 
@@ -89,15 +89,18 @@ const checkDrugInteractions = async (residentId, newDrugNames, excludePrescripti
  */
 const checkAllergies = async (residentId, drugNames) => {
   const resident = await getResidentOrThrow(residentId);
-  const { allergies } = resident;
+  const allAllergyEntries = [
+    ...(resident.allergies || []),
+    ...(resident.drugAllergies || []),
+  ];
 
-  if (!allergies.length || !drugNames.length) return { allergies: [] };
+  if (!allAllergyEntries.length || !drugNames.length) return { allergies: [] };
 
   const results = [];
   for (const drug of drugNames) {
     const drugLower = drug.toLowerCase();
-    for (const allergyNote of allergies) {
-      if (allergyNote.toLowerCase().includes(drugLower)) {
+    for (const allergyNote of allAllergyEntries) {
+      if (allergyNote.toLowerCase().includes(drugLower) || drugLower.includes(allergyNote.toLowerCase())) {
         results.push({ drug, allergyNote });
         break;
       }

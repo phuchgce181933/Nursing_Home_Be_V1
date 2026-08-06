@@ -1,26 +1,23 @@
 const mongoose = require('mongoose');
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const mealIntakeNoteRepo = require('../repositories/mealIntakeNoteRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
-const MealPlanDay = require('../models/mealPlanDay');
-const MealPlanEntry = require('../models/mealPlanEntry');
 const Resident = require('../models/resident');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
 const assignedResidentService = require('./assignedResidentService');
-const { parseWorkDate, todayVN } = require('../utils/shiftTime');
+const { findPublishedMealPlanEntryForResident } = require('../utils/publishedMealPlanLookup');
+const { parseWorkDate, todayVN, workDateToVNString } = require('../utils/shiftTime');
+const { getCaregiverRecordingWindow, assertCaregiverRecordingWindowOpen } = require('../utils/mealIntakeShiftWindow');
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const INTAKE_STATUSES = ['full', 'partial', 'refused', 'assisted'];
-
-const DUPLICATE_MSG =
-  'Đã ghi nhận bữa này cho cư dân trong ngày. Vui lòng chỉnh sửa bản ghi hiện có.';
 
 const parseWorkDateStrict = (workDate) => {
   const str = String(workDate || '').trim();
   try {
     parseWorkDate(str);
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.WORK_DATE_INVALID_FORMAT, { statusCode: 400 });
   }
   return str;
 };
@@ -29,14 +26,14 @@ const workDateToDate = (workDateStr) => new Date(`${workDateStr}T00:00:00.000Z`)
 
 const assertValidObjectId = (value, label) => {
   if (!mongoose.Types.ObjectId.isValid(String(value || ''))) {
-    throw new ServiceError(`${label} không hợp lệ`, 400);
+    throw apiErr(CODES.CAREGIVER_INVALID_OBJECT_ID, { statusCode: 400, params: { label } });
   }
 };
 
 const getCaregiverProfile = async (userId) => {
   const profile = await staffProfileRepo.findByUserId(userId);
   if (!profile) {
-    throw new ServiceError('Không tìm thấy hồ sơ nhân viên. Vui lòng liên hệ quản trị.', 400);
+    throw apiErr(CODES.CAREGIVER_STAFF_PROFILE_NOT_FOUND, { statusCode: 400 });
   }
   return profile;
 };
@@ -44,42 +41,56 @@ const getCaregiverProfile = async (userId) => {
 const assertResidentAssigned = async (profile, residentId) => {
   const assigned = (profile.assignedResidentIds || []).map((r) => String(r._id || r));
   if (!assigned.includes(String(residentId))) {
-    throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+    throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
   }
   const resident = await Resident.findById(residentId).select('_id residencyStatus fullName residentCode');
   if (!resident || resident.residencyStatus !== 'admitted') {
-    throw new ServiceError('Cư dân không tồn tại hoặc không ở trạng thái đang ở viện', 400);
+    throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ADMITTED, { statusCode: 400 });
   }
   return resident;
+};
+
+const assertFieldOneOf = (field, value, allowed) => {
+  if (!allowed.includes(value)) {
+    throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+      statusCode: 400,
+      params: { field, allowed: allowed.join(', ') },
+    });
+  }
 };
 
 const validateIntakePayload = (body, isUpdate = false) => {
   const row = body || {};
   if (!isUpdate) {
     assertValidObjectId(row.residentId, 'residentId');
-    if (!MEAL_TYPES.includes(row.mealType)) {
-      throw new ServiceError(`mealType phải thuộc một trong: ${MEAL_TYPES.join(', ')}`, 400);
-    }
+    assertFieldOneOf('mealType', row.mealType, MEAL_TYPES);
     const workDate = parseWorkDateStrict(row.workDate);
     if (workDate > todayVN()) {
-      throw new ServiceError('Không thể ghi nhận bữa ăn cho ngày trong tương lai', 400);
+      throw apiErr(CODES.WORK_DATE_FUTURE_NOT_ALLOWED, { statusCode: 400 });
     }
   }
 
-  if (row.intakeStatus !== undefined && !INTAKE_STATUSES.includes(row.intakeStatus)) {
-    throw new ServiceError(`intakeStatus phải thuộc một trong: ${INTAKE_STATUSES.join(', ')}`, 400);
+  if (row.intakeStatus !== undefined) {
+    assertFieldOneOf('intakeStatus', row.intakeStatus, INTAKE_STATUSES);
+  }
+
+  if (row.notes !== undefined && String(row.notes).trim().length > 500) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: 'notes', min: 0, max: 500 } });
+  }
+  if (row.plannedMealName !== undefined && String(row.plannedMealName).trim().length > 200) {
+    throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, { statusCode: 400, params: { field: 'plannedMealName', min: 0, max: 200 } });
   }
 
   const status = row.intakeStatus;
   if (status === 'partial' || (isUpdate && row.portionPercent !== undefined)) {
     const pct = row.portionPercent;
     if (status === 'partial' && (pct === undefined || pct === null || pct === '')) {
-      throw new ServiceError('portionPercent là bắt buộc khi tình trạng là một phần', 400);
+      throw apiErr(CODES.PORTION_PERCENT_REQUIRED, { statusCode: 400 });
     }
     if (pct !== undefined && pct !== null && pct !== '') {
       const num = Number(pct);
       if (Number.isNaN(num) || num < 0 || num > 100) {
-        throw new ServiceError('portionPercent phải từ 0 đến 100', 400);
+        throw apiErr(CODES.PORTION_PERCENT_INVALID, { statusCode: 400 });
       }
     }
   }
@@ -87,29 +98,17 @@ const validateIntakePayload = (body, isUpdate = false) => {
   return row;
 };
 
+const assertRecordingWindowOpen = async (profileId, workDateStr) =>
+  assertCaregiverRecordingWindowOpen(profileId, workDateStr, CODES.MEAL_INTAKE_SHIFT_WINDOW_CLOSED);
+
 const findPublishedMealPlanEntry = async (residentId, workDateStr, mealType) => {
-  const day = await MealPlanDay.findOne({
-    status: 'published',
-    workDate: {
-      $gte: new Date(`${workDateStr}T00:00:00.000Z`),
-      $lte: new Date(`${workDateStr}T23:59:59.999Z`),
-    },
-  }).sort({ publishedAt: -1 });
-
-  if (!day) return null;
-
-  return MealPlanEntry.findOne({
-    mealPlanDayId: day._id,
-    residentId,
-    mealType,
-  }).lean();
+  const { entry } = await findPublishedMealPlanEntryForResident(residentId, workDateStr, mealType);
+  return entry;
 };
 
 const getMealContext = async (residentId, workDateInput, mealType, userId) => {
   assertValidObjectId(residentId, 'residentId');
-  if (!MEAL_TYPES.includes(mealType)) {
-    throw new ServiceError(`mealType phải thuộc một trong: ${MEAL_TYPES.join(', ')}`, 400);
-  }
+  assertFieldOneOf('mealType', mealType, MEAL_TYPES);
   const workDate = parseWorkDateStrict(workDateInput);
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, residentId);
@@ -127,6 +126,14 @@ const getMealContext = async (residentId, workDateInput, mealType, userId) => {
     mealType
   );
 
+  const { canMutate } = await getCaregiverRecordingWindow(profile._id, workDate);
+
+  const existingRecordedByName = existing
+    ? existing.recordedByStaffId?.userId?.fullName ||
+      existing.recordedByStaffId?.staffCode ||
+      null
+    : null;
+
   return {
     workDate,
     mealType,
@@ -141,6 +148,9 @@ const getMealContext = async (residentId, workDateInput, mealType, userId) => {
     scheduledMealTime: mealTime,
     existingRecordId: existing?._id || null,
     hasExistingRecord: Boolean(existing),
+    existingRecordedByName,
+    existingRecordedAt: existing?.recordedAt || null,
+    canRecord: canMutate,
   };
 };
 
@@ -155,14 +165,46 @@ const listIntakeNotes = async (userId, query) => {
   if (query.residentId) {
     assertValidObjectId(query.residentId, 'residentId');
     if (!assignedIds.map(String).includes(String(query.residentId))) {
-      throw new ServiceError('Cư dân không thuộc danh sách phụ trách của bạn', 403);
+      throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
     }
     filter.residentId = query.residentId;
   }
   if (query.mealType) {
-    if (!MEAL_TYPES.includes(query.mealType)) {
-      throw new ServiceError(`mealType phải thuộc một trong: ${MEAL_TYPES.join(', ')}`, 400);
-    }
+    assertFieldOneOf('mealType', query.mealType, MEAL_TYPES);
+    filter.mealType = query.mealType;
+  }
+  if (query.workDate) {
+    const wd = parseWorkDateStrict(query.workDate);
+    filter.workDate = workDateToDate(wd);
+  }
+
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 50));
+  const skip = (page - 1) * limit;
+
+  let meta = { canMutate: false };
+  if (query.workDate) {
+    const wd = parseWorkDateStrict(query.workDate);
+    const { canMutate } = await getCaregiverRecordingWindow(profile._id, wd);
+    meta = { canMutate };
+  }
+
+  const [data, total] = await Promise.all([
+    mealIntakeNoteRepo.findAll(filter, { skip, limit }),
+    mealIntakeNoteRepo.countAll(filter),
+  ]);
+
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1, meta };
+};
+
+const listIntakeNotesForAdmin = async (query) => {
+  const filter = {};
+  if (query.residentId) {
+    assertValidObjectId(query.residentId, 'residentId');
+    filter.residentId = query.residentId;
+  }
+  if (query.mealType) {
+    assertFieldOneOf('mealType', query.mealType, MEAL_TYPES);
     filter.mealType = query.mealType;
   }
   if (query.workDate) {
@@ -187,6 +229,7 @@ const createIntakeNote = async (userId, body) => {
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, body.residentId);
+  await assertRecordingWindowOpen(profile._id, workDate);
 
   const workDateDate = workDateToDate(workDate);
   const existing = await mealIntakeNoteRepo.findOneByUnique(
@@ -195,15 +238,12 @@ const createIntakeNote = async (userId, body) => {
     body.mealType
   );
   if (existing) {
-    throw new ServiceError(DUPLICATE_MSG, 400);
+    throw apiErr(CODES.DUPLICATE_RECORD, { statusCode: 400 });
   }
 
   const planEntry = await findPublishedMealPlanEntry(body.residentId, workDate, body.mealType);
   if (!planEntry?.mealName) {
-    throw new ServiceError(
-      'Chưa có thực đơn publish cho bữa này. Không thể ghi nhận.',
-      400
-    );
+    throw apiErr(CODES.RECORD_NOT_FOUND, { statusCode: 400 });
   }
   const plannedMealName = body.plannedMealName?.trim() || planEntry.mealName;
 
@@ -227,13 +267,13 @@ const createIntakeNote = async (userId, body) => {
 
 const assertAuthor = (note, profile) => {
   if (String(note.recordedByStaffId?._id || note.recordedByStaffId) !== String(profile._id)) {
-    throw new ServiceError('Chỉ người ghi nhận mới được sửa hoặc xóa bản ghi này', 403);
+    throw apiErr(CODES.CAREGIVER_NOT_RECORD_OWNER, { statusCode: 403 });
   }
 };
 
 const getIntakeNote = async (userId, id) => {
   const note = await mealIntakeNoteRepo.findById(id);
-  if (!note) throw new ServiceError('Không tìm thấy bản ghi ghi nhận bữa ăn', 404);
+  if (!note) throw apiErr(CODES.MEAL_INTAKE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
   return note;
@@ -241,9 +281,11 @@ const getIntakeNote = async (userId, id) => {
 
 const updateIntakeNote = async (userId, id, body) => {
   const note = await mealIntakeNoteRepo.findById(id);
-  if (!note) throw new ServiceError('Không tìm thấy bản ghi ghi nhận bữa ăn', 404);
+  if (!note) throw apiErr(CODES.MEAL_INTAKE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
+  await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
+  await assertRecordingWindowOpen(profile._id, workDateToVNString(note.workDate));
   validateIntakePayload(body, true);
 
   const update = {};
@@ -256,7 +298,7 @@ const updateIntakeNote = async (userId, id, body) => {
     if (status === 'partial') {
       const pct = body.portionPercent ?? note.portionPercent;
       if (pct === undefined || pct === null) {
-        throw new ServiceError('portionPercent là bắt buộc khi tình trạng là một phần', 400);
+        throw apiErr(CODES.PORTION_PERCENT_REQUIRED, { statusCode: 400 });
       }
       update.portionPercent = Number(pct);
     } else if (body.portionPercent !== undefined) {
@@ -271,11 +313,13 @@ const updateIntakeNote = async (userId, id, body) => {
 
 const deleteIntakeNote = async (userId, id) => {
   const note = await mealIntakeNoteRepo.findById(id);
-  if (!note) throw new ServiceError('Không tìm thấy bản ghi ghi nhận bữa ăn', 404);
+  if (!note) throw apiErr(CODES.MEAL_INTAKE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
+  await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
+  await assertRecordingWindowOpen(profile._id, workDateToVNString(note.workDate));
   await mealIntakeNoteRepo.deleteById(id);
-  return { message: 'Đã xóa bản ghi ghi nhận bữa ăn', deleted: true, id };
+  return { ...apiSuccess(SUCCESS.MEAL_INTAKE_RECORD_DELETED), deleted: true, id };
 };
 
 module.exports = {
@@ -284,6 +328,7 @@ module.exports = {
   listAssignedResidents,
   getMealContext,
   listIntakeNotes,
+  listIntakeNotesForAdmin,
   createIntakeNote,
   getIntakeNote,
   updateIntakeNote,

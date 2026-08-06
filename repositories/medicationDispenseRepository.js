@@ -39,6 +39,24 @@ const aggregateUsage = (fromDate, toDate) => {
   ]);
 };
 
+const findDetailedRecords = (fromDate, toDate) => {
+  const match = {};
+  if (fromDate || toDate) {
+    match.dispensedAt = {};
+    if (fromDate) match.dispensedAt.$gte = fromDate;
+    if (toDate) match.dispensedAt.$lte = toDate;
+  }
+
+  return MedicationDispense.find(match)
+    .populate('medicationId', 'name medicationCode unit')
+    .populate('residentId', 'fullName residentCode')
+    .populate('dispensedByUserId', 'fullName email')
+    .sort({ dispensedAt: -1 })
+    .lean();
+};
+
+const deleteById = (id) => MedicationDispense.findByIdAndDelete(id);
+
 module.exports = {
   create,
   findAll,
@@ -46,4 +64,6 @@ module.exports = {
   sumQuantitiesByMedicationIds,
   sumQuantityByMedicationId,
   aggregateUsage,
+  findDetailedRecords,
+  deleteById,
 };

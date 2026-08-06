@@ -3,24 +3,32 @@ const ServiceError = require('./serviceError');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const Resident = require('../models/resident');
+const AuditLog = require('../models/auditLog');
+const { CARE_NOTE_TYPES } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
 
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 
-const VALID_NOTE_TYPES = ['meal', 'activity', 'health', 'general'];
-
-// Metadata enum values for structured note types
+// Meal metadata
 const VALID_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 const VALID_INTAKE_AMOUNTS = ['none', 'little', 'half', 'most', 'all'];
 const VALID_APPETITE = ['poor', 'fair', 'good', 'excellent'];
 
+// Activity (recreational / program) metadata
 const VALID_ACTIVITY_TYPES = [
-  'walking', 'exercise', 'physiotherapy', 'bathing', 'grooming',
-  'reading', 'socializing', 'other',
+  'walking', 'exercise', 'physiotherapy', 'reading', 'socializing', 'entertainment', 'other',
 ];
 const VALID_PARTICIPATION_LEVELS = ['refused', 'assisted', 'supervised', 'independent'];
 const VALID_MOODS = ['happy', 'neutral', 'sad', 'agitated', 'anxious'];
 
+// Daily living (ADL – hoạt động sinh hoạt hằng ngày) metadata
+const VALID_DAILY_LIVING_TYPES = [
+  'bathing', 'grooming', 'dressing', 'eating', 'mobility', 'toileting', 'sleeping', 'other',
+];
+const VALID_ASSISTANCE_LEVELS = ['independent', 'supervised', 'assisted', 'total_care'];
+const VALID_COMPLETION_STATUSES = ['completed', 'partial', 'refused'];
+
+// Health (tình trạng sức khỏe & thay đổi thể trạng) metadata
 const VALID_CONSCIOUSNESS = ['alert', 'confused', 'drowsy', 'unresponsive'];
 const VALID_FALL_RISKS = ['low', 'medium', 'high'];
 
@@ -31,75 +39,152 @@ const parsePagination = (query) => {
   return { pageNum, limitNum, skip };
 };
 
+// Convert YYYY-MM-DD string to a [startOfDay, endOfDay] UTC range
+const dateToRange = (dateStr) => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  const start = new Date(d);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(d);
+  end.setUTCHours(23, 59, 59, 999);
+  return { start, end };
+};
+
+const buildNoteAtFilter = (query) => {
+  // `date` (YYYY-MM-DD) takes priority over from/to
+  if (query.date) {
+    const range = dateToRange(query.date);
+    if (!range) throw new ServiceError('date phải là ngày hợp lệ (YYYY-MM-DD)', 400);
+    return { $gte: range.start, $lte: range.end };
+  }
+  if (query.from || query.to) {
+    const filter = {};
+    if (query.from) {
+      const from = new Date(query.from);
+      if (isNaN(from)) throw new ServiceError('Định dạng ngày "from" không hợp lệ', 400);
+      filter.$gte = from;
+    }
+    if (query.to) {
+      const to = new Date(query.to);
+      if (isNaN(to)) throw new ServiceError('Định dạng ngày "to" không hợp lệ', 400);
+      filter.$lte = to;
+    }
+    if (filter.$gte && filter.$lte && filter.$gte > filter.$lte) {
+      throw new ServiceError('Ngày "from" phải trước hoặc bằng ngày "to"', 400);
+    }
+    return filter;
+  }
+  return null;
+};
+
 const validateMetadata = (noteType, metadata) => {
   if (!metadata || typeof metadata !== 'object') return;
 
   if (noteType === 'meal') {
     if (metadata.mealType && !VALID_MEAL_TYPES.includes(metadata.mealType)) {
-      throw new ServiceError(`mealType must be one of: ${VALID_MEAL_TYPES.join(', ')}`, 400);
+      throw new ServiceError(`mealType phải thuộc một trong: ${VALID_MEAL_TYPES.join(', ')}`, 400);
     }
     if (metadata.intakeAmount && !VALID_INTAKE_AMOUNTS.includes(metadata.intakeAmount)) {
-      throw new ServiceError(`intakeAmount must be one of: ${VALID_INTAKE_AMOUNTS.join(', ')}`, 400);
+      throw new ServiceError(`intakeAmount phải thuộc một trong: ${VALID_INTAKE_AMOUNTS.join(', ')}`, 400);
     }
     if (metadata.appetite && !VALID_APPETITE.includes(metadata.appetite)) {
-      throw new ServiceError(`appetite must be one of: ${VALID_APPETITE.join(', ')}`, 400);
+      throw new ServiceError(`appetite phải thuộc một trong: ${VALID_APPETITE.join(', ')}`, 400);
     }
   }
 
   if (noteType === 'activity') {
     if (metadata.activityType && !VALID_ACTIVITY_TYPES.includes(metadata.activityType)) {
-      throw new ServiceError(`activityType must be one of: ${VALID_ACTIVITY_TYPES.join(', ')}`, 400);
+      throw new ServiceError(`activityType phải thuộc một trong: ${VALID_ACTIVITY_TYPES.join(', ')}`, 400);
     }
     if (metadata.participationLevel && !VALID_PARTICIPATION_LEVELS.includes(metadata.participationLevel)) {
-      throw new ServiceError(`participationLevel must be one of: ${VALID_PARTICIPATION_LEVELS.join(', ')}`, 400);
+      throw new ServiceError(`participationLevel phải thuộc một trong: ${VALID_PARTICIPATION_LEVELS.join(', ')}`, 400);
     }
     if (metadata.mood && !VALID_MOODS.includes(metadata.mood)) {
-      throw new ServiceError(`mood must be one of: ${VALID_MOODS.join(', ')}`, 400);
+      throw new ServiceError(`mood phải thuộc một trong: ${VALID_MOODS.join(', ')}`, 400);
     }
     if (metadata.duration !== undefined) {
       const dur = Number(metadata.duration);
       if (!Number.isFinite(dur) || dur < 0) {
-        throw new ServiceError('duration must be a non-negative number (minutes)', 400);
+        throw new ServiceError('duration phải là số không âm (phút)', 400);
+      }
+    }
+  }
+
+  if (noteType === 'daily_living') {
+    if (metadata.activityType && !VALID_DAILY_LIVING_TYPES.includes(metadata.activityType)) {
+      throw new ServiceError(`activityType phải thuộc một trong: ${VALID_DAILY_LIVING_TYPES.join(', ')}`, 400);
+    }
+    if (metadata.assistanceLevel && !VALID_ASSISTANCE_LEVELS.includes(metadata.assistanceLevel)) {
+      throw new ServiceError(`assistanceLevel phải thuộc một trong: ${VALID_ASSISTANCE_LEVELS.join(', ')}`, 400);
+    }
+    if (metadata.completionStatus && !VALID_COMPLETION_STATUSES.includes(metadata.completionStatus)) {
+      throw new ServiceError(`completionStatus phải thuộc một trong: ${VALID_COMPLETION_STATUSES.join(', ')}`, 400);
+    }
+    if (metadata.mood && !VALID_MOODS.includes(metadata.mood)) {
+      throw new ServiceError(`mood phải thuộc một trong: ${VALID_MOODS.join(', ')}`, 400);
+    }
+    if (metadata.duration !== undefined) {
+      const dur = Number(metadata.duration);
+      if (!Number.isFinite(dur) || dur < 0) {
+        throw new ServiceError('duration phải là số không âm (phút)', 400);
       }
     }
   }
 
   if (noteType === 'health') {
     if (metadata.consciousness && !VALID_CONSCIOUSNESS.includes(metadata.consciousness)) {
-      throw new ServiceError(`consciousness must be one of: ${VALID_CONSCIOUSNESS.join(', ')}`, 400);
+      throw new ServiceError(`consciousness phải thuộc một trong: ${VALID_CONSCIOUSNESS.join(', ')}`, 400);
     }
     if (metadata.fallRisk && !VALID_FALL_RISKS.includes(metadata.fallRisk)) {
-      throw new ServiceError(`fallRisk must be one of: ${VALID_FALL_RISKS.join(', ')}`, 400);
+      throw new ServiceError(`fallRisk phải thuộc một trong: ${VALID_FALL_RISKS.join(', ')}`, 400);
     }
     if (metadata.symptoms !== undefined && !Array.isArray(metadata.symptoms)) {
-      throw new ServiceError('symptoms must be an array of strings', 400);
+      throw new ServiceError('symptoms phải là một mảng chuỗi', 400);
+    }
+    if (metadata.painLevel !== undefined) {
+      const level = Number(metadata.painLevel);
+      if (!Number.isFinite(level) || level < 0 || level > 10) {
+        throw new ServiceError('painLevel phải là số từ 0 đến 10', 400);
+      }
+    }
+    if (metadata.temperature !== undefined) {
+      const temp = Number(metadata.temperature);
+      if (!Number.isFinite(temp) || temp < 30 || temp > 45) {
+        throw new ServiceError('temperature phải là nhiệt độ cơ thể hợp lệ (30–45°C)', 400);
+      }
+    }
+    if (metadata.pulse !== undefined) {
+      const pulse = Number(metadata.pulse);
+      if (!Number.isFinite(pulse) || pulse < 20 || pulse > 300) {
+        throw new ServiceError('pulse phải là nhịp tim hợp lệ (20–300 bpm)', 400);
+      }
     }
   }
 };
 
 const createNote = async (user, body, req) => {
   const { residentId, noteType, content, noteAt, metadata } = body;
-  if (!residentId) throw new ServiceError('residentId is required', 400);
-  if (!isValidId(residentId)) throw new ServiceError('residentId is not a valid ID', 400);
-  if (!content || content.trim().length < 5) {
-    throw new ServiceError('content is required and must be at least 5 characters', 400);
+  if (!residentId) throw new ServiceError('residentId là bắt buộc', 400);
+  if (!isValidId(residentId)) throw new ServiceError('residentId không phải là ID hợp lệ', 400);
+  if (!content || typeof content !== 'string' || content.trim().length < 5) {
+    throw new ServiceError('content là bắt buộc và phải có ít nhất 5 ký tự', 400);
   }
-  if (noteType && !VALID_NOTE_TYPES.includes(noteType)) {
-    throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+  if (noteType && !CARE_NOTE_TYPES.includes(noteType)) {
+    throw new ServiceError(`noteType phải thuộc một trong: ${CARE_NOTE_TYPES.join(', ')}`, 400);
   }
   if (noteAt && new Date(noteAt) > new Date()) {
-    throw new ServiceError('noteAt cannot be a future date', 400);
+    throw new ServiceError('noteAt không được là ngày trong tương lai', 400);
   }
 
   const resident = await Resident.findById(residentId).select('_id');
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const resolvedType = noteType || 'general';
   if (metadata) validateMetadata(resolvedType, metadata);
 
   const staffProfile = await staffProfileRepo.findByUserId(user._id);
   if (!staffProfile) {
-    throw new ServiceError('Staff profile not found for this account. Contact admin.', 400);
+    throw new ServiceError('Không tìm thấy hồ sơ nhân viên cho tài khoản này. Vui lòng liên hệ quản trị viên.', 400);
   }
 
   const note = await careNoteRepo.createNote({
@@ -128,25 +213,48 @@ const createNote = async (user, body, req) => {
 const listNotes = async (query) => {
   const filter = {};
   if (query.residentId) {
-    if (!isValidId(query.residentId)) throw new ServiceError('residentId is not a valid ID', 400);
+    if (!isValidId(query.residentId)) throw new ServiceError('residentId không phải là ID hợp lệ', 400);
     filter.residentId = query.residentId;
   }
   if (query.noteType) {
-    if (!VALID_NOTE_TYPES.includes(query.noteType)) {
-      throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+    if (!CARE_NOTE_TYPES.includes(query.noteType)) {
+      throw new ServiceError(`noteType phải thuộc một trong: ${CARE_NOTE_TYPES.join(', ')}`, 400);
     }
     filter.noteType = query.noteType;
   }
   if (query.authorStaffId) {
-    if (!isValidId(query.authorStaffId)) throw new ServiceError('authorStaffId is not a valid ID', 400);
+    if (!isValidId(query.authorStaffId)) throw new ServiceError('authorStaffId không phải là ID hợp lệ', 400);
     filter.authorStaffId = query.authorStaffId;
   }
   if (query.search) filter.content = { $regex: query.search.trim(), $options: 'i' };
-  if (query.from || query.to) {
-    filter.noteAt = {};
-    if (query.from) filter.noteAt.$gte = new Date(query.from);
-    if (query.to) filter.noteAt.$lte = new Date(query.to);
+
+  const noteAtFilter = buildNoteAtFilter(query);
+  if (noteAtFilter) filter.noteAt = noteAtFilter;
+
+  const { pageNum, limitNum, skip } = parsePagination(query);
+  const sortDir = query.sortOrder === 'asc' ? 1 : -1;
+  const [data, total] = await Promise.all([
+    careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: sortDir }, skip, limit: limitNum }),
+    careNoteRepo.countDocuments(filter),
+  ]);
+
+  return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
+};
+
+const getNoteHistory = async (residentId, query) => {
+  if (!isValidId(residentId)) throw new ServiceError('residentId không phải là ID hợp lệ', 400);
+
+  const filter = { residentId };
+  if (query.noteType) {
+    if (!CARE_NOTE_TYPES.includes(query.noteType)) {
+      throw new ServiceError(`noteType phải thuộc một trong: ${CARE_NOTE_TYPES.join(', ')}`, 400);
+    }
+    filter.noteType = query.noteType;
   }
+  if (query.search) filter.content = { $regex: query.search.trim(), $options: 'i' };
+
+  const noteAtFilter = buildNoteAtFilter(query);
+  if (noteAtFilter) filter.noteAt = noteAtFilter;
 
   const { pageNum, limitNum, skip } = parsePagination(query);
   const [data, total] = await Promise.all([
@@ -157,51 +265,61 @@ const listNotes = async (query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
-const getNoteHistory = async (residentId, query) => {
-  if (!isValidId(residentId)) throw new ServiceError('residentId is not a valid ID', 400);
-  const filter = { residentId };
-  if (query.noteType) filter.noteType = query.noteType;
-  if (query.from || query.to) {
-    filter.noteAt = {};
-    if (query.from) filter.noteAt.$gte = new Date(query.from);
-    if (query.to) filter.noteAt.$lte = new Date(query.to);
-  }
-  return careNoteRepo.findNotesWithPopulate(filter, { sort: { noteAt: -1 }, limit: 0 });
-};
-
 const getNote = async (id) => {
-  if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
+  if (!isValidId(id)) throw new ServiceError('ID ghi chú chăm sóc không hợp lệ', 400);
   const note = await careNoteRepo.findByIdWithPopulate(id);
-  if (!note) throw new ServiceError('Care note not found', 404);
+  if (!note) throw new ServiceError('Không tìm thấy ghi chú chăm sóc', 404);
   return note;
 };
 
-// Nurses can only update their own notes; doctor can update any note.
+// Edit history (audit trail) of a single care note — every CREATE/UPDATE ever
+// recorded against it, oldest first, with the actor and the before/after snapshot.
+const getNoteAuditHistory = async (id) => {
+  if (!isValidId(id)) throw new ServiceError('ID ghi chú chăm sóc không hợp lệ', 400);
+  const note = await careNoteRepo.findById(id);
+  if (!note) throw new ServiceError('Không tìm thấy ghi chú chăm sóc', 404);
+
+  const logs = await AuditLog.find({ targetEntityType: 'CareNote', targetEntityId: id })
+    .sort({ createdAt: 1 })
+    .populate('actorUserId', 'fullName role');
+
+  return logs.map((log) => ({
+    _id: log._id,
+    action: log.action,
+    actor: log.actorUserId ? { fullName: log.actorUserId.fullName, role: log.actorUserId.role } : null,
+    actorRole: log.actorRole,
+    createdAt: log.createdAt,
+    beforeData: log.beforeData,
+    afterData: log.afterData,
+  }));
+};
+
+// Only nurses can access care notes; a nurse may update only their own notes.
 const updateNote = async (user, id, body, req) => {
-  if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
+  if (!isValidId(id)) throw new ServiceError('ID ghi chú chăm sóc không hợp lệ', 400);
 
   const hasUpdate = body.content !== undefined || body.noteType !== undefined ||
     body.noteAt !== undefined || body.metadata !== undefined;
-  if (!hasUpdate) throw new ServiceError('No fields provided to update', 400);
+  if (!hasUpdate) throw new ServiceError('Không có trường nào được cung cấp để cập nhật', 400);
 
   const note = await careNoteRepo.findById(id);
-  if (!note) throw new ServiceError('Care note not found', 404);
+  if (!note) throw new ServiceError('Không tìm thấy ghi chú chăm sóc', 404);
 
   if (user.role === 'nurse') {
     const staffProfile = await staffProfileRepo.findByUserId(user._id);
     if (!staffProfile || note.authorStaffId.toString() !== staffProfile._id.toString()) {
-      throw new ServiceError('Nurses can only edit their own care notes', 403);
+      throw new ServiceError('Y tá chỉ có thể chỉnh sửa ghi chú chăm sóc của chính mình', 403);
     }
   }
 
-  if (body.content !== undefined && body.content.trim().length < 5) {
-    throw new ServiceError('content must be at least 5 characters', 400);
+  if (body.content !== undefined && (typeof body.content !== 'string' || body.content.trim().length < 5)) {
+    throw new ServiceError('content phải có ít nhất 5 ký tự', 400);
   }
-  if (body.noteType && !VALID_NOTE_TYPES.includes(body.noteType)) {
-    throw new ServiceError(`noteType must be one of: ${VALID_NOTE_TYPES.join(', ')}`, 400);
+  if (body.noteType && !CARE_NOTE_TYPES.includes(body.noteType)) {
+    throw new ServiceError(`noteType phải thuộc một trong: ${CARE_NOTE_TYPES.join(', ')}`, 400);
   }
   if (body.noteAt && new Date(body.noteAt) > new Date()) {
-    throw new ServiceError('noteAt cannot be a future date', 400);
+    throw new ServiceError('noteAt không được là ngày trong tương lai', 400);
   }
 
   const resolvedType = body.noteType || note.noteType;
@@ -232,16 +350,16 @@ const updateNote = async (user, id, body, req) => {
   return careNoteRepo.findByIdWithPopulate(note._id);
 };
 
-// Nurses can only delete their own notes; doctor can delete any note.
+// Only nurses can access care notes; a nurse may delete only their own notes.
 const deleteNote = async (user, id, req) => {
-  if (!isValidId(id)) throw new ServiceError('Care note ID is not valid', 400);
+  if (!isValidId(id)) throw new ServiceError('ID ghi chú chăm sóc không hợp lệ', 400);
   const note = await careNoteRepo.findById(id);
-  if (!note) throw new ServiceError('Care note not found', 404);
+  if (!note) throw new ServiceError('Không tìm thấy ghi chú chăm sóc', 404);
 
   if (user.role === 'nurse') {
     const staffProfile = await staffProfileRepo.findByUserId(user._id);
     if (!staffProfile || note.authorStaffId.toString() !== staffProfile._id.toString()) {
-      throw new ServiceError('Nurses can only delete their own care notes', 403);
+      throw new ServiceError('Y tá chỉ có thể xóa ghi chú chăm sóc của chính mình', 403);
     }
   }
 
@@ -259,14 +377,14 @@ const deleteNote = async (user, id, req) => {
     req,
   });
 
-  return { message: 'Care note deleted successfully' };
+  return { message: 'Đã xóa ghi chú chăm sóc thành công' };
 };
 
-// Returns paginated list of care notes written by the currently authenticated staff.
+// Paginated list of care notes written by the currently authenticated staff.
 const getMyNotes = async (user, query) => {
   const staffProfile = await staffProfileRepo.findByUserId(user._id);
-  if (!staffProfile) throw new ServiceError('Staff profile not found', 400);
+  if (!staffProfile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 400);
   return listNotes({ ...query, authorStaffId: staffProfile._id.toString() });
 };
 
-module.exports = { createNote, listNotes, getNoteHistory, getNote, updateNote, deleteNote, getMyNotes };
+module.exports = { createNote, listNotes, getNoteHistory, getNote, getNoteAuditHistory, updateNote, deleteNote, getMyNotes };

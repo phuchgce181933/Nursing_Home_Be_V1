@@ -6,10 +6,17 @@ const {
   adminGetResident,
   adminUpdatePersonalInfo,
   adminUpdateFamilyInfo,
+  adminReleaseResident,
 } = require('../controllers/residentController');
 const { protect, authorize } = require('../middleware/auth');
+const multer = require('multer');
 
-router.use(protect, authorize('admin'));
+const upload = multer({ storage: multer.memoryStorage() });
+
+const adminOnly = authorize('admin');
+const adminManager = authorize('admin', 'nurse', 'doctor');
+
+router.use(protect);
 
 /**
  * @swagger
@@ -86,7 +93,7 @@ router.use(protect, authorize('admin'));
  *       403:
  *         description: Access forbidden
  */
-router.post('/', adminCreateResident);
+router.post('/', adminOnly, adminCreateResident);
 
 /**
  * @swagger
@@ -149,7 +156,7 @@ router.post('/', adminCreateResident);
  *       200:
  *         description: Paginated list of residents
  */
-router.get('/', adminListResidents);
+router.get('/', adminManager, adminListResidents);
 
 /**
  * @swagger
@@ -171,7 +178,31 @@ router.get('/', adminListResidents);
  *       404:
  *         description: Resident not found
  */
-router.get('/:residentId', adminGetResident);
+router.get('/:residentId', adminManager, adminGetResident);
+
+/**
+ * @swagger
+ * /api/admin/residents/{residentId}/release:
+ *   patch:
+ *     summary: Release resident room/bed assignment (Admin)
+ *     tags: [Admin - Resident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Resident room/bed assignment released
+ *       400:
+ *         description: Invalid operation
+ *       404:
+ *         description: Resident not found
+ */
+router.patch('/:residentId/release', adminOnly, adminReleaseResident);
 
 /**
  * @swagger
@@ -225,7 +256,17 @@ router.get('/:residentId', adminGetResident);
  *       200:
  *         description: Resident personal info updated
  */
-router.patch('/:residentId/personal-info', adminUpdatePersonalInfo);
+router.patch('/:residentId/personal-info', adminOnly, adminUpdatePersonalInfo);
+
+/** Upload avatar image (multipart/form-data: field `avatar`) */
+router.post('/:residentId/avatar', adminOnly, upload.single('avatar'), async (req, res, next) => {
+  // delegate to controller method
+  try {
+    await require('../controllers/residentController').adminUploadAvatar(req, res);
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * @swagger
@@ -260,6 +301,6 @@ router.patch('/:residentId/personal-info', adminUpdatePersonalInfo);
  *       200:
  *         description: Resident family info updated
  */
-router.patch('/:residentId/family-info', adminUpdateFamilyInfo);
+router.patch('/:residentId/family-info', adminOnly, adminUpdateFamilyInfo);
 
 module.exports = router;

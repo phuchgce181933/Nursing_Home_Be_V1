@@ -19,12 +19,13 @@ const ensureDefaultShiftTemplates = async () => {
           colorLabel: def.colorLabel,
           description: def.description,
           isSystem: true,
+          isFlexibleTime: Boolean(def.isFlexibleTime),
           status: 'active',
         },
         $unset: { minStaff: '', durationHours: '' },
         $setOnInsert: { shiftCode: def.shiftCode },
       },
-      { upsert: true, runValidators: true }
+      { upsert: true, returnDocument: 'after', runValidators: true }
     );
   }
 

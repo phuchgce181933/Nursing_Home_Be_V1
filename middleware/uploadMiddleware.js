@@ -1,14 +1,13 @@
 const multer = require('multer');
-const sharp = require('sharp');
-const { Readable } = require('stream');
-const cloudinary = require('../config/cloudinaryConfig');
+const {
+  isCloudinaryConfigured,
+  mapCloudinaryError,
+  uploadImageBuffer,
+  uploadRawBuffer,
+} = require('../utils/cloudinaryUpload');
 
 const ALLOWED_IMAGE_MIMES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-const ALLOWED_CERTIFICATION_MIMES = [
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-];
+const ALLOWED_CERTIFICATION_MIMES = ALLOWED_IMAGE_MIMES;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 const upload = multer({
@@ -16,50 +15,42 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_SIZE },
 });
 
-const optimizeImage = async (buffer) => {
-  try {
-    return await sharp(buffer)
-      .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 85 })
-      .toBuffer();
-  } catch {
-    return buffer;
+const needsCloudinary = (req) =>
+  Boolean(req.file || req.files?.avatar?.[0] || req.files?.certificationFiles?.length);
+
+const assertCloudinaryReady = () => {
+  if (!isCloudinaryConfigured()) {
+    throw new Error('Cloudinary chưa được cấu hình. Kiểm tra CLOUDINARY_* trong file .env');
   }
 };
 
-const uploadToCloudinary = async (buffer, folder, options = {}) => {
-  const optimized = await optimizeImage(buffer);
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: 'image', quality: 'auto', fetch_format: 'auto', ...options },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve(result);
-      }
-    );
-    const readable = new Readable();
-    readable.push(optimized);
-    readable.push(null);
-    readable.pipe(stream);
-  });
+const handleUploadError = (error) => {
+  if (error?.message && !error.message.includes('[object Object]')) {
+    return error.message;
+  }
+  return mapCloudinaryError(error);
 };
 
-const uploadRawFileToCloudinary = async (buffer, folder, options = {}) =>
-  new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: 'auto', ...options },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve(result);
-      }
-    );
-    const readable = new Readable();
-    readable.push(buffer);
-    readable.push(null);
-    readable.pipe(stream);
-  });
+const parseJsonArray = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
 
-// Middleware for uploading a single avatar image (field name: "avatar")
+const uploadToCloudinary = async (buffer, folder, options = {}) =>
+  uploadImageBuffer(buffer, { folder, options });
+
+const uploadRawFileToCloudinary = async (buffer, folder, options = {}) =>
+  uploadRawBuffer(buffer, { folder, options });
+
 const uploadAvatar = (req, res, next) => {
   const handler = upload.single('avatar');
   handler(req, res, async (err) => {
@@ -73,16 +64,20 @@ const uploadAvatar = (req, res, next) => {
       if (req.file) {
         if (!ALLOWED_IMAGE_MIMES.includes(req.file.mimetype)) {
           return res.status(400).json({
-            message: 'Avatar must be an image file (jpg, png, webp)',
+            message: 'Ảnh đại diện phải là file ảnh (jpg, png, webp)',
           });
         }
-        const result = await uploadToCloudinary(req.file.buffer, 'nursing-home/avatars');
+        assertCloudinaryReady();
+        const result = await uploadImageBuffer(req.file.buffer, {
+          folder: 'nursing-home/avatars',
+          mimeType: req.file.mimetype,
+        });
         req.body.avatarUrl = result.secure_url;
         req.body.avatarPublicId = result.public_id;
       }
       return next();
     } catch (error) {
-      return res.status(500).json({ message: 'Image upload failed: ' + error.message });
+      return res.status(500).json({ message: 'Tải ảnh lên thất bại: ' + handleUploadError(error) });
     }
   });
 };
@@ -102,41 +97,92 @@ const uploadAvatarAndCertifications = (req, res, next) => {
     }
 
     try {
+      if (needsCloudinary(req)) {
+        assertCloudinaryReady();
+      }
+
       if (req.files?.avatar?.[0]) {
         const avatarFile = req.files.avatar[0];
         if (!ALLOWED_IMAGE_MIMES.includes(avatarFile.mimetype)) {
-          return res.status(400).json({ message: 'Avatar must be an image file (jpg, png, webp)' });
+          return res.status(400).json({ message: 'Ảnh đại diện phải là file ảnh (jpg, png, webp)' });
         }
-        const result = await uploadToCloudinary(avatarFile.buffer, 'nursing-home/avatars');
+        const result = await uploadImageBuffer(avatarFile.buffer, {
+          folder: 'nursing-home/avatars',
+          mimeType: avatarFile.mimetype,
+        });
         req.body.avatarUrl = result.secure_url;
         req.body.avatarPublicId = result.public_id;
       }
 
       if (req.files?.certificationFiles?.length) {
         const documents = [];
-        for (const file of req.files.certificationFiles) {
+        const issueDates = parseJsonArray(req.body.certificationIssueDates);
+        for (let i = 0; i < req.files.certificationFiles.length; i++) {
+          const file = req.files.certificationFiles[i];
           if (!ALLOWED_CERTIFICATION_MIMES.includes(file.mimetype)) {
             return res.status(400).json({
-              message: 'Chứng chỉ phải là file PDF, DOC hoặc DOCX',
+              message: 'Chứng chỉ phải là file ảnh (jpg, png, webp)',
             });
           }
-          const result = await uploadRawFileToCloudinary(file.buffer, 'nursing-home/certifications');
-          documents.push({
+          const result = await uploadImageBuffer(file.buffer, {
+            folder: 'nursing-home/certifications',
+            mimeType: file.mimetype,
+          });
+          const doc = {
             url: result.secure_url,
             publicId: result.public_id,
             fileName: file.originalname,
             mimeType: file.mimetype,
             uploadedAt: new Date(),
-          });
+          };
+          if (issueDates[i]) {
+            doc.issueDate = new Date(issueDates[i]);
+          }
+          documents.push(doc);
         }
         req.body.certificationDocuments = documents;
       }
 
       return next();
     } catch (error) {
-      return res.status(500).json({ message: 'Upload failed: ' + error.message });
+      return res.status(500).json({ message: 'Tải lên thất bại: ' + handleUploadError(error) });
     }
   });
 };
 
-module.exports = { uploadAvatar, uploadAvatarAndCertifications, uploadToCloudinary, uploadRawFileToCloudinary };
+const uploadResidentPhotos = (req, res, next) => {
+  const handler = upload.array('photos', 10);
+
+  handler(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ message: err.message });
+    }
+    if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+
+    try {
+      if (req.files?.length) {
+        assertCloudinaryReady();
+        const photos = [];
+        for (const file of req.files) {
+          if (!ALLOWED_IMAGE_MIMES.includes(file.mimetype)) {
+            return res.status(400).json({ message: 'Ảnh phải là file ảnh (jpg, png, webp)' });
+          }
+          const result = await uploadImageBuffer(file.buffer, {
+            folder: 'nursing-home/resident-photos',
+            mimeType: file.mimetype,
+          });
+          photos.push({ url: result.secure_url, publicId: result.public_id });
+        }
+        req.body.uploadedPhotos = photos;
+      }
+
+      return next();
+    } catch (error) {
+      return res.status(500).json({ message: 'Tải lên thất bại: ' + handleUploadError(error) });
+    }
+  });
+};
+
+module.exports = { uploadAvatar, uploadAvatarAndCertifications, uploadResidentPhotos, uploadToCloudinary, uploadRawFileToCloudinary };

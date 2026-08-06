@@ -9,7 +9,7 @@ const {
 } = require('../controllers/servicePackageController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('admin', 'manager'));
+router.use(protect, authorize('admin'));
 
 /**
  * @swagger

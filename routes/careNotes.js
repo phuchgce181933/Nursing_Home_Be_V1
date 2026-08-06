@@ -11,13 +11,13 @@ const {
 } = require('../controllers/careNoteController');
 const { protect, authorize } = require('../middleware/auth');
 
-const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
+const STAFF_ROLES = ['admin', 'nurse'];
 
 /**
  * @swagger
  * /api/care-notes:
  *   post:
- *     summary: Create a new care note
+ *     summary: Tạo ghi chú chăm sóc mới
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -38,36 +38,69 @@ const STAFF_ROLES = ['admin', 'manager', 'doctor', 'nurse'];
  *                 example: "Cụ ăn uống tốt, tâm trạng vui vẻ"
  *               noteType:
  *                 type: string
- *                 enum: [meal, activity, health, general]
+ *                 enum: [meal, activity, daily_living, health, general]
  *                 default: general
+ *                 description: |
+ *                   - meal: ghi chú bữa ăn
+ *                   - activity: hoạt động giải trí / chương trình tập thể
+ *                   - daily_living: hoạt động sinh hoạt hằng ngày (ADL)
+ *                   - health: tình trạng sức khỏe và thay đổi thể trạng
+ *                   - general: ghi chú chung
  *               noteAt:
  *                 type: string
  *                 format: date-time
- *                 description: Thời điểm ghi chú (mặc định là lúc tạo)
+ *                 description: Thời điểm ghi chú (mặc định là lúc tạo, không được là tương lai)
  *               metadata:
  *                 type: object
  *                 description: |
  *                   Dữ liệu có cấu trúc theo noteType:
- *                   - meal: { mealType, intakeAmount, appetite }
- *                   - activity: { activityType, duration(phút), participationLevel, mood }
- *                   - health: { symptoms(mảng), consciousness, fallRisk, skinCondition, observations }
+ *
+ *                   **meal**: { mealType, intakeAmount, appetite }
+ *                   - mealType: breakfast | lunch | dinner | snack
+ *                   - intakeAmount: none | little | half | most | all
+ *                   - appetite: poor | fair | good | excellent
+ *
+ *                   **activity**: { activityType, duration(phút), participationLevel, mood }
+ *                   - activityType: walking | exercise | physiotherapy | reading | socializing | entertainment | other
+ *                   - participationLevel: refused | assisted | supervised | independent
+ *                   - mood: happy | neutral | sad | agitated | anxious
+ *
+ *                   **daily_living** (hoạt động sinh hoạt hằng ngày): { activityType, assistanceLevel, completionStatus, duration(phút), mood }
+ *                   - activityType: bathing | grooming | dressing | eating | mobility | toileting | sleeping | other
+ *                   - assistanceLevel: independent | supervised | assisted | total_care
+ *                   - completionStatus: completed | partial | refused
+ *                   - mood: happy | neutral | sad | agitated | anxious
+ *
+ *                   **health** (tình trạng sức khỏe & thay đổi thể trạng): { symptoms[], consciousness, fallRisk, skinCondition, painLevel, physicalChanges, temperature, pulse, observations }
+ *                   - symptoms: mảng chuỗi mô tả triệu chứng (VD: ["sốt", "ho"])
+ *                   - consciousness: alert | confused | drowsy | unresponsive
+ *                   - fallRisk: low | medium | high
+ *                   - painLevel: số 0–10 (thang đau)
+ *                   - temperature: nhiệt độ cơ thể (°C, 30–45)
+ *                   - pulse: nhịp tim (bpm, 20–300)
+ *                   - physicalChanges: mô tả thay đổi thể trạng (sụt cân, phù nề...)
+ *                   - skinCondition: tình trạng da
+ *                   - observations: ghi chú bổ sung
  *                 example:
- *                   mealType: "lunch"
- *                   intakeAmount: "most"
- *                   appetite: "good"
+ *                   activityType: "bathing"
+ *                   assistanceLevel: "assisted"
+ *                   completionStatus: "completed"
+ *                   duration: 20
  *     responses:
  *       201:
- *         description: Care note created
+ *         description: Ghi chú chăm sóc được tạo thành công
  *       400:
- *         description: Missing required fields, content too short, or invalid metadata values
+ *         description: Thiếu trường bắt buộc, nội dung quá ngắn, hoặc giá trị metadata không hợp lệ
+ *       404:
+ *         description: Resident không tồn tại
  */
-router.post('/', protect, authorize('doctor', 'nurse'), createNote);
+router.post('/', protect, authorize('nurse'), createNote);
 
 /**
  * @swagger
  * /api/care-notes:
  *   get:
- *     summary: List all care notes with filters and pagination
+ *     summary: Xem danh sách ghi chú chăm sóc (có lọc, tìm kiếm, phân trang)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -76,34 +109,42 @@ router.post('/', protect, authorize('doctor', 'nurse'), createNote);
  *         name: residentId
  *         schema:
  *           type: string
- *         description: Filter by resident ObjectId
+ *         description: Lọc theo resident
  *       - in: query
  *         name: noteType
  *         schema:
  *           type: string
- *           enum: [meal, activity, health, general]
+ *           enum: [meal, activity, daily_living, health, general]
+ *         description: Lọc theo loại ghi chú
  *       - in: query
  *         name: authorStaffId
  *         schema:
  *           type: string
- *         description: Filter by author StaffProfile ObjectId
+ *         description: Lọc theo tác giả (StaffProfile ObjectId)
  *       - in: query
  *         name: search
  *         schema:
  *           type: string
- *         description: Full-text search in note content (case-insensitive)
+ *         description: Tìm kiếm trong nội dung ghi chú (không phân biệt hoa thường)
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *           example: "2024-06-04"
+ *         description: Lọc theo ngày cụ thể (YYYY-MM-DD), ưu tiên hơn from/to
  *       - in: query
  *         name: from
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter noteAt >= from
+ *         description: Lọc noteAt >= from (bỏ qua nếu có date)
  *       - in: query
  *         name: to
  *         schema:
  *           type: string
  *           format: date-time
- *         description: Filter noteAt <= to
+ *         description: Lọc noteAt <= to (bỏ qua nếu có date)
  *       - in: query
  *         name: page
  *         schema:
@@ -116,7 +157,7 @@ router.post('/', protect, authorize('doctor', 'nurse'), createNote);
  *           default: 20
  *     responses:
  *       200:
- *         description: Paginated list of care notes
+ *         description: Danh sách ghi chú chăm sóc có phân trang
  */
 router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
 
@@ -124,7 +165,7 @@ router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
  * @swagger
  * /api/care-notes/my-notes:
  *   get:
- *     summary: Get care notes written by the currently authenticated staff
+ *     summary: Xem ghi chú chăm sóc do chính mình tạo
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -137,11 +178,18 @@ router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
  *         name: noteType
  *         schema:
  *           type: string
- *           enum: [meal, activity, health, general]
+ *           enum: [meal, activity, daily_living, health, general]
  *       - in: query
  *         name: search
  *         schema:
  *           type: string
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *           example: "2024-06-04"
+ *         description: Lọc theo ngày cụ thể (YYYY-MM-DD), ưu tiên hơn from/to
  *       - in: query
  *         name: from
  *         schema:
@@ -164,15 +212,15 @@ router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
  *           default: 20
  *     responses:
  *       200:
- *         description: Paginated list of the current staff's care notes
+ *         description: Danh sách ghi chú chăm sóc của y tá đang đăng nhập
  */
-router.get('/my-notes', protect, authorize('doctor', 'nurse'), getMyNotes);
+router.get('/my-notes', protect, authorize('nurse'), getMyNotes);
 
 /**
  * @swagger
  * /api/care-notes/history/{residentId}:
  *   get:
- *     summary: Get full care note history for a resident (all records, no pagination)
+ *     summary: Xem lịch sử ghi chú chăm sóc của một resident (có phân trang)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -186,7 +234,19 @@ router.get('/my-notes', protect, authorize('doctor', 'nurse'), getMyNotes);
  *         name: noteType
  *         schema:
  *           type: string
- *           enum: [meal, activity, health, general]
+ *           enum: [meal, activity, daily_living, health, general]
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Tìm kiếm trong nội dung ghi chú
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *           example: "2024-06-04"
+ *         description: Lọc theo ngày cụ thể (YYYY-MM-DD), ưu tiên hơn from/to
  *       - in: query
  *         name: from
  *         schema:
@@ -197,9 +257,21 @@ router.get('/my-notes', protect, authorize('doctor', 'nurse'), getMyNotes);
  *         schema:
  *           type: string
  *           format: date-time
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
  *     responses:
  *       200:
- *         description: Note history retrieved
+ *         description: Lịch sử ghi chú chăm sóc có phân trang
+ *       400:
+ *         description: residentId không hợp lệ
  */
 router.get('/history/:residentId', protect, authorize(...STAFF_ROLES), getNoteHistory);
 
@@ -207,7 +279,7 @@ router.get('/history/:residentId', protect, authorize(...STAFF_ROLES), getNoteHi
  * @swagger
  * /api/care-notes/{id}:
  *   get:
- *     summary: Get care note by ID
+ *     summary: Xem chi tiết một ghi chú chăm sóc
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -219,9 +291,9 @@ router.get('/history/:residentId', protect, authorize(...STAFF_ROLES), getNoteHi
  *           type: string
  *     responses:
  *       200:
- *         description: Care note details
+ *         description: Chi tiết ghi chú chăm sóc
  *       404:
- *         description: Care note not found
+ *         description: Không tìm thấy ghi chú
  */
 router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
 
@@ -229,7 +301,7 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
  * @swagger
  * /api/care-notes/{id}:
  *   put:
- *     summary: Update a care note (nurses can only update their own notes)
+ *     summary: Chỉnh sửa ghi chú chăm sóc (y tá chỉ sửa được ghi chú của mình)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -251,29 +323,31 @@ router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
  *                 minLength: 5
  *               noteType:
  *                 type: string
- *                 enum: [meal, activity, health, general]
+ *                 enum: [meal, activity, daily_living, health, general]
  *               noteAt:
  *                 type: string
  *                 format: date-time
+ *                 description: Không được là thời điểm tương lai
  *               metadata:
  *                 type: object
+ *                 description: Xem mô tả metadata ở POST /api/care-notes
  *     responses:
  *       200:
- *         description: Care note updated
+ *         description: Ghi chú đã được cập nhật
  *       400:
- *         description: Content too short or invalid noteType/metadata values
+ *         description: Nội dung quá ngắn hoặc giá trị metadata không hợp lệ
  *       403:
- *         description: Nurse attempting to edit another staff's note
+ *         description: Y tá cố sửa ghi chú của người khác
  *       404:
- *         description: Care note not found
+ *         description: Không tìm thấy ghi chú
  */
-router.put('/:id', protect, authorize('doctor', 'nurse'), updateNote);
+router.put('/:id', protect, authorize('nurse'), updateNote);
 
 /**
  * @swagger
  * /api/care-notes/{id}:
  *   delete:
- *     summary: Delete care note (nurses can only delete their own notes)
+ *     summary: Xóa ghi chú chăm sóc (y tá chỉ xóa được ghi chú của mình)
  *     tags: [Care Notes]
  *     security:
  *       - BearerAuth: []
@@ -285,12 +359,12 @@ router.put('/:id', protect, authorize('doctor', 'nurse'), updateNote);
  *           type: string
  *     responses:
  *       200:
- *         description: Care note deleted
+ *         description: Ghi chú đã được xóa
  *       403:
- *         description: Nurse attempting to delete another staff's note
+ *         description: Y tá cố xóa ghi chú của người khác
  *       404:
- *         description: Care note not found
+ *         description: Không tìm thấy ghi chú
  */
-router.delete('/:id', protect, authorize('doctor', 'nurse'), deleteNote);
+router.delete('/:id', protect, authorize('nurse'), deleteNote);
 
 module.exports = router;

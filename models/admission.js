@@ -20,6 +20,8 @@ const applicantSchema = new Schema(
     allergies: [{ type: String, trim: true }],
     chronicConditions: [{ type: String, trim: true }],
     initialHealthCondition: { type: String, trim: true },
+    phone: { type: String, trim: true },
+    avatarUrl: { type: String, trim: true },
   },
   { _id: false }
 );
@@ -28,12 +30,16 @@ const admissionSchema = new Schema(
   {
     requestCode: { type: String, unique: true, uppercase: true, trim: true, index: true },
     residentId: { type: Types.ObjectId, ref: 'Resident', index: true },
-    familyAccountId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
+    // Optional: walk-in admissions (created by front-desk staff for a family that
+    // hasn't registered an account yet) start with this unset — checkInResident
+    // auto-provisions a family User and backfills it once check-in completes.
+    familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
     applicant: applicantSchema,
     preferredAdmissionDate: { type: Date },
     reasonForAdmission: { type: String, trim: true },
     requestedByName: { type: String, trim: true },
     requestedByPhone: { type: String, trim: true },
+    requestedByEmail: { type: String, trim: true, lowercase: true },
     requestedAt: { type: Date, default: Date.now },
     consultationScheduledAt: { type: Date },
     tourScheduledAt: { type: Date },
@@ -73,7 +79,12 @@ const admissionSchema = new Schema(
     // UC-6.25: Contract
     contractStartDate: { type: Date },
     contractEndDate: { type: Date },
+    contractDurationMonths: { type: Number, min: 1 },
+    contractDiscountPercent: { type: Number, min: 0, max: 100 },
     contractTerms: { type: String, trim: true },
+    contractStatus: { type: String, enum: ['active', 'cancelled'] },
+    contractCancelledAt: { type: Date },
+    contractCancellationReason: { type: String, trim: true },
 
     // UC-6.26: Check-in
     assignedBedId: { type: Types.ObjectId, ref: 'Bed' },

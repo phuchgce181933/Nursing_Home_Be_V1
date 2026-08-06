@@ -5,6 +5,12 @@ const {
   getResident,
   getResidentBillingSummary,
   getResidentInvoices,
+  getInvoicePaymentUrl,
+  getWalletBalance,
+  generateWalletTopupUrl,
+  confirmWalletTopup,
+  verifyWalletTopup,
+  getWalletTopupCheckoutPage,
   getVitals,
   getHealthHistory,
   getHealthChart,
@@ -18,8 +24,32 @@ const {
   getCareSchedule,
   downloadReport,
 } = require('../controllers/familyPortalController');
+const { initiateWalletPayment, verifyWalletPayment } = require('../controllers/familyPaymentController');
+const { listPhotosForFamily } = require('../controllers/residentPhotoController');
 const { protect, authorize } = require('../middleware/auth');
 
+// Public checkout endpoints (no auth required - use checksum verification instead)
+router.get('/wallet/topup/payos/checkout/:topupId', getWalletTopupCheckoutPage);
+
+// Proxy QR image from PayOS to avoid CORS on mobile/web
+router.get('/wallet/qr-proxy', async (req, res) => {
+  const { url } = req.query;
+  if (!url || typeof url !== 'string') return res.status(400).json({ message: 'url là bắt buộc' });
+  try {
+    const https = require('https');
+    const http = require('http');
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(url, (upstream) => {
+      res.set('Content-Type', upstream.headers['content-type'] || 'image/png');
+      res.set('Cache-Control', 'public, max-age=600');
+      upstream.pipe(res);
+    }).on('error', () => res.status(502).json({ message: 'Không thể tải mã QR' }));
+  } catch {
+    res.status(502).json({ message: 'Không thể tải mã QR' });
+  }
+});
+
+// Protected routes - require authentication
 router.use(protect, authorize('family'));
 
 /**
@@ -120,6 +150,122 @@ router.get('/residents/:residentId/invoices', getResidentInvoices);
 
 /**
  * @swagger
+ * /api/family/residents/{residentId}/invoices/{invoiceId}/payment-url:
+ *   get:
+ *     summary: Get PayOS payment URL for an invoice (for mobile app)
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: invoiceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Payment URL with checksum
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Invoice not found
+ */
+router.get('/residents/:residentId/invoices/:invoiceId/payment-url', getInvoicePaymentUrl);
+
+/**
+ * @swagger
+ * /api/family/wallet/balance:
+ *   get:
+ *     summary: Get wallet balance for logged-in family member
+ *     tags: [Family Wallet]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Wallet balance information
+ *         schema:
+ *           type: object
+ *           properties:
+ *             balance:
+ *               type: number
+ *               description: Current wallet balance
+ *             totalTopup:
+ *               type: number
+ *               description: Total amount topped up
+ *             totalSpent:
+ *               type: number
+ *               description: Total amount spent
+ */
+router.get('/wallet/balance', getWalletBalance);
+
+/**
+ * @swagger
+ * /api/family/wallet/topup:
+ *   post:
+ *     summary: Generate payment URL for wallet topup
+ *     tags: [Family Wallet]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               amount:
+ *                 type: number
+ *                 example: 100000
+ *                 description: Amount to topup in VND
+ *     responses:
+ *       200:
+ *         description: Payment URL with checksum for topup
+ *       400:
+ *         description: Invalid amount
+ */
+router.post('/wallet/topup', generateWalletTopupUrl);
+
+/**
+ * @swagger
+ * /api/family/wallet/topup/confirm:
+ *   post:
+ *     summary: Confirm wallet topup after successful payment
+ *     tags: [Family Wallet]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               amount:
+ *                 type: number
+ *                 example: 100000
+ *                 description: Amount that was topped up in VND
+ *     responses:
+ *       200:
+ *         description: Topup confirmed, wallet updated
+ *       400:
+ *         description: Invalid request
+ */
+router.post('/wallet/topup/confirm', confirmWalletTopup);
+router.post('/wallet/topup/verify', verifyWalletTopup);
+
+/**
+ * Wallet payment with OTP
+ */
+router.post('/wallet/payments/initiate', initiateWalletPayment);
+router.post('/wallet/payments/verify', verifyWalletPayment);
+
+/**
+ * @swagger
  * /api/family/residents/{residentId}/vitals:
  *   get:
  *     summary: Get latest vitals record for a resident
@@ -139,6 +285,28 @@ router.get('/residents/:residentId/invoices', getResidentInvoices);
  *         description: Access denied
  */
 router.get('/residents/:residentId/vitals', getVitals);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/photos:
+ *   get:
+ *     summary: List photos uploaded by caregivers for a resident
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Photo list
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/photos', listPhotosForFamily);
 
 /**
  * @swagger

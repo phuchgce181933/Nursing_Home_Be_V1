@@ -1,6 +1,5 @@
 const svc = require('../services/assignedResidentService');
-
-const statusCode = (err) => err.statusCode || err.status || 500;
+const { sendApiError } = require('../utils/apiErrorResponse');
 
 const listResidents = (req, res) =>
   svc
@@ -11,17 +10,32 @@ const listResidents = (req, res) =>
         data: result.data,
         total: result.total,
         message: result.message,
+        messageKey: result.messageKey,
+        params: result.params,
       })
     )
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
 
 const getResident = (req, res) =>
   svc
     .getAssignedResidentById(req.user._id, req.params.id)
     .then((data) => res.json({ success: true, data }))
-    .catch((err) => res.status(statusCode(err)).json({ success: false, message: err.message }));
+    .catch((err) => sendApiError(res, err));
+
+const listResidentActivities = (req, res) =>
+  svc
+    .listAssignedResidentActivities(req.user._id, {
+      status: req.query.status,
+      from: req.query.from,
+      to: req.query.to,
+      page: req.query.page,
+      limit: req.query.limit,
+    })
+    .then((result) => res.json({ success: true, ...result }))
+    .catch((err) => sendApiError(res, err));
 
 module.exports = {
   listResidents,
   getResident,
+  listResidentActivities,
 };

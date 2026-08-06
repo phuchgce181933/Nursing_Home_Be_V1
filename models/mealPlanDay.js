@@ -5,6 +5,12 @@ const { Schema, Types } = mongoose;
 const mealPlanDaySchema = new Schema(
   {
     workDate: { type: Date, required: true, index: true },
+    mealTimeScheduleDayId: {
+      type: Types.ObjectId,
+      ref: 'MealTimeScheduleDay',
+      required: true,
+      index: true,
+    },
     careStage: { type: String, required: true, trim: true, index: true },
     title: { type: String, trim: true },
     status: { type: String, enum: ['draft', 'published'], default: 'draft', index: true },

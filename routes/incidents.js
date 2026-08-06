@@ -6,11 +6,15 @@ const {
   listIncidents,
   getIncident,
   updateIncidentStatus,
+  reopenIncident,
+  assignHandlers,
   exportIncidents,
+  getAssignmentConflicts,
 } = require('../controllers/incidentController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('doctor', 'nurse', 'admin'));
+router.use(protect);
+router.use(authorize('doctor', 'nurse', 'admin', 'manager', 'caregiver', 'pharmacist'));
 
 /**
  * @swagger
@@ -46,6 +50,10 @@ router.use(protect, authorize('doctor', 'nurse', 'admin'));
  *               description:
  *                 type: string
  *               assignedStaffIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               residentIds:
  *                 type: array
  *                 items:
  *                   type: string
@@ -116,6 +124,8 @@ router.post('/', createIncident);
  */
 router.get('/', listIncidents);
 
+router.post('/assignment-conflicts', authorize('admin'), getAssignmentConflicts);
+
 /**
  * @swagger
  * /api/incidents/export:
@@ -181,5 +191,90 @@ router.get('/:id', getIncident);
  *         description: Incident status updated
  */
 router.patch('/:id/status', updateIncidentStatus);
+router.patch('/:id/reopen', reopenIncident);
+
+/**
+ * @swagger
+ * /api/incidents/{id}/resolution:
+ *   patch:
+ *     summary: Update incident resolution (save draft or mark resolved)
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status:
+ *                 type: string
+ *               method:
+ *                 type: string
+ *               rootCause:
+ *                 type: string
+ *               detailedCause:
+ *                 type: string
+ *               immediateActions:
+ *                 type: string
+ *               result:
+ *                 type: string
+ *               action:
+ *                 type: string
+ *               resolutionFiles:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *     responses:
+ *       200:
+ *         description: Incident resolution updated
+ */
+router.patch('/:id/resolution', require('../controllers/incidentController').updateIncidentResolution);
+
+/**
+ * @swagger
+ * /api/incidents/{id}/handlers:
+ *   patch:
+ *     summary: Assign handlers to incident (admin only)
+ *     tags: [Incident Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - assignedStaffIds
+ *             properties:
+ *               assignedStaffIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of staff profile IDs or user IDs
+ *     responses:
+ *       200:
+ *         description: Handlers assigned to incident
+ *       403:
+ *         description: Only admins can assign handlers
+ *       400:
+ *         description: Handlers already assigned or no handlers specified
+ */
+router.patch('/:id/handlers', authorize('admin'), assignHandlers);
 
 module.exports = router;

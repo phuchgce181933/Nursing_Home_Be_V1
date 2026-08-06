@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiError');
 const careScheduleDayRepo = require('../repositories/careScheduleDayRepository');
 const careScheduleEntryRepo = require('../repositories/careScheduleEntryRepository');
 const Resident = require('../models/resident');
@@ -18,6 +18,12 @@ const {
 } = require('../utils/shiftTime');
 const { triggerReadinessSyncForWorkDate } = require('./readinessSyncService');
 const { assertAssignableStaffProfile, residentCoversStaffArea } = require('../utils/staffAssignment');
+const { assertResidentAssignedToStaffProfile } = require('./assignedResidentService');
+const {
+  assertNoClinicalAppointmentAtTime,
+  assertStaffDutyMinGap,
+  assertBatchStaffDutyMinGap,
+} = require('../utils/careTaskAssignmentValidation');
 
 const SCHEDULE_TEMPLATES = [
   {
@@ -110,7 +116,7 @@ const runWithOptionalTransaction = async (work) => {
 
 const assertValidObjectId = (value, label) => {
   if (!mongoose.Types.ObjectId.isValid(String(value))) {
-    throw new ServiceError(`${label} không hợp lệ`, 400);
+    throw apiErr(CODES.MEAL_OBJECT_ID_INVALID, { statusCode: 400, params: { label } });
   }
 };
 
@@ -119,7 +125,7 @@ const parseAndValidateWorkDate = (workDate) => {
   try {
     parseWorkDate(str);
   } catch {
-    throw new ServiceError('workDate phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_WORK_DATE_INVALID, { statusCode: 400 });
   }
   return str;
 };
@@ -128,16 +134,25 @@ const validateAndNormalizeEntry = (entry, index) => {
   const row = entry || {};
   const source = row.source || 'manual';
   if (!VALID_ENTRY_SOURCES.includes(source)) {
-    throw new ServiceError(`entries[${index}].source phải thuộc một trong: ${VALID_ENTRY_SOURCES.join(', ')}`, 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_SOURCE_INVALID, {
+      statusCode: 400,
+      params: { index, allowed: VALID_ENTRY_SOURCES.join(', ') },
+    });
   }
   if (!CARE_TASK_TYPES.includes(row.taskType)) {
-    throw new ServiceError(`entries[${index}].taskType phải thuộc một trong: ${CARE_TASK_TYPES.join(', ')}`, 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TASK_TYPE_INVALID, {
+      statusCode: 400,
+      params: { index, allowed: CARE_TASK_TYPES.join(', ') },
+    });
   }
   if (!CARE_LEVELS.includes(row.careLevel)) {
-    throw new ServiceError(`entries[${index}].careLevel phải thuộc một trong: ${CARE_LEVELS.join(', ')}`, 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_CARE_LEVEL_INVALID, {
+      statusCode: 400,
+      params: { index, allowed: CARE_LEVELS.join(', ') },
+    });
   }
   if (toMinutes(row.scheduledTime) === null) {
-    throw new ServiceError(`entries[${index}].scheduledTime phải đúng định dạng HH:mm`, 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_INVALID, { statusCode: 400, params: { index } });
   }
   assertValidObjectId(row.residentId, `entries[${index}].residentId`);
   assertValidObjectId(row.staffProfileId, `entries[${index}].staffProfileId`);
@@ -165,14 +180,11 @@ const assertEntryTimesFromNow = (entries, workDateStr) => {
     try {
       const scheduledAt = buildTaskDateTime(workDateStr, entry.scheduledTime);
       if (scheduledAt < now) {
-        throw new ServiceError(
-          `entries[${index}].scheduledTime phải từ thời điểm hiện tại trở đi cho ngày hôm nay`,
-          400
-        );
+        throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_PAST, { statusCode: 400, params: { index } });
       }
     } catch (err) {
-      if (err instanceof ServiceError) throw err;
-      throw new ServiceError(`entries[${index}].scheduledTime phải đúng định dạng HH:mm`, 400);
+      if (err instanceof ApiError) throw err;
+      throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_INVALID, { statusCode: 400, params: { index } });
     }
   }
 };
@@ -210,18 +222,21 @@ const getScheduleTemplates = async () => ({
 const createDraft = async (body, actorUserId) => {
   const workDate = parseAndValidateWorkDate(body.workDate);
   if (workDate < todayVN()) {
-    throw new ServiceError('Không thể tạo lịch chăm sóc cho ngày trong quá khứ', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_PAST_DATE, { statusCode: 400 });
   }
 
   const entriesInput = Array.isArray(body.entries) ? body.entries : [];
   if (!entriesInput.length) {
-    throw new ServiceError('entries là bắt buộc và không được để trống', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRIES_REQUIRED, { statusCode: 400 });
   }
   const entries = entriesInput.map(validateAndNormalizeEntry);
   assertEntryTimesFromNow(entries, workDate);
   const residentIds = [...new Set(entries.map((e) => e.residentId))];
-  if (residentIds.length < 2) {
-    throw new ServiceError('Lịch nháp phải có ít nhất 2 cư dân cho kế hoạch nhiều cư dân', 400);
+  if (residentIds.length < 1) {
+    throw apiErr(CODES.CARE_SCHEDULE_NO_RESIDENTS, { statusCode: 400 });
+  }
+  for (const entry of entries) {
+    await assertResidentAssignedToStaffProfile(entry.staffProfileId, entry.residentId);
   }
 
   let createdDayId;
@@ -243,31 +258,34 @@ const createDraft = async (body, actorUserId) => {
       dbOpts
     );
   });
-  try {
-    const saved = await careScheduleDayRepo.findById(createdDayId);
-    return { message: 'Tạo lịch chăm sóc nháp thành công', schedule: await hydrateDraft(saved) };
-  } finally {
-    // no-op
-  }
+  const saved = await careScheduleDayRepo.findById(createdDayId);
+  return { ...apiSuccess(SUCCESS.CARE_SCHEDULE_DRAFT_CREATED), schedule: await hydrateDraft(saved) };
 };
 
 const updateDraft = async (id, body, actorUserId) => {
   const day = await careScheduleDayRepo.findById(id);
-  if (!day) throw new ServiceError('Không tìm thấy lịch chăm sóc', 404);
-  if (day.status !== 'draft') throw new ServiceError('Chỉ có thể cập nhật lịch ở trạng thái nháp', 400);
+  if (!day) throw apiErr(CODES.CARE_SCHEDULE_NOT_FOUND, { statusCode: 404 });
+  if (day.status !== 'draft') throw apiErr(CODES.CARE_SCHEDULE_DRAFT_ONLY_EDIT, { statusCode: 400 });
 
   const nextWorkDate = body.workDate ? parseAndValidateWorkDate(body.workDate) : workDateToVNString(day.workDate);
   if (nextWorkDate < todayVN()) {
-    throw new ServiceError('Không thể cập nhật lịch chăm sóc về ngày trong quá khứ', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_PAST_DATE, { statusCode: 400 });
   }
 
   const entriesInput = Array.isArray(body.entries) ? body.entries : null;
   const entries = entriesInput ? entriesInput.map(validateAndNormalizeEntry) : null;
   if (entries && !entries.length) {
-    throw new ServiceError('entries không được để trống', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRIES_EMPTY, { statusCode: 400 });
   }
   if (entries) {
     assertEntryTimesFromNow(entries, nextWorkDate);
+    const residentIds = [...new Set(entries.map((e) => e.residentId))];
+    if (residentIds.length < 1) {
+      throw apiErr(CODES.CARE_SCHEDULE_NO_RESIDENTS, { statusCode: 400 });
+    }
+    for (const entry of entries) {
+      await assertResidentAssignedToStaffProfile(entry.staffProfileId, entry.residentId);
+    }
   }
 
   await runWithOptionalTransaction(async (session) => {
@@ -295,12 +313,8 @@ const updateDraft = async (id, body, actorUserId) => {
       );
     }
   });
-  try {
-    const saved = await careScheduleDayRepo.findById(id);
-    return { message: 'Cập nhật lịch chăm sóc nháp thành công', schedule: await hydrateDraft(saved) };
-  } finally {
-    // no-op
-  }
+  const saved = await careScheduleDayRepo.findById(id);
+  return { ...apiSuccess(SUCCESS.CARE_SCHEDULE_DRAFT_UPDATED), schedule: await hydrateDraft(saved) };
 };
 
 const listSchedules = async (filter = {}, options = {}) => {
@@ -327,15 +341,15 @@ const listSchedules = async (filter = {}, options = {}) => {
 
 const getSchedule = async (id) => {
   const day = await careScheduleDayRepo.findById(id);
-  if (!day) throw new ServiceError('Không tìm thấy lịch chăm sóc', 404);
+  if (!day) throw apiErr(CODES.CARE_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   return hydrateDraft(day);
 };
 
 const deleteDraft = async (id, actorUserId) => {
   const day = await careScheduleDayRepo.findById(id);
-  if (!day) throw new ServiceError('Không tìm thấy lịch chăm sóc', 404);
+  if (!day) throw apiErr(CODES.CARE_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') {
-    throw new ServiceError('Chỉ có thể xóa lịch chăm sóc ở trạng thái nháp', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_DRAFT_ONLY_DELETE, { statusCode: 400 });
   }
 
   await runWithOptionalTransaction(async (session) => {
@@ -345,7 +359,7 @@ const deleteDraft = async (id, actorUserId) => {
   });
 
   return {
-    message: 'Xóa lịch chăm sóc nháp thành công',
+    ...apiSuccess(SUCCESS.CARE_SCHEDULE_DRAFT_DELETED),
     deletedId: String(id),
     deletedBy: String(actorUserId),
   };
@@ -360,46 +374,73 @@ const validateEntryForPublish = async (entry, workDateStr) => {
       .populate('assignedResidentIds'),
     Shift.findById(entry.shiftId),
   ]);
-  if (!resident) throw new ServiceError(`Không tìm thấy cư dân: ${entry.residentId}`, 400);
-  if (!staffProfile) throw new ServiceError(`Không tìm thấy hồ sơ nhân viên: ${entry.staffProfileId}`, 400);
-  if (!shift) throw new ServiceError(`Không tìm thấy ca làm việc: ${entry.shiftId}`, 400);
+  if (!resident) {
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_RESIDENT_NOT_FOUND, {
+      statusCode: 400,
+      params: { residentId: entry.residentId },
+    });
+  }
+  if (!staffProfile) {
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_STAFF_NOT_FOUND, {
+      statusCode: 400,
+      params: { staffProfileId: entry.staffProfileId },
+    });
+  }
+  if (!shift) {
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_SHIFT_NOT_FOUND, {
+      statusCode: 400,
+      params: { shiftId: entry.shiftId },
+    });
+  }
 
-  await assertAssignableStaffProfile(staffProfile);
+  const assigneeRole = await assertAssignableStaffProfile(staffProfile);
   if (!['published', 'confirmed'].includes(shift.status)) {
-    throw new ServiceError('Ca làm việc phải ở trạng thái đã đăng hoặc đã xác nhận để publish lịch', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_SHIFT_STATUS_INVALID, { statusCode: 400 });
   }
   if (idOf(shift.assignedStaffId) !== idOf(entry.staffProfileId)) {
-    throw new ServiceError('shiftId của entry phải thuộc đúng staffProfileId đã chọn', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_SHIFT_STAFF_MISMATCH, { statusCode: 400 });
   }
   if (workDateToVNString(shift.workDate) !== workDateStr) {
-    throw new ServiceError('workDate của ca trong entry phải trùng workDate của lịch', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_SHIFT_DATE_MISMATCH, { statusCode: 400 });
   }
   if (toMinutes(entry.scheduledTime) === null) {
-    throw new ServiceError('scheduledTime của entry phải đúng định dạng HH:mm', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_INVALID, { statusCode: 400 });
   }
   const start = toMinutes(shift.startTime);
   const end = toMinutes(shift.endTime);
   const target = toMinutes(entry.scheduledTime);
   const inShift = end <= start ? target >= start || target <= end : target >= start && target <= end;
   if (!inShift) {
-    throw new ServiceError(`Giờ ${entry.scheduledTime} phải nằm trong ca ${shift.startTime}-${shift.endTime}`, 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_OUTSIDE_SHIFT, {
+      statusCode: 400,
+      params: { scheduledTime: entry.scheduledTime, startTime: shift.startTime, endTime: shift.endTime },
+    });
   }
   try {
     const scheduledAt = buildTaskDateTime(workDateStr, entry.scheduledTime);
     if (scheduledAt < nowVN()) {
-      throw new ServiceError('scheduledTime của entry phải từ thời điểm hiện tại trở đi', 400);
+      throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_PAST, { statusCode: 400 });
     }
+    await assertNoClinicalAppointmentAtTime(
+      staffProfile._id,
+      assigneeRole,
+      scheduledAt,
+      CODES.CARE_SCHEDULE_ENTRY_APPOINTMENT_BLOCKS
+    );
+    await assertStaffDutyMinGap(staffProfile._id, new Date(`${workDateStr}T00:00:00.000Z`), entry.scheduledTime, {
+      errorCode: CODES.CARE_SCHEDULE_ENTRY_TIME_TOO_CLOSE,
+    });
   } catch (err) {
-    if (err instanceof ServiceError) throw err;
-    throw new ServiceError('scheduledTime của entry phải đúng định dạng HH:mm', 400);
+    if (err instanceof ApiError) throw err;
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_TIME_INVALID, { statusCode: 400 });
   }
   if (isShiftEnded(workDateStr, shift.startTime, shift.endTime, nowVN())) {
-    throw new ServiceError('Không thể publish entry thuộc ca đã kết thúc', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_SHIFT_ENDED, { statusCode: 400 });
   }
   const assignedResidentIds = (staffProfile.assignedResidentIds || []).map((r) => String(r._id || r));
   const needsResidentAssignment = !assignedResidentIds.includes(String(resident._id));
   if (!residentCoversStaffArea(resident, staffProfile)) {
-    throw new ServiceError('Cư dân nằm ngoài khu vực/phòng phụ trách của nhân viên đã chọn', 400);
+    throw apiErr(CODES.CARE_SCHEDULE_ENTRY_RESIDENT_OUTSIDE_AREA, { statusCode: 400 });
   }
 
   return { resident, staffProfile, shift, needsResidentAssignment };
@@ -407,29 +448,36 @@ const validateEntryForPublish = async (entry, workDateStr) => {
 
 const publishSchedule = async (id, actorUserId) => {
   const day = await careScheduleDayRepo.findById(id);
-  if (!day) throw new ServiceError('Không tìm thấy lịch chăm sóc', 404);
+  if (!day) throw apiErr(CODES.CARE_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   if (day.status === 'published') {
     const entries = await careScheduleEntryRepo.findByDayId(id);
     return {
-      message: 'Lịch chăm sóc đã được publish trước đó',
+      ...apiSuccess(SUCCESS.CARE_SCHEDULE_PUBLISHED),
       idempotent: true,
       schedule: { ...(day.toObject ? day.toObject() : day), entries },
       createdCareTasks: 0,
     };
   }
-  if (day.status !== 'draft') throw new ServiceError(`Không thể publish lịch ở trạng thái ${day.status}`, 400);
+  if (day.status !== 'draft') {
+    throw apiErr(CODES.CARE_SCHEDULE_PUBLISH_STATUS_INVALID, {
+      statusCode: 400,
+      params: { status: day.status },
+    });
+  }
 
   const workDateStr = workDateToVNString(day.workDate);
-  if (workDateStr < todayVN()) throw new ServiceError('Không thể publish lịch cho ngày trong quá khứ', 400);
+  if (workDateStr < todayVN()) throw apiErr(CODES.CARE_SCHEDULE_PUBLISH_PAST_DATE, { statusCode: 400 });
 
   const entries = await careScheduleEntryRepo.findByDayId(id);
-  if (!entries.length) throw new ServiceError('Không thể publish lịch rỗng', 400);
+  if (!entries.length) throw apiErr(CODES.CARE_SCHEDULE_PUBLISH_EMPTY, { statusCode: 400 });
 
   const validatedEntries = [];
   for (const entry of entries) {
     const validated = await validateEntryForPublish(entry, workDateStr);
     validatedEntries.push({ entry, ...validated });
   }
+
+  assertBatchStaffDutyMinGap(validatedEntries);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
@@ -477,17 +525,13 @@ const publishSchedule = async (id, actorUserId) => {
       dbOpts
     );
   });
-  try {
-    triggerReadinessSyncForWorkDate(workDateStr);
-    const saved = await careScheduleDayRepo.findById(id);
-    return {
-      message: 'Publish lịch chăm sóc thành công',
-      schedule: await hydrateDraft(saved),
-      createdCareTasks: entries.length,
-    };
-  } finally {
-    // no-op
-  }
+  triggerReadinessSyncForWorkDate(workDateStr);
+  const saved = await careScheduleDayRepo.findById(id);
+  return {
+    ...apiSuccess(SUCCESS.CARE_SCHEDULE_PUBLISHED),
+    schedule: await hydrateDraft(saved),
+    createdCareTasks: entries.length,
+  };
 };
 
 module.exports = {
@@ -499,4 +543,3 @@ module.exports = {
   deleteDraft,
   publishSchedule,
 };
-

@@ -46,7 +46,9 @@ const { protect, authorize } = require('../middleware/auth');
  *       409:
  *         description: Overlapping approved leave exists
  */
-router.post('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'staff'), submitLeaveRequest);
+
+router.post('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'caregiver', 'staff', 'pharmacist'), submitLeaveRequest);
+
 
 /**
  * @swagger
@@ -141,7 +143,7 @@ router.get('/:id', protect, getLeaveRequest);
 router.get(
   '/:id/replacement-candidates',
   protect,
-  authorize('admin', 'manager'),
+  authorize('admin'),
   getReplacementCandidates
 );
 
@@ -181,7 +183,7 @@ router.get(
  *       409:
  *         description: Replacement cannot cover shifts (conflicts) or care tasks cannot be reassigned (blockingTasks)
  */
-router.put('/:id/approve', protect, authorize('admin', 'manager'), approveLeaveRequest);
+router.put('/:id/approve', protect, authorize('admin'), approveLeaveRequest);
 
 /**
  * @swagger
@@ -214,7 +216,7 @@ router.put('/:id/approve', protect, authorize('admin', 'manager'), approveLeaveR
  *       400:
  *         description: reviewNote is missing or request is not pending
  */
-router.put('/:id/reject', protect, authorize('admin', 'manager'), rejectLeaveRequest);
+router.put('/:id/reject', protect, authorize('admin'), rejectLeaveRequest);
 
 /**
  * @swagger
@@ -234,6 +236,8 @@ router.put('/:id/reject', protect, authorize('admin', 'manager'), rejectLeaveReq
  *       200:
  *         description: Request cancelled
  */
-router.delete('/:id', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'staff'), cancelLeaveRequest);
+
+router.delete('/:id', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'caregiver', 'staff', 'pharmacist'), cancelLeaveRequest);
+
 
 module.exports = router;

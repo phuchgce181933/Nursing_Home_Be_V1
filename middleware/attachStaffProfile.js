@@ -7,7 +7,7 @@ const attachStaffProfile = async (req, res, next) => {
     if (req.user && ROLES_REQUIRING_PROFILE.includes(req.user.role)) {
       const profile = await staffProfileRepo.findByUserId(req.user._id);
       if (!profile) {
-        return res.status(403).json({ message: 'Staff profile not found for this account. Contact admin.' });
+        return res.status(403).json({ message: 'Không tìm thấy hồ sơ nhân viên cho tài khoản này. Vui lòng liên hệ quản trị viên.' });
       }
       req.staffProfile = profile;
     } else {

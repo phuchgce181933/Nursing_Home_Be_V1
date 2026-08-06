@@ -24,7 +24,7 @@ const {
 } = require('../controllers/pharmacyController');
 const { protect, authorize } = require('../middleware/auth');
 
-router.use(protect, authorize('pharmacist', 'admin', 'manager'));
+router.use(protect, authorize('pharmacist', 'admin'));
 
 // Medication inventory
 /**
@@ -596,7 +596,7 @@ router.get('/alerts/low-stock', getLowStockAlerts);
  *         name: withinDays
  *         schema:
  *           type: integer
- *           default: 30
+ *           default: 365
  *     responses:
  *       200:
  *         description: Expiring stock list

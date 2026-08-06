@@ -7,8 +7,11 @@ const findByInvoiceId = async (invoiceId, { sort = { paidAt: -1 }, skip = 0, lim
 
 const findById = async (id) => Payment.findById(id).populate('invoiceId paidByFamilyAccountId');
 
+const findByTransactionRef = async (transactionRef) => Payment.findOne({ transactionRef });
+
 module.exports = {
   create,
   findByInvoiceId,
   findById,
+  findByTransactionRef,
 };

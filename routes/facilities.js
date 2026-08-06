@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const ctrl = require('../controllers/facilityController');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
+const adminManager = authorize('admin');
 
 /**
  * @swagger
@@ -25,6 +26,7 @@ const { protect } = require('../middleware/auth');
  *       200: { description: List of buildings }
  */
 router.get('/buildings', protect, ctrl.listBuildings);
+router.get('/stats', protect, ctrl.getStats);
 
 /**
  * @swagger
@@ -83,5 +85,26 @@ router.get('/floors/:floorId/rooms', protect, ctrl.listRoomsByFloor);
 router.get('/floors/:floorId', protect, ctrl.getFloor);
 
 router.get('/rooms/:roomId/beds', protect, ctrl.listAvailableBedsByRoom);
+
+router.post('/buildings', protect, adminManager, ctrl.createBuilding);
+router.put('/buildings/:id', protect, adminManager, ctrl.updateBuilding);
+router.delete('/buildings/:id', protect, adminManager, ctrl.deleteBuilding);
+router.get('/buildings/:id/stats', protect, ctrl.getBuildingStats);
+
+router.post('/floors', protect, adminManager, ctrl.createFloor);
+router.put('/floors/:id', protect, adminManager, ctrl.updateFloor);
+router.delete('/floors/:id', protect, adminManager, ctrl.deleteFloor);
+router.post('/rooms', protect, adminManager, ctrl.createRoom);
+router.put('/rooms/:id', protect, adminManager, ctrl.updateRoom);
+router.delete('/rooms/:id', protect, adminManager, ctrl.deleteRoom);
+
+router.post('/beds', protect, adminManager, ctrl.createBed);
+router.put('/beds/:id', protect, adminManager, ctrl.updateBed);
+router.delete('/beds/:id', protect, adminManager, ctrl.deleteBed);
+
+router.get('/equipment', protect, ctrl.listEquipment);
+router.post('/equipment', protect, adminManager, ctrl.createEquipment);
+router.put('/equipment/:id', protect, adminManager, ctrl.updateEquipment);
+router.delete('/equipment/:id', protect, adminManager, ctrl.deleteEquipment);
 
 module.exports = router;

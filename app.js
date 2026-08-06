@@ -1,5 +1,9 @@
+if (process.env.NODE_ENV === 'local') {
+  require('dotenv').config({ path: '.env.local', override: false });
+}
 require('dotenv').config();
 const express = require('express');
+const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
@@ -11,17 +15,32 @@ const { startReminderScheduler } = require('./services/reminderSchedulerService'
 // import all models through index to ensure schemas are registered
 const models = require('./models');
 const { initMedicationJobs } = require('./jobs/medicationReminderJob');
+const auditLogger = require('./middleware/auditLogger');
 
 const app = express();
 
-// Configure CORS to allow requests from frontend
+// contentSecurityPolicy is disabled because it would block the inline scripts
+// Swagger UI (/api-docs) injects; the other security headers (HSTS, no-sniff,
+// frameguard, etc.) still apply.
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// Configure CORS to allow requests from frontend. CORS_ORIGINS is a comma-separated list of
+// additional allowed origins (e.g. the deployed web app's domain) layered on top of the local
+// dev defaults, so a single deploy config doesn't have to hardcode/replace this list in code.
+const extraOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:8081', ...extraOrigins],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// Redact the `token` query param (used by window.open checkout links, e.g.
+// GET /payos/checkout/:invoiceId?token=...) so JWTs never land in access logs.
+morgan.token('url', (req) => (req.originalUrl || req.url || '').replace(/([?&]token=)[^&]+/gi, '$1[REDACTED]'));
 app.use(morgan('dev'));
 app.use(
   bodyParser.json({
@@ -44,6 +63,7 @@ app.use(
 app.use(require('./middleware/parseJsonBody'));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use(auditLogger);
 // app.use((req, res, next) => {
 //   const _json = res.json.bind(res);
 //   res.json = (body) => _json(convertDates(JSON.parse(JSON.stringify(body))));
@@ -70,17 +90,24 @@ app.use('/api/residents', require('./routes/residents'));
 app.use('/api/leave-requests', require('./routes/leaveRequests'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
+app.use('/api/resident-visits', require('./routes/staffResidentVisits'));
+app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));
+// canonical mount: works for every authenticated role (fixes doctor/nurse 404s that
+// happened when the frontend derived the API prefix from the current URL segment)
+app.use('/api/conversations', require('./routes/conversations'));
 app.use('/api/payos', require('./routes/payos'));
 app.use('/payos', require('./routes/payos'));
 app.use('/api/medical/admission-requests', require('./routes/medicalAdmissions'));
-
+app.use('/api/consultation-requests', require('./routes/consultationRequest'));
+app.use('/api/public/admission-requests', require('./routes/publicAdmission'));
+app.use('/api/admin/consultation-requests', require('./routes/adminConsultationRequests'));
 
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));
+app.use('/api/nurse/nutrition', require('./routes/nutritionCoverage'));
 app.use('/api/nurse/special-diets', require('./routes/specialDiets'));
 app.use('/api/nurse/meal-time-schedules', require('./routes/mealTimeSchedules'));
-app.use('/api/nurse/nutrition-reports', require('./routes/nutritionReports'));
 app.use('/api/caregiver/meal-intake-notes', require('./routes/caregiverMealIntakeNotes'));
 app.use('/api/caregiver/residents', require('./routes/caregiverResidents'));
 app.use('/api/caregiver/care-tasks', require('./routes/caregiverCareTasks'));
@@ -88,6 +115,7 @@ app.use('/api/caregiver/hygiene-activities', require('./routes/caregiverHygieneA
 app.use('/api/caregiver/daily-behaviors', require('./routes/caregiverDailyBehaviors'));
 app.use('/api/caregiver/diet-plans', require('./routes/caregiverDietPlans'));
 app.use('/api/caregiver/rehabilitation-schedules', require('./routes/caregiverRehabilitationSchedules'));
+app.use('/api/staff/assigned-residents', require('./routes/staffAssignedResidents'));
 
 app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
 app.use('/api/medications', require('./routes/scheduleRoutes'));
@@ -95,14 +123,22 @@ app.use('/api/medications', require('./routes/scheduleRoutes'));
 app.use('/api/incidents', require('./routes/incidents'));
 app.use('/api/medical', require('./routes/medicalServicePackages'));
 app.use('/api/pharmacy', require('./routes/pharmacy'));
-//app.use('/api/pharmacist', require('./routes/pharmacist'));
+// Clinical services and billing
+app.use('/api/nutrition/dishes', require('./routes/dishes'));
+app.use('/api/clinical/services', require('./routes/clinicalServices'));
+app.use('/api/clinical/charges', require('./routes/medicalCharges'));
+app.use('/api/clinical/invoices', require('./routes/invoices'));
+
 // connect DB and create collections
 const initDB = async () => {
   try {
     await connectDB();
 
-    const { runAutoSeedIfNeeded } = require('./services/autoSeedService');
-    await runAutoSeedIfNeeded();
+    const { ensureStaffProfilesForAssignableUsers } = require('./services/staffProfileBootstrap');
+    const profileBootstrap = await ensureStaffProfilesForAssignableUsers();
+    if (profileBootstrap.created) {
+      console.log(`Staff profile bootstrap: ${profileBootstrap.created} profile(s) created.`);
+    }
 
     const { ensureDefaultShiftTemplates } = require('./services/defaultShiftBootstrap');
     await ensureDefaultShiftTemplates();
@@ -125,6 +161,8 @@ const initDB = async () => {
     startLeaveRequestAutoRejectJob();
     const { startCareTaskAutoSkipJob } = require('./jobs/careTaskAutoSkipJob');
     startCareTaskAutoSkipJob();
+    const { startShiftAutoCancelJob } = require('./jobs/shiftAutoCancelJob');
+    startShiftAutoCancelJob();
     startReminderScheduler();
     initMedicationJobs();
   } catch (err) {
@@ -144,8 +182,10 @@ app.use((req, res) => {
 });
 
 // global error handler
+const { sendApiError } = require('./utils/apiErrorResponse');
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: 'Internal server error' });
+  console.error(err && err.stack ? err.stack : err);
+  // Use standardized API error formatter which handles ServiceError and ApiError
+  return sendApiError(res, err);
 });
 module.exports = app;

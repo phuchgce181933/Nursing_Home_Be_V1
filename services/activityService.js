@@ -1,8 +1,64 @@
 const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const activityRepo = require('../repositories/activityRepository');
-const notificationRepo = require('../repositories/notificationRepository');
+const notificationService = require('./notificationService');
 const Resident = require('../models/resident');
+const User = require('../models/user');
+const { ACTIVITY_STATUSES } = require('../models/enums');
+const { calculateDurationMinutes } = require('../utils/activityDuration');
+
+const VALID_ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'left_early'];
+const VALID_PARTICIPATION_LEVELS = ['active', 'partial', 'passive'];
+const MANUAL_ACTIVITY_STATUSES = ['draft', 'scheduled', 'completed', 'cancelled'];
+const ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS = ['nurse', 'y tá', 'điều dưỡng', 'caregiver', 'hộ lý', 'doctor', 'bác sĩ'];
+const ALLOWED_ACTIVITY_CATEGORY_OPTIONS = [
+  'Hoạt động chăm sóc cá nhân hằng ngày',
+  'Hoạt động chăm sóc sức khỏe',
+  'Hoạt động ăn uống - dinh dưỡng',
+  'Hoạt động thể chất - phục hồi chức năng',
+  'Hoạt động giải trí',
+  'Hoạt động kích thích nhận thức',
+  'Hoạt động xã hội - giao lưu',
+  'Hoạt động tâm lý - tinh thần',
+  'Hoạt động sự kiện đặc biệt',
+  'Hoạt động với gia đình',
+  'Hoạt động quản lý nội bộ',
+  'Hoạt động xử lý sự cố',
+];
+
+const normalizeActivityCategory = (body) => {
+  const selectedCategory = typeof body.category === 'string' ? body.category.trim() : '';
+  if (!selectedCategory) {
+    throw new ServiceError('category là bắt buộc', 400);
+  }
+
+  if (selectedCategory === 'Khác') {
+    const customCategory = typeof body.categoryOther === 'string' ? body.categoryOther.trim() : '';
+    if (!customCategory) {
+      throw new ServiceError('category tùy chỉnh là bắt buộc khi category là Khác', 400);
+    }
+    return customCategory;
+  }
+
+  if (!ALLOWED_ACTIVITY_CATEGORY_OPTIONS.includes(selectedCategory)) {
+    throw new ServiceError(`category phải thuộc một trong: ${ALLOWED_ACTIVITY_CATEGORY_OPTIONS.join(', ')}, Khác`, 400);
+  }
+
+  return selectedCategory;
+};
+
+const isAllowedActivityStaffRole = (role) => {
+  const roleText = String(role || '').toLowerCase();
+  return ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS.some((keyword) => roleText.includes(keyword));
+};
+
+const normalizeStaffIdList = (value) => {
+  if (value === undefined || value === null || value === '') return [];
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== undefined && item !== null && item !== '').map((item) => String(item));
+  }
+  return [String(value)];
+};
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -23,7 +79,9 @@ const buildFilterFromQuery = (query) => {
   if (query.status) filter.status = query.status;
   if (query.category) filter.category = query.category;
   if (query.organizerStaffId) filter.organizerStaffId = query.organizerStaffId;
-  if (query.participantResidentId) filter.participantResidentIds = query.participantResidentId;
+  if (query.organizerStaffIds) filter.organizerStaffIds = { $in: [query.organizerStaffIds] };
+  if (query.participantResidentIds) filter.participantResidentIds = { $in: query.participantResidentIds };
+  else if (query.participantResidentId) filter.participantResidentIds = query.participantResidentId;
   if (query.search) {
     const search = query.search.trim();
     filter.$or = [
@@ -33,11 +91,178 @@ const buildFilterFromQuery = (query) => {
     ];
   }
   if (query.from || query.to) {
-    filter.scheduledAt = {};
-    if (query.from) filter.scheduledAt.$gte = new Date(query.from);
-    if (query.to) filter.scheduledAt.$lte = new Date(query.to);
+    const from = query.from ? new Date(query.from) : null;
+    const to = query.to ? new Date(query.to) : null;
+    const conditions = [];
+
+    if (from && to) {
+      conditions.push({ scheduledAt: { $gte: from, $lte: to } });
+      conditions.push({ endAt: { $gte: from, $lte: to } });
+      conditions.push({ $and: [{ scheduledAt: { $lte: from } }, { endAt: { $gte: to } }] });
+    } else if (from) {
+      conditions.push({ scheduledAt: { $gte: from } });
+      conditions.push({ endAt: { $gte: from } });
+      conditions.push({ scheduledAt: { $lte: from } });
+    } else if (to) {
+      conditions.push({ scheduledAt: { $lte: to } });
+      conditions.push({ endAt: { $lte: to } });
+      conditions.push({ endAt: { $gte: to } });
+    }
+
+    if (conditions.length) {
+      filter.$or = conditions;
+    }
   }
   return filter;
+};
+
+const validateActivityTimeRange = (startDate, endDate) => {
+  const now = new Date();
+  if (Number.isNaN(startDate.getTime())) {
+    throw new ServiceError('startAt phải là ngày hợp lệ', 400);
+  }
+  if (startDate < now) {
+    throw new ServiceError('startAt không được ở trong quá khứ', 400);
+  }
+
+  if (Number.isNaN(endDate.getTime())) {
+    throw new ServiceError('endAt phải là ngày hợp lệ', 400);
+  }
+  if (endDate <= startDate) {
+    throw new ServiceError('endAt phải sau startAt', 400);
+  }
+};
+
+const MAX_NOTE_LENGTH = 500;
+
+const assertNoDuplicateResidentIds = (records, label) => {
+  const seen = new Set();
+  for (const r of records) {
+    const key = r.residentId.toString();
+    if (seen.has(key)) {
+      throw new ServiceError(`${label} chứa residentId trùng lặp ${key}`, 400);
+    }
+    seen.add(key);
+  }
+};
+
+const assertResidentsAreParticipants = (records, participantIds, label) => {
+  const allowed = new Set((participantIds || []).map((id) => id.toString()));
+  for (const r of records) {
+    if (!allowed.has(r.residentId.toString())) {
+      throw new ServiceError(`${label}: cư dân ${r.residentId} không phải là người tham gia hoạt động này`, 400);
+    }
+  }
+};
+
+const normalizeAttendanceRecords = (records) => {
+  if (!Array.isArray(records)) {
+    throw new ServiceError('attendanceRecords phải là một mảng', 400);
+  }
+
+  const normalized = records.map((record) => {
+    const residentId = record?.residentId;
+    if (!residentId || !mongoose.Types.ObjectId.isValid(residentId)) {
+      throw new ServiceError('attendanceRecords phải chứa các giá trị residentId hợp lệ', 400);
+    }
+
+    const status = String(record?.status || '').trim().toLowerCase();
+    if (!VALID_ATTENDANCE_STATUSES.includes(status)) {
+      throw new ServiceError(`attendance status phải thuộc một trong: ${VALID_ATTENDANCE_STATUSES.join(', ')}`, 400);
+    }
+
+    const note = typeof record?.note === 'string' ? record.note.trim() : '';
+    if (note.length > MAX_NOTE_LENGTH) {
+      throw new ServiceError(`note phải có tối đa ${MAX_NOTE_LENGTH} ký tự`, 400);
+    }
+    const occurrenceDate = record?.occurrenceDate ? new Date(record.occurrenceDate) : null;
+
+    return {
+      residentId: new mongoose.Types.ObjectId(residentId),
+      occurrenceDate: occurrenceDate && !Number.isNaN(occurrenceDate.getTime()) ? occurrenceDate : undefined,
+      status,
+      note,
+    };
+  });
+
+  assertNoDuplicateResidentIds(normalized, 'attendanceRecords');
+  return normalized;
+};
+
+const normalizeParticipationRecords = (records) => {
+  if (!Array.isArray(records)) {
+    throw new ServiceError('participationRecords phải là một mảng', 400);
+  }
+
+  const normalized = records.map((record) => {
+    const residentId = record?.residentId;
+    if (!residentId || !mongoose.Types.ObjectId.isValid(residentId)) {
+      throw new ServiceError('participationRecords phải chứa các giá trị residentId hợp lệ', 400);
+    }
+
+    const participationLevel = String(record?.participationLevel || '').trim().toLowerCase();
+    if (!VALID_PARTICIPATION_LEVELS.includes(participationLevel)) {
+      throw new ServiceError(`participation level phải thuộc một trong: ${VALID_PARTICIPATION_LEVELS.join(', ')}`, 400);
+    }
+
+    const comment = typeof record?.comment === 'string' ? record.comment.trim() : '';
+    const incident = typeof record?.incident === 'string' ? record.incident.trim() : '';
+    if (comment.length > MAX_NOTE_LENGTH || incident.length > MAX_NOTE_LENGTH) {
+      throw new ServiceError(`comment/incident phải có tối đa ${MAX_NOTE_LENGTH} ký tự`, 400);
+    }
+    const occurrenceDate = record?.occurrenceDate ? new Date(record.occurrenceDate) : null;
+
+    return {
+      residentId: new mongoose.Types.ObjectId(residentId),
+      occurrenceDate: occurrenceDate && !Number.isNaN(occurrenceDate.getTime()) ? occurrenceDate : undefined,
+      participationLevel,
+      comment,
+      incident,
+    };
+  });
+
+  assertNoDuplicateResidentIds(normalized, 'participationRecords');
+  return normalized;
+};
+
+const syncActivityStatusIfNeeded = async (activity, now = new Date()) => {
+  if (!activity) return activity;
+
+  const currentStatus = String(activity.status || '').trim().toLowerCase();
+  if (!currentStatus || currentStatus === 'draft' || currentStatus === 'cancelled' || currentStatus === 'completed') {
+    return activity;
+  }
+
+  const startAt = activity.startAt || activity.scheduledAt;
+  const endAt = activity.endAt || activity.startAt || activity.scheduledAt;
+  if (!startAt || !endAt) return activity;
+
+  const startDate = new Date(startAt);
+  const endDate = new Date(endAt);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return activity;
+
+  let nextStatus = currentStatus;
+  if (now < startDate) {
+    nextStatus = 'scheduled';
+  } else if (now >= startDate && now <= endDate) {
+    nextStatus = 'ongoing';
+  } else if (now > endDate) {
+    nextStatus = 'completed';
+  }
+
+  if (nextStatus !== currentStatus) {
+    const updated = await activityRepo.findByIdAndUpdate(activity._id, { status: nextStatus });
+    if (updated) {
+      await sendActivityNotifications(
+        updated,
+        'status_update',
+        `Trạng thái hoạt động đã được cập nhật thành ${getActivityStatusLabel(nextStatus)}.`,
+      );
+    }
+    return updated || activity;
+  }
+
+  return activity;
 };
 
 const getParticipantFamilyUserIds = async (residentIds = []) => {
@@ -53,45 +278,303 @@ const getParticipantFamilyUserIds = async (residentIds = []) => {
   return [...userIds];
 };
 
-const sendActivityNotifications = async (activity, action, message, extraResidentIds = []) => {
+const getAdminUserIds = async () => {
+  const admins = await User.find({ role: 'admin', isActive: true, isBanned: false }).select('_id').lean();
+  return admins.map((user) => user._id.toString());
+};
+
+const getActivityStatusLabel = (status) => {
+  switch (status) {
+    case 'scheduled': return 'đã lên lịch';
+    case 'ongoing': return 'đang diễn ra';
+    case 'completed': return 'đã hoàn thành';
+    case 'cancelled': return 'đã bị hủy';
+    case 'draft': return 'bản nháp';
+    default: return status || 'cập nhật';
+  }
+};
+
+const buildActivityChangeSummary = (previousActivity, currentActivity) => {
+  const previousStatus = String(previousActivity?.status || '').trim().toLowerCase();
+  const currentStatus = String(currentActivity?.status || '').trim().toLowerCase();
+  const previousParticipants = (previousActivity?.participantResidentIds || []).map((id) => String(id));
+  const currentParticipants = (currentActivity?.participantResidentIds || []).map((id) => String(id));
+
+  const changes = [];
+
+  if (previousStatus !== currentStatus) {
+    changes.push(`trạng thái đổi từ ${getActivityStatusLabel(previousStatus)} sang ${getActivityStatusLabel(currentStatus)}`);
+  }
+
+  const addedParticipants = currentParticipants.filter((id) => !previousParticipants.includes(id));
+  const removedParticipants = previousParticipants.filter((id) => !currentParticipants.includes(id));
+  if (addedParticipants.length || removedParticipants.length) {
+    const participantChanges = [];
+    if (addedParticipants.length) participantChanges.push(`thêm ${addedParticipants.length} người tham gia`);
+    if (removedParticipants.length) participantChanges.push(`bớt ${removedParticipants.length} người tham gia`);
+    changes.push(participantChanges.join(' và '));
+  }
+
+  return {
+    hasChanges: changes.length > 0,
+    changes,
+  };
+};
+
+const buildActivityNotificationPayload = (activity, action, message, isAdminRecipient = false, previousActivity = null) => {
+  const status = String(activity?.status || '').trim().toLowerCase();
+  const statusLabel = getActivityStatusLabel(status);
+  const changeSummary = buildActivityChangeSummary(previousActivity, activity);
+  const detailSuffix = changeSummary.hasChanges
+    ? ` Cập nhật: ${changeSummary.changes.join(' và ')}.`
+    : '';
+
+  if (status === 'completed') {
+    return {
+      title: isAdminRecipient ? `Hoạt động ${statusLabel}: ${activity.title}` : `Hoạt động đã hoàn thành: ${activity.title}`,
+      content: (isAdminRecipient
+        ? `Admin vừa đánh dấu hoạt động "${activity.title}" là ${statusLabel}.`
+        : message || `Hoạt động "${activity.title}" đã hoàn thành.`) + detailSuffix,
+    };
+  }
+
+  if (status === 'cancelled') {
+    return {
+      title: isAdminRecipient ? `Hoạt động ${statusLabel}: ${activity.title}` : `Hoạt động đã bị hủy: ${activity.title}`,
+      content: (isAdminRecipient
+        ? `Admin vừa đánh dấu hoạt động "${activity.title}" là ${statusLabel}.`
+        : message || `Hoạt động "${activity.title}" đã bị hủy.`) + detailSuffix,
+    };
+  }
+
+  if (status === 'ongoing') {
+    return {
+      title: isAdminRecipient ? `Hoạt động ${statusLabel}: ${activity.title}` : `Hoạt động đang diễn ra: ${activity.title}`,
+      content: (isAdminRecipient
+        ? `Admin vừa cập nhật hoạt động "${activity.title}" sang trạng thái ${statusLabel}.`
+        : message || `Hoạt động "${activity.title}" đang diễn ra.`) + detailSuffix,
+    };
+  }
+
+  if (status === 'scheduled') {
+    const title = isAdminRecipient
+      ? `Hoạt động ${statusLabel}: ${activity.title}`
+      : (action === 'updated'
+        ? `Hoạt động đã được cập nhật: ${activity.title}`
+        : action === 'registration'
+          ? `Đăng ký hoạt động: ${activity.title}`
+          : `Hoạt động mới: ${activity.title}`);
+
+    const baseContent = isAdminRecipient
+      ? `Admin vừa ${action === 'updated' ? 'cập nhật' : action === 'registration' ? 'đăng ký' : 'tạo'} hoạt động "${activity.title}".`
+      : message || `Hoạt động "${activity.title}" đã được lên lịch.`;
+
+    return { title, content: `${baseContent}${detailSuffix}`.trim() };
+  }
+
+  return {
+    title: isAdminRecipient ? `Hoạt động ${statusLabel}: ${activity.title}` : `${activity.title}`,
+    content: `${message || `Hoạt động "${activity.title}" có trạng thái ${statusLabel}.`}${detailSuffix}`.trim(),
+  };
+};
+
+const sendActivityNotifications = async (activity, action, message, extraResidentIds = [], previousActivity = null) => {
   const residentIds = [...new Set([...(Array.isArray(activity.participantResidentIds) ? activity.participantResidentIds : []), ...extraResidentIds.map((id) => new mongoose.Types.ObjectId(id))].map((id) => id.toString()))].map((id) => new mongoose.Types.ObjectId(id));
   const recipientUserIds = await getParticipantFamilyUserIds(residentIds);
-  if (!recipientUserIds.length) return;
+  const adminUserIds = await getAdminUserIds();
+  const uniqueRecipientUserIds = [...new Set([...recipientUserIds, ...adminUserIds])];
+  if (!uniqueRecipientUserIds.length) return;
 
-  const notifications = recipientUserIds.map((recipientUserId) => ({
-    recipientUserId,
-    category: 'activity',
-    title: `Activity ${action}: ${activity.title}`,
-    content: message,
-    targetEntityType: 'Activity',
-    targetEntityId: activity._id,
-    deliveryChannels: ['in_app'],
-    sentAt: new Date(),
-  }));
+  const notifications = uniqueRecipientUserIds.map((recipientUserId) => {
+    const isAdminRecipient = adminUserIds.includes(recipientUserId);
+    const payload = buildActivityNotificationPayload(activity, action, message, isAdminRecipient, previousActivity);
 
-  await notificationRepo.insertMany(notifications);
+    return {
+      recipientUserId,
+      category: 'activity',
+      title: payload.title,
+      content: payload.content,
+      targetEntityType: 'Activity',
+      targetEntityId: activity._id,
+      deliveryChannels: ['in_app'],
+      sentAt: new Date(),
+    };
+  });
+
+  // Notification dispatch is best-effort: callers (create/update/delete/register/...)
+  // have already persisted the entity by the time we get here, so a failure to fan out
+  // notifications must NOT roll back the whole operation or surface as 500 to the user.
+  try {
+    await notificationService.createMany(notifications);
+  } catch (notifErr) {
+    console.error(
+      '[sendActivityNotifications] failed for activity %s action=%s: %s',
+      activity?._id,
+      action,
+      notifErr.stack || notifErr,
+    );
+  }
 };
 
 const createActivity = async (body) => {
-  if (!body.title) throw new ServiceError('title is required', 400);
-  if (!body.scheduledAt) throw new ServiceError('scheduledAt is required', 400);
+  if (!body || typeof body !== 'object') {
+    throw new ServiceError('Request body là bắt buộc', 400);
+  }
+
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  const description = typeof body.description === 'string' ? body.description.trim() : '';
+  const category = normalizeActivityCategory(body);
+  const location = typeof body.location === 'string' ? body.location.trim() : '';
+  const status = typeof body.status === 'string' ? body.status.trim() : 'scheduled';
+  const organizerStaffIds = normalizeStaffIdList(body.organizerStaffIds ?? body.organizerStaffId);
+  const supportStaffIds = normalizeStaffIdList(body.supportStaffIds ?? body.supportStaffId);
+  const requestedDailyMinutes = body.dailyDurationMinutes !== undefined && body.dailyDurationMinutes !== '' && body.dailyDurationMinutes !== null
+    ? Number(body.dailyDurationMinutes)
+    : null;
+
+  if (!title) throw new ServiceError('title là bắt buộc', 400);
+  if (title.length > 100) throw new ServiceError('title phải có tối đa 100 ký tự', 400);
+  if (description && description.length > 1000) throw new ServiceError('description phải có tối đa 1000 ký tự', 400);
+  if (category && category.length > 100) throw new ServiceError('category phải có tối đa 100 ký tự', 400);
+  if (location && location.length > 200) throw new ServiceError('location phải có tối đa 200 ký tự', 400);
+
+  const startInput = body.startAt ?? body.scheduledAt;
+  const endInput = body.endAt ?? body.scheduledAt ?? body.startAt;
+  if (!startInput) throw new ServiceError('startAt là bắt buộc', 400);
+
+  const scheduledAt = new Date(startInput);
+  const endAt = new Date(endInput);
+  validateActivityTimeRange(scheduledAt, endAt);
+
+  const computedDurationMinutes = calculateDurationMinutes(scheduledAt, endAt);
+  if (computedDurationMinutes === null) {
+    throw new ServiceError('startAt và endAt phải là ngày hợp lệ', 400);
+  }
+  if (computedDurationMinutes < 1) {
+    throw new ServiceError('endAt phải sau startAt', 400);
+  }
+
+  const shouldCreateRecurring = Boolean(body.createRecurring) || (requestedDailyMinutes !== null && endAt.getTime() - scheduledAt.getTime() > 24 * 60 * 60 * 1000);
+  const recurringDailyDurationMinutes = requestedDailyMinutes !== null ? requestedDailyMinutes : (computedDurationMinutes < 60 ? 30 : computedDurationMinutes);
+  if (shouldCreateRecurring && recurringDailyDurationMinutes < 1) {
+    throw new ServiceError('Thời lượng mỗi ngày phải lớn hơn 0 phút', 400);
+  }
+  // Validate daily duration does not exceed 24 hours
+  const MAX_DAILY_MINUTES = 24 * 60;
+  if (requestedDailyMinutes !== null && requestedDailyMinutes > MAX_DAILY_MINUTES) {
+    throw new ServiceError('Thời lượng mỗi ngày không được vượt quá 24 giờ', 400);
+  }
+
+  if (body.organizerStaffId && !mongoose.Types.ObjectId.isValid(body.organizerStaffId)) {
+    throw new ServiceError('organizerStaffId phải là ObjectId hợp lệ', 400);
+  }
+
+  if (organizerStaffIds.length) {
+    if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('organizerStaffIds phải chứa các ObjectId hợp lệ', 400);
+    }
+
+    const User = require('../models/user');
+    for (const organizerId of organizerStaffIds) {
+      const organizer = await User.findById(organizerId);
+      if (!organizer) {
+        throw new ServiceError('Không tìm thấy nhân viên tổ chức', 404);
+      }
+      if (!isAllowedActivityStaffRole(organizer.role)) {
+        throw new ServiceError('Người tổ chức hoạt động phải là điều dưỡng, hộ lý hoặc bác sĩ', 400);
+      }
+    }
+  }
+
+  if (supportStaffIds.length) {
+    if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('supportStaffIds phải chứa các ObjectId hợp lệ', 400);
+    }
+
+    const User = require('../models/user');
+    for (const supportStaffId of supportStaffIds) {
+      const supportStaff = await User.findById(supportStaffId);
+      if (!supportStaff) {
+        throw new ServiceError('Không tìm thấy nhân viên hỗ trợ', 404);
+      }
+      if (!isAllowedActivityStaffRole(supportStaff.role)) {
+        throw new ServiceError('Nhân viên hỗ trợ phải là điều dưỡng, hộ lý hoặc bác sĩ', 400);
+      }
+    }
+  }
+
+  if (body.participantResidentIds !== undefined) {
+    if (!Array.isArray(body.participantResidentIds)) {
+      throw new ServiceError('participantResidentIds phải là một mảng', 400);
+    }
+
+    if (body.participantResidentIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('participantResidentIds phải chứa các ObjectId hợp lệ', 400);
+    }
+  }
+
+  if (!ACTIVITY_STATUSES.includes(status)) {
+    throw new ServiceError(`status phải thuộc một trong: ${ACTIVITY_STATUSES.join(', ')}`, 400);
+  }
+
+  if (shouldCreateRecurring) {
+    const createdActivities = [];
+    const currentDay = new Date(scheduledAt);
+    currentDay.setHours(0, 0, 0, 0);
+    const lastDay = new Date(endAt);
+    lastDay.setHours(0, 0, 0, 0);
+
+    for (let day = new Date(currentDay); day <= lastDay; day.setDate(day.getDate() + 1)) {
+      const occurrenceStart = new Date(day);
+      occurrenceStart.setHours(scheduledAt.getHours(), scheduledAt.getMinutes(), 0, 0);
+      const occurrenceEnd = new Date(occurrenceStart.getTime() + recurringDailyDurationMinutes * 60 * 1000);
+
+      const activity = await activityRepo.create({
+        title,
+        category: category || undefined,
+        description: description || undefined,
+        scheduledAt: occurrenceStart,
+        endAt: occurrenceEnd,
+        durationMinutes: recurringDailyDurationMinutes,
+        location: location || undefined,
+        organizerStaffId: organizerStaffIds[0] || undefined,
+        organizerStaffIds: organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
+        supportStaffId: supportStaffIds[0] || undefined,
+        supportStaffIds: supportStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
+        participantResidentIds: normalizeObjectIds(body.participantResidentIds),
+        status,
+      });
+
+      createdActivities.push(activity);
+      await sendActivityNotifications(
+        activity,
+        'scheduled',
+        `Hoạt động mới: ${activity.title} đã được lên lịch vào ${activity.scheduledAt.toLocaleString('vi-VN')}${activity.location ? ` tại ${activity.location}` : ''}.`,
+      );
+    }
+    return { message: 'Đã tạo hoạt động cho mỗi ngày', createdCount: createdActivities.length, data: createdActivities };
+  }
 
   const activity = await activityRepo.create({
-    title: body.title.trim(),
-    category: body.category?.trim(),
-    description: body.description?.trim(),
-    scheduledAt: new Date(body.scheduledAt),
-    durationMinutes: body.durationMinutes,
-    location: body.location?.trim(),
-    organizerStaffId: body.organizerStaffId,
+    title,
+    category: category || undefined,
+    description: description || undefined,
+    scheduledAt,
+    endAt,
+    durationMinutes: computedDurationMinutes,
+    location: location || undefined,
+    organizerStaffId: organizerStaffIds[0] || undefined,
+    organizerStaffIds: organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
+    supportStaffId: supportStaffIds[0] || undefined,
+    supportStaffIds: supportStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
     participantResidentIds: normalizeObjectIds(body.participantResidentIds),
-    status: body.status || 'scheduled',
+    status,
   });
 
   await sendActivityNotifications(
     activity,
     'scheduled',
-    `A new activity has been scheduled for ${activity.scheduledAt.toISOString()}${activity.location ? ` at ${activity.location}` : ''}.`,
+    `Hoạt động mới: ${activity.title} đã được lên lịch vào ${activity.scheduledAt.toLocaleString('vi-VN')}${activity.location ? ` tại ${activity.location}` : ''}.`,
   );
 
   return activity;
@@ -104,34 +587,115 @@ const listActivities = async (query) => {
     activityRepo.find(filter, { sort: { scheduledAt: 1 }, skip, limit: limitNum }),
     activityRepo.count(filter),
   ]);
-  return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
+  const syncedData = await Promise.all(data.map((activity) => syncActivityStatusIfNeeded(activity)));
+  return { data: syncedData, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
 const getActivityById = async (activityId) => {
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
-  return activity;
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
+  return syncActivityStatusIfNeeded(activity);
 };
 
 const updateActivity = async (activityId, body) => {
   const update = {};
   if (body.title !== undefined) update.title = body.title.trim();
-  if (body.category !== undefined) update.category = body.category?.trim();
+  if (body.category !== undefined) update.category = normalizeActivityCategory(body);
   if (body.description !== undefined) update.description = body.description?.trim();
-  if (body.scheduledAt !== undefined) update.scheduledAt = new Date(body.scheduledAt);
-  if (body.durationMinutes !== undefined) update.durationMinutes = body.durationMinutes;
+  if (body.startAt !== undefined || body.scheduledAt !== undefined) {
+    update.scheduledAt = new Date(body.startAt ?? body.scheduledAt);
+  }
+  if (body.endAt !== undefined || body.scheduledAt !== undefined) {
+    update.endAt = new Date(body.endAt ?? body.startAt ?? body.scheduledAt);
+  }
+  if (body.startAt !== undefined || body.scheduledAt !== undefined || body.endAt !== undefined) {
+    const startDate = body.startAt ? new Date(body.startAt) : update.scheduledAt;
+    const endDate = body.endAt ? new Date(body.endAt) : update.endAt;
+    validateActivityTimeRange(startDate, endDate);
+    const computedDurationMinutes = calculateDurationMinutes(startDate, endDate);
+    if (computedDurationMinutes === null) {
+      throw new ServiceError('startAt và endAt phải là ngày hợp lệ', 400);
+    }
+    if (computedDurationMinutes < 1) {
+      throw new ServiceError('endAt phải sau startAt', 400);
+    }
+    update.durationMinutes = computedDurationMinutes;
+  }
+  // support updating dailyDurationMinutes for recurring activities
+  if (body.dailyDurationMinutes !== undefined) {
+    const dd = body.dailyDurationMinutes === '' || body.dailyDurationMinutes === null ? null : Number(body.dailyDurationMinutes);
+    if (dd !== null && (!Number.isFinite(dd) || dd < 1)) {
+      throw new ServiceError('Thời lượng mỗi ngày phải là số dương', 400);
+    }
+    const MAX_DAILY_MINUTES = 24 * 60;
+    if (dd !== null && dd > MAX_DAILY_MINUTES) {
+      throw new ServiceError('Thời lượng mỗi ngày không được vượt quá 24 giờ', 400);
+    }
+    if (dd !== null) update.dailyDurationMinutes = dd;
+  }
   if (body.location !== undefined) update.location = body.location?.trim();
-  if (body.organizerStaffId !== undefined) update.organizerStaffId = body.organizerStaffId;
-  if (body.status !== undefined) update.status = body.status;
+  if (body.organizerStaffIds !== undefined || body.organizerStaffId !== undefined) {
+    const organizerStaffIds = normalizeStaffIdList(body.organizerStaffIds ?? body.organizerStaffId);
+    if (organizerStaffIds.length) {
+      if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+        throw new ServiceError('organizerStaffIds phải chứa các ObjectId hợp lệ', 400);
+      }
+      const User = require('../models/user');
+      for (const organizerId of organizerStaffIds) {
+        const organizer = await User.findById(organizerId);
+        if (!organizer) {
+          throw new ServiceError('Không tìm thấy nhân viên tổ chức', 404);
+        }
+        if (!isAllowedActivityStaffRole(organizer.role)) {
+          throw new ServiceError('Người tổ chức hoạt động phải là điều dưỡng, hộ lý hoặc bác sĩ', 400);
+        }
+      }
+    }
+    update.organizerStaffIds = organizerStaffIds.map((id) => new mongoose.Types.ObjectId(id));
+    update.organizerStaffId = organizerStaffIds[0] || null;
+  }
+
+  if (body.supportStaffIds !== undefined || body.supportStaffId !== undefined) {
+    const supportStaffIds = normalizeStaffIdList(body.supportStaffIds ?? body.supportStaffId);
+    if (supportStaffIds.length) {
+      if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+        throw new ServiceError('supportStaffIds phải chứa các ObjectId hợp lệ', 400);
+      }
+      const User = require('../models/user');
+      for (const supportStaffId of supportStaffIds) {
+        const supportStaff = await User.findById(supportStaffId);
+        if (!supportStaff) {
+          throw new ServiceError('Không tìm thấy nhân viên hỗ trợ', 404);
+        }
+        if (!isAllowedActivityStaffRole(supportStaff.role)) {
+          throw new ServiceError('Nhân viên hỗ trợ phải là điều dưỡng, hộ lý hoặc bác sĩ', 400);
+        }
+      }
+    }
+    update.supportStaffIds = supportStaffIds.map((id) => new mongoose.Types.ObjectId(id));
+    update.supportStaffId = supportStaffIds[0] || null;
+  }
+  if (body.status !== undefined) {
+    if (body.status === 'ongoing') {
+      throw new ServiceError('Trạng thái hoạt động ongoing được quản lý tự động', 400);
+    }
+    if (!MANUAL_ACTIVITY_STATUSES.includes(body.status)) {
+      throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
+    }
+    update.status = body.status;
+  }
   if (body.participantResidentIds !== undefined) update.participantResidentIds = normalizeObjectIds(body.participantResidentIds);
 
+  const previousActivity = await activityRepo.findById(activityId);
   const updated = await activityRepo.findByIdAndUpdate(activityId, update);
-  if (!updated) throw new ServiceError('Activity not found', 404);
+  if (!updated) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   await sendActivityNotifications(
     updated,
     'updated',
-    `The activity has been updated. Scheduled time: ${updated.scheduledAt.toISOString()}.`,
+    `Hoạt động đã được cập nhật.`,
+    [],
+    previousActivity,
   );
 
   return updated;
@@ -139,51 +703,107 @@ const updateActivity = async (activityId, body) => {
 
 const deleteActivity = async (activityId) => {
   const activity = await activityRepo.findByIdAndUpdate(activityId, { status: 'cancelled' });
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   await sendActivityNotifications(
     activity,
     'cancelled',
-    `The activity has been cancelled.`,
+    `Hoạt động đã bị hủy.`,
   );
 
   await activityRepo.deleteById(activityId);
-  return { message: 'Activity deleted successfully' };
+  return { message: 'Đã xóa hoạt động thành công' };
+};
+
+const bulkDeleteActivities = async (query = {}) => {
+  const filter = buildFilterFromQuery(query);
+  const deleted = await activityRepo.deleteMany(filter);
+  return { deletedCount: deleted.deletedCount || 0, message: 'Đã xóa các hoạt động thành công' };
+};
+
+const bulkUpdateActivityStatus = async (query = {}, status) => {
+  if (!status) {
+    throw new ServiceError('status là bắt buộc', 400);
+  }
+
+  if (status === 'ongoing') {
+    throw new ServiceError('Trạng thái hoạt động ongoing được quản lý tự động', 400);
+  }
+
+  if (!MANUAL_ACTIVITY_STATUSES.includes(status)) {
+    throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
+  }
+
+  const filter = buildFilterFromQuery(query);
+  const updated = await activityRepo.updateMany(filter, { status });
+  return { modifiedCount: updated.modifiedCount || 0, message: 'Đã cập nhật trạng thái hoạt động thành công' };
 };
 
 const setParticipantList = async (activityId, participantResidentIds) => {
   if (!Array.isArray(participantResidentIds)) {
-    throw new ServiceError('participantResidentIds must be an array', 400);
+    throw new ServiceError('participantResidentIds phải là một mảng', 400);
   }
 
   const participants = normalizeObjectIds(participantResidentIds);
+  if (participants.length) {
+    const residents = await Resident.find({ _id: { $in: participants } }, 'residencyStatus').lean();
+    const foundIds = new Set(residents.map((r) => r._id.toString()));
+    const missing = participants.filter((id) => !foundIds.has(id.toString()));
+    if (missing.length) {
+      throw new ServiceError(`Không tìm thấy cư dân: ${missing.join(', ')}`, 404);
+    }
+    const notAdmitted = residents.filter((r) => r.residencyStatus !== 'admitted').map((r) => r._id.toString());
+    if (notAdmitted.length) {
+      throw new ServiceError(`Cư dân hiện không được tiếp nhận: ${notAdmitted.join(', ')}`, 400);
+    }
+  }
+
   const activity = await activityRepo.findByIdAndUpdate(activityId, { participantResidentIds: participants });
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   await sendActivityNotifications(
     activity,
     'updated',
-    `The participant list has been updated for this activity.`,
+    `Danh sách người tham gia hoạt động đã được cập nhật.`,
   );
 
   return activity;
 };
 
-const registerResident = async (activityId, residentId) => {
-  if (!residentId) throw new ServiceError('residentId is required', 400);
+const assertActivityOpenForRegistration = (activity) => {
+  const status = String(activity.status || '').trim().toLowerCase();
+  if (status === 'cancelled' || status === 'completed') {
+    throw new ServiceError(`Không thể đăng ký: hoạt động này đã ${status}`, 400);
+  }
+  const startAt = new Date(activity.startAt || activity.scheduledAt);
+  if (!Number.isNaN(startAt.getTime()) && new Date() > startAt) {
+    throw new ServiceError('Không thể đăng ký: hoạt động này đã bắt đầu', 400);
+  }
+};
+
+const registerResident = async (activityId, residentId, currentUser) => {
+  if (!residentId) throw new ServiceError('residentId là bắt buộc', 400);
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   const resident = await Resident.findById(residentId);
-  if (!resident) throw new ServiceError('Resident not found', 404);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   if (resident.residencyStatus !== 'admitted') {
-    throw new ServiceError('Resident is not currently admitted', 400);
+    throw new ServiceError('Cư dân hiện không được tiếp nhận', 400);
   }
+  if (currentUser?.role === 'family') {
+    const ownedIds = (resident.familyPortalAccountIds || []).map((id) => id.toString());
+    if (!ownedIds.includes(String(currentUser._id))) {
+      throw new ServiceError('Truy cập bị từ chối: không phải người thân của bạn', 403);
+    }
+  }
+
+  assertActivityOpenForRegistration(activity);
 
   const normalizedResidentId = new mongoose.Types.ObjectId(residentId);
   const existing = activity.participantResidentIds?.map((id) => id.toString()) || [];
   if (existing.includes(normalizedResidentId.toString())) {
-    throw new ServiceError('Resident already registered for this activity', 400);
+    throw new ServiceError('Cư dân đã đăng ký hoạt động này', 400);
   }
 
   const updatedParticipants = [...existing, normalizedResidentId];
@@ -193,22 +813,120 @@ const registerResident = async (activityId, residentId) => {
   await sendActivityNotifications(
     activity,
     'registration',
-    `A resident has been registered for the activity.`,
+    `Đã thêm cư dân vào hoạt động.`,
     [normalizedResidentId],
   );
 
   return activity;
 };
 
+const unregisterResident = async (activityId, residentId, currentUser) => {
+  if (!residentId) throw new ServiceError('residentId là bắt buộc', 400);
+  const activity = await activityRepo.findById(activityId);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
+
+  const resident = await Resident.findById(residentId);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (currentUser?.role === 'family') {
+    const ownedIds = (resident.familyPortalAccountIds || []).map((id) => id.toString());
+    if (!ownedIds.includes(String(currentUser._id))) {
+      throw new ServiceError('Truy cập bị từ chối: không phải người thân của bạn', 403);
+    }
+  }
+
+  const status = String(activity.status || '').trim().toLowerCase();
+  if (status === 'completed') {
+    throw new ServiceError('Không thể hủy đăng ký: hoạt động này đã hoàn thành', 400);
+  }
+
+  const normalizedResidentId = String(residentId);
+  const existing = activity.participantResidentIds?.map((id) => id.toString()) || [];
+  if (!existing.includes(normalizedResidentId)) {
+    throw new ServiceError('Cư dân chưa đăng ký hoạt động này', 400);
+  }
+
+  activity.participantResidentIds = activity.participantResidentIds.filter(
+    (id) => id.toString() !== normalizedResidentId
+  );
+  await activity.save();
+
+  return activity;
+};
+
 const recordParticipationResult = async (activityId, body) => {
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
+
+  const syncedActivity = await syncActivityStatusIfNeeded(activity);
+  const now = new Date();
+  const activityStatus = String(syncedActivity.status || '').trim().toLowerCase();
+  if (activityStatus === 'draft') {
+    throw new ServiceError('Chỉ có thể điểm danh khi hoạt động đã được lên lịch', 400);
+  }
+
+  const activityStart = new Date(syncedActivity.startAt || syncedActivity.scheduledAt);
+  const activityEnd = new Date(syncedActivity.endAt || syncedActivity.startAt || syncedActivity.scheduledAt);
+  if (Number.isNaN(activityStart.getTime()) || Number.isNaN(activityEnd.getTime())) {
+    throw new ServiceError('Khung thời gian hoạt động không hợp lệ', 400);
+  }
+  // Allow a grace window after the activity ends so nurses can still record attendance
+  // shortly after it concludes (the activity auto-flips to 'completed' right at activityEnd).
+  const RECORD_GRACE_MS = 2 * 60 * 60 * 1000; // 2 hours
+  if (now < activityStart || now > new Date(activityEnd.getTime() + RECORD_GRACE_MS)) {
+    throw new ServiceError('Chỉ có thể điểm danh khi hoạt động đã hoặc đang diễn ra (trong vòng 2 giờ sau khi kết thúc)', 400);
+  }
 
   const updates = {};
-  if (body.participantResultNotes !== undefined) updates.participantResultNotes = body.participantResultNotes?.trim();
-  if (body.status !== undefined) updates.status = body.status;
+  if (body.participantResultNotes !== undefined) {
+    const trimmed = body.participantResultNotes?.trim();
+    if (trimmed && trimmed.length > MAX_NOTE_LENGTH) {
+      throw new ServiceError(`participantResultNotes phải có tối đa ${MAX_NOTE_LENGTH} ký tự`, 400);
+    }
+    updates.participantResultNotes = trimmed;
+  }
+  if (body.status !== undefined) {
+    if (body.status === 'ongoing') {
+      throw new ServiceError('Trạng thái hoạt động ongoing được quản lý tự động', 400);
+    }
+    if (!MANUAL_ACTIVITY_STATUSES.includes(body.status)) {
+      throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
+    }
+    updates.status = body.status;
+  }
+  if (body.attendanceRecords !== undefined) updates.attendanceRecords = normalizeAttendanceRecords(body.attendanceRecords);
+  if (body.participationRecords !== undefined) updates.participationRecords = normalizeParticipationRecords(body.participationRecords);
   if (Object.keys(updates).length === 0) {
-    throw new ServiceError('At least one field is required to record participation results', 400);
+    throw new ServiceError('Cần ít nhất một trường để ghi nhận kết quả tham gia', 400);
+  }
+
+  const participantIds = syncedActivity.participantResidentIds || [];
+  if (updates.attendanceRecords) {
+    assertResidentsAreParticipants(updates.attendanceRecords, participantIds, 'attendanceRecords');
+  }
+  if (updates.participationRecords) {
+    assertResidentsAreParticipants(updates.participationRecords, participantIds, 'participationRecords');
+  }
+
+  // Merge attendance/participation records by occurrenceDate + residentId instead of replacing whole arrays
+  const existing = await activityRepo.findById(activityId);
+  if (!existing) throw new ServiceError('Không tìm thấy hoạt động', 404);
+
+  if (updates.attendanceRecords) {
+    const mapKey = (rec) => `${rec.residentId.toString()}|${rec.occurrenceDate ? new Date(rec.occurrenceDate).toISOString().slice(0,10) : 'none'}`;
+    const merged = [];
+    const existingMap = new Map((existing.attendanceRecords || []).map((r) => [mapKey(r), r]));
+    (updates.attendanceRecords || []).forEach((r) => existingMap.set(mapKey(r), r));
+    existingMap.forEach((v) => merged.push(v));
+    updates.attendanceRecords = merged;
+  }
+
+  if (updates.participationRecords) {
+    const mapKey = (rec) => `${rec.residentId.toString()}|${rec.occurrenceDate ? new Date(rec.occurrenceDate).toISOString().slice(0,10) : 'none'}`;
+    const merged = [];
+    const existingMap = new Map((existing.participationRecords || []).map((r) => [mapKey(r), r]));
+    (updates.participationRecords || []).forEach((r) => existingMap.set(mapKey(r), r));
+    existingMap.forEach((v) => merged.push(v));
+    updates.participationRecords = merged;
   }
 
   const updated = await activityRepo.findByIdAndUpdate(activityId, updates);
@@ -223,7 +941,7 @@ const recordParticipationResult = async (activityId, body) => {
 
 const getActivityStatistics = async (query) => {
   const filter = buildFilterFromQuery(query);
-  const [totalActivities, statusGroups, categoryGroups, participantSummary] = await Promise.all([
+  const [totalActivities, statusGroups, categoryGroups, participantSummary, attendanceSummary] = await Promise.all([
     activityRepo.count(filter),
     activityRepo.aggregate([
       { $match: filter },
@@ -242,19 +960,47 @@ const getActivityStatistics = async (query) => {
       },
       { $group: { _id: null, totalParticipants: { $sum: '$participantCount' } } },
     ]),
+    activityRepo.aggregate([
+      { $match: filter },
+      { $unwind: { path: '$attendanceRecords', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          attendedCount: {
+            $cond: [
+              {
+                $in: [
+                  '$attendanceRecords.status',
+                  ['present', 'late', 'left_early'],
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+      },
+      { $group: { _id: null, totalAttendance: { $sum: '$attendedCount' } } },
+    ]),
   ]);
+
+  const totalParticipants = participantSummary[0]?.totalParticipants || 0;
+  const totalAttendance = attendanceSummary[0]?.totalAttendance || 0;
+  const participationRate = totalParticipants > 0
+    ? Math.round((totalAttendance / totalParticipants) * 100)
+    : 0;
 
   return {
     totalActivities,
     statusCounts: statusGroups.reduce((acc, group) => ({ ...acc, [group._id || 'unknown']: group.count }), {}),
     categoryCounts: categoryGroups.reduce((acc, group) => ({ ...acc, [group._id || 'uncategorized']: group.count }), {}),
-    totalParticipants: participantSummary[0]?.totalParticipants || 0,
+    totalParticipants,
+    participationRate,
   };
 };
 
 const getActivityStatisticsById = async (activityId) => {
   const activity = await activityRepo.findById(activityId);
-  if (!activity) throw new ServiceError('Activity not found', 404);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
   return {
     activityId: activity._id,
@@ -271,13 +1017,17 @@ const getActivityStatisticsById = async (activityId) => {
 };
 
 module.exports = {
+  buildActivityNotificationPayload,
   createActivity,
   listActivities,
   getActivityById,
   updateActivity,
   deleteActivity,
+  bulkDeleteActivities,
+  bulkUpdateActivityStatus,
   setParticipantList,
   registerResident,
+  unregisterResident,
   recordParticipationResult,
   getActivityStatistics,
   getActivityStatisticsById,

@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const ServiceError = require('./serviceError');
 const Resident = require('../models/resident');
 const MealPlanDay = require('../models/mealPlanDay');
 const MealPlanEntry = require('../models/mealPlanEntry');
@@ -9,6 +8,8 @@ const MealTimeScheduleDay = require('../models/mealTimeScheduleDay');
 const MealTimeScheduleEntry = require('../models/mealTimeScheduleEntry');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const mealIntakeNoteRepo = require('../repositories/mealIntakeNoteRepository');
+const { getAssignedResidentIdSetForUser } = require('./assignedResidentService');
+const { apiErr, CODES } = require('../utils/apiError');
 const {
   parseWorkDate,
   todayVN,
@@ -37,18 +38,18 @@ const parsePeriod = (query = {}) => {
     parseWorkDate(from);
     parseWorkDate(to);
   } catch {
-    throw new ServiceError('from và to phải đúng định dạng YYYY-MM-DD', 400);
+    throw apiErr(CODES.WORK_DATE_RANGE_INVALID, { statusCode: 400 });
   }
 
   if (from > to) {
-    throw new ServiceError('from không được sau to', 400);
+    throw apiErr(CODES.WORK_DATE_FROM_TO_INVALID, { statusCode: 400 });
   }
 
   const start = new Date(`${from}T12:00:00.000Z`);
   const end = new Date(`${to}T12:00:00.000Z`);
   const diffDays = Math.round((end - start) / (24 * 60 * 60 * 1000)) + 1;
   if (diffDays > MAX_RANGE_DAYS) {
-    throw new ServiceError(`Khoảng thời gian tối đa ${MAX_RANGE_DAYS} ngày`, 400);
+    throw apiErr(CODES.WORK_DATE_RANGE_TOO_LONG, { statusCode: 400, params: { maxDays: MAX_RANGE_DAYS } });
   }
 
   return { from, to };
@@ -84,10 +85,20 @@ const groupEntriesByResidentAndDate = (days, entries, dayIdField, entryMapper) =
   return map;
 };
 
-const loadNutritionContext = async (from, to) => {
+const loadNutritionContext = async (from, to, actorUser) => {
+  if (!actorUser?._id) {
+    throw apiErr(CODES.USER_NOT_IDENTIFIED, { statusCode: 401 });
+  }
+
+  const assignedIds = await getAssignedResidentIdSetForUser(actorUser._id);
+  const residentFilter =
+    assignedIds.size > 0
+      ? { _id: { $in: [...assignedIds] }, residencyStatus: 'admitted' }
+      : { _id: { $in: [] } };
+
   const [residents, mealPlanDays, specialDietDays, mealTimeDays, mealNotes, mealIntakeRows] =
     await Promise.all([
-      Resident.find({ residencyStatus: 'admitted' })
+      Resident.find(residentFilter)
         .select('_id fullName residentCode allergies chronicConditions')
         .sort({ fullName: 1 })
         .lean(),
@@ -252,9 +263,9 @@ const buildResidentRow = (resident, ctx) => {
   };
 };
 
-const getSummary = async (query) => {
+const getSummary = async (query, actorUser) => {
   const { from, to } = parsePeriod(query);
-  const ctx = await loadNutritionContext(from, to);
+  const ctx = await loadNutritionContext(from, to, actorUser);
 
   const missingMealPlan = ctx.residents.filter((r) => !ctx.residentsWithMealPlan.has(idOf(r._id)));
 
@@ -277,9 +288,9 @@ const getSummary = async (query) => {
   };
 };
 
-const listResidents = async (query) => {
+const listResidents = async (query, actorUser) => {
   const { from, to } = parsePeriod(query);
-  const ctx = await loadNutritionContext(from, to);
+  const ctx = await loadNutritionContext(from, to, actorUser);
 
   const search = String(query.search || '').trim().toLowerCase();
   let rows = ctx.residents.map((r) => buildResidentRow(r, ctx));
@@ -305,17 +316,25 @@ const listResidents = async (query) => {
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1, period: { from, to } };
 };
 
-const getResidentReport = async (residentId, query) => {
+const getResidentReport = async (residentId, query, actorUser) => {
   if (!mongoose.Types.ObjectId.isValid(String(residentId || ''))) {
-    throw new ServiceError('residentId không hợp lệ', 400);
+    throw apiErr(CODES.RESIDENT_INVALID_ID, { statusCode: 400 });
+  }
+  if (!actorUser?._id) {
+    throw apiErr(CODES.USER_NOT_IDENTIFIED, { statusCode: 401 });
+  }
+
+  const assignedIds = await getAssignedResidentIdSetForUser(actorUser._id);
+  if (!assignedIds.has(String(residentId))) {
+    throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
   }
 
   const { from, to } = parsePeriod(query);
-  const ctx = await loadNutritionContext(from, to);
+  const ctx = await loadNutritionContext(from, to, actorUser);
 
   const resident = ctx.residents.find((r) => idOf(r._id) === String(residentId));
   if (!resident) {
-    throw new ServiceError('Không tìm thấy cư dân đang admitted', 404);
+    throw apiErr(CODES.RESIDENT_ADMITTED_NOT_FOUND, { statusCode: 404 });
   }
 
   const rid = String(residentId);

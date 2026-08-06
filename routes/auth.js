@@ -4,17 +4,37 @@ const {
   login,
   getMe,
   createStaffAccount,
+  searchFamilyAccounts,
+  requestRegisterOtp,
+  verifyRegisterOtp,
   listStaffAccounts,
   toggleStaffActive,
   createFirebaseToken,
   updateProfile,
+  requestEmailChangeOtp,
+  requestPhoneChangeOtp,
+  verifyEmailChangeOtp,
+  verifyPhoneChangeOtp,
   changePassword,
   forgotPassword,
   resetPassword,
   updateUserByAdmin
 } = require('../controllers/authController');
 const { protect, authorize } = require('../middleware/auth');
-const { uploadAvatarAndCertifications } = require('../middleware/uploadMiddleware');
+const { uploadAvatar, uploadAvatarAndCertifications } = require('../middleware/uploadMiddleware');
+const rateLimit = require('express-rate-limit');
+
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // limit each IP to 10 registration attempts per windowMs
+  message: { message: 'Quá nhiều lần đăng ký từ địa chỉ IP này, vui lòng thử lại sau' },
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // limit each IP to 10 login/forgot-password attempts per windowMs
+  message: { message: 'Quá nhiều lần thử từ địa chỉ IP này, vui lòng thử lại sau' },
+});
 
 /**
  * @swagger
@@ -44,7 +64,62 @@ const { uploadAvatarAndCertifications } = require('../middleware/uploadMiddlewar
  *       401:
  *         description: Invalid credentials or account inactive/banned
  */
-router.post('/login', login);
+router.post('/login', loginLimiter, login);
+
+/**
+ * @swagger
+ * /api/auth/register-otp:
+ *   post:
+ *     summary: Step 1 of self-registration — validate fields and send an OTP to the given email or phone (public, no auth required)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [fullName, password]
+ *             description: Provide exactly one of email or phone
+ *             properties:
+ *               fullName: { type: string }
+ *               email: { type: string }
+ *               phone: { type: string }
+ *               password: { type: string, minLength: 8 }
+ *     responses:
+ *       201:
+ *         description: OTP sent, returns { otpId, maskedRecipient }
+ *       400:
+ *         description: Validation error, or both/neither of email+phone provided
+ *       409:
+ *         description: Email or phone already in use
+ */
+router.post('/register-otp', registerLimiter, requestRegisterOtp);
+
+/**
+ * @swagger
+ * /api/auth/register-verify:
+ *   post:
+ *     summary: Step 2 of self-registration — verify the OTP and create the family account (public, no auth required)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [otpId, code]
+ *             properties:
+ *               otpId: { type: string }
+ *               code: { type: string }
+ *     responses:
+ *       201:
+ *         description: Account created, returns JWT token (role always 'family')
+ *       400:
+ *         description: Invalid/expired OTP
+ *       409:
+ *         description: Email or phone already in use
+ */
+router.post('/register-verify', registerLimiter, verifyRegisterOtp);
 
 /**
  * @swagger
@@ -88,7 +163,7 @@ router.get('/me', protect, getMe);
  *       503:
  *         description: Firebase not configured on server
  */
-router.post('/firebase-token', protect, authorize('admin', 'manager'), createFirebaseToken);
+router.post('/firebase-token', protect, authorize('admin'), createFirebaseToken);
 
 /**
  * @swagger
@@ -107,7 +182,7 @@ router.post('/firebase-token', protect, authorize('admin', 'manager'), createFir
  *         multipart/form-data:
  *           schema:
  *             type: object
- *             required: [fullName, email, password, role]
+ *             required: [fullName, email, password, role, dateOfBirth]
  *             properties:
  *               fullName:
  *                 type: string
@@ -124,7 +199,7 @@ router.post('/firebase-token', protect, authorize('admin', 'manager'), createFir
  *               role:
  *                 type: string
  *                 enum: [doctor, nurse, manager, staff, pharmacist, caregiver, family, admin]
- *                 description: Manager callers may only use doctor, nurse, staff
+ *                 description: Manager callers may only use doctor, nurse, staff. Admin may also create family accounts.
  *               phone:
  *                 type: string
  *                 example: "0901234567"
@@ -160,6 +235,10 @@ router.post('/firebase-token', protect, authorize('admin', 'manager'), createFir
  *               avatar:
  *                 type: string
  *                 format: binary
+ *               residentName:
+ *                 type: string
+ *                 description: Optional. Only used when role is 'family' — the resident name shown in the welcome email.
+ *                 example: "Nguyễn Văn B"
  *     responses:
  *       201:
  *         description: Staff account created
@@ -168,7 +247,7 @@ router.post('/firebase-token', protect, authorize('admin', 'manager'), createFir
  *       409:
  *         description: Email or staffCode already in use
  */
-router.post('/create-staff', protect, authorize('admin', 'manager'), uploadAvatarAndCertifications, createStaffAccount);
+router.post('/create-staff', protect, authorize('admin'), uploadAvatarAndCertifications, createStaffAccount);
 
 /**
  * @swagger
@@ -211,6 +290,31 @@ router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
 
 /**
  * @swagger
+ * /api/auth/family-accounts:
+ *   get:
+ *     summary: Search family accounts by name/email/phone (Admin/Manager only)
+ *     description: Lightweight lookup used to link a family account to a resident without staff needing the account's raw Mongo ID.
+ *     tags: [Auth]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Matching family accounts
+ */
+router.get('/family-accounts', protect, authorize('admin', 'manager'), searchFamilyAccounts);
+
+/**
+ * @swagger
  * /api/auth/staff/{id}/toggle-active:
  *   put:
  *     summary: Toggle staff account active/inactive (Admin/Manager only)
@@ -232,7 +336,7 @@ router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
  *       404:
  *         description: User not found
  */
-router.put('/staff/:id/toggle-active', protect, authorize('admin', 'manager'), toggleStaffActive);
+router.put('/staff/:id/toggle-active', protect, authorize('admin'), toggleStaffActive);
 
 // Phuc/update profile
 /**
@@ -263,7 +367,11 @@ router.put('/staff/:id/toggle-active', protect, authorize('admin', 'manager'), t
  *       401:
  *         description: Unauthorized
  */
-router.put('/profile', protect, updateProfile);
+router.put('/profile', protect, uploadAvatar, updateProfile);
+router.post('/profile/email-otp', protect, requestEmailChangeOtp);
+router.post('/profile/phone-otp', protect, requestPhoneChangeOtp);
+router.post('/profile/email-verify', protect, verifyEmailChangeOtp);
+router.post('/profile/phone-verify', protect, verifyPhoneChangeOtp);
 
 // Phuc/change password 
 /**
@@ -321,7 +429,7 @@ router.put('/change-password', protect, changePassword);
  *       404:
  *         description: Email not found
  */
-router.post('/forgot-password', forgotPassword);
+router.post('/forgot-password', loginLimiter, forgotPassword);
 // reset mk
 /**
  * @swagger

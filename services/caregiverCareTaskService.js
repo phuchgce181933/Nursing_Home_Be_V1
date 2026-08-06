@@ -49,7 +49,7 @@ const updateMyCareTaskStatus = async (userId, taskId, body) => {
   const profile = await getStaffProfileByUserId(userId);
   const task = await careTaskService.getCareTask(taskId);
   assertTaskOwnership(task, profile);
-  return careTaskService.updateCareTaskStatus(taskId, body.status, body.notes);
+  return careTaskService.updateCareTaskStatus(taskId, body.status, body.notes, userId);
 };
 
 module.exports = {

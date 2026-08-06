@@ -1,13 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const {
+  createWalkInAdmission,
   adminListAdmissions,
   adminGetAdmission,
   approveAdmission,
   rejectAdmission,
   assignServicePackage,
   createAdmissionContract,
+  cancelAdmissionContract,
+  changeContractServicePackage,
   checkInResident,
+  extendAdmissionContract,
 } = require('../controllers/admissionController');
 const { protect, authorize } = require('../middleware/auth');
 // Route protection is applied per-route below to support read access for doctors and nurses
@@ -91,7 +95,54 @@ const { protect, authorize } = require('../middleware/auth');
  *       403:
  *         description: Access forbidden
  */
-router.get('/', protect, authorize('admin', 'manager', 'doctor', 'nurse'), adminListAdmissions);
+/**
+ * @swagger
+ * /api/admin/admission-requests/walk-in:
+ *   post:
+ *     summary: Create an admission request for a walk-in family (Admin/Manager)
+ *     description: |
+ *       For families who show up in person without a self-registered account.
+ *       Provide requestedByEmail or requestedByPhone (or both) for the family
+ *       contact — a family account is auto-created and the login credentials
+ *       are emailed/texted to them once the admission is checked in.
+ *     tags: [Admin - Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [applicant, requestedByName]
+ *             properties:
+ *               applicant:
+ *                 type: object
+ *                 description: Elderly person's info (same shape as family self-submission)
+ *               relationshipToRequester:
+ *                 type: string
+ *               requestedByName:
+ *                 type: string
+ *               requestedByEmail:
+ *                 type: string
+ *               requestedByPhone:
+ *                 type: string
+ *               preferredAdmissionDate:
+ *                 type: string
+ *                 format: date
+ *               reasonForAdmission:
+ *                 type: string
+ *               notes:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Walk-in admission request created
+ *       400:
+ *         description: Validation error
+ */
+router.post('/walk-in', protect, authorize('admin', 'manager'), createWalkInAdmission);
+
+router.get('/', protect, authorize('admin', 'doctor', 'nurse'), adminListAdmissions);
 
 /**
  * @swagger
@@ -117,7 +168,7 @@ router.get('/', protect, authorize('admin', 'manager', 'doctor', 'nurse'), admin
  *       404:
  *         description: Admission request not found
  */
-router.get('/:admissionId', protect, authorize('admin', 'manager', 'doctor', 'nurse'), adminGetAdmission);
+router.get('/:admissionId', protect, authorize('admin', 'doctor', 'nurse'), adminGetAdmission);
 
 /**
  * @swagger
@@ -157,7 +208,7 @@ router.get('/:admissionId', protect, authorize('admin', 'manager', 'doctor', 'nu
  *       404:
  *         description: Admission request not found
  */
-router.patch('/:admissionId/approve', protect, authorize('admin', 'manager'), approveAdmission);
+router.patch('/:admissionId/approve', protect, authorize('admin'), approveAdmission);
 
 /**
  * @swagger
@@ -197,7 +248,7 @@ router.patch('/:admissionId/approve', protect, authorize('admin', 'manager'), ap
  *       404:
  *         description: Admission request not found
  */
-router.patch('/:admissionId/reject', protect, authorize('admin', 'manager'), rejectAdmission);
+router.patch('/:admissionId/reject', protect, authorize('admin'), rejectAdmission);
 
 
 
@@ -227,6 +278,15 @@ router.patch('/:admissionId/reject', protect, authorize('admin', 'manager'), rej
  *               servicePackageId:
  *                 type: string
  *                 description: ID of the service package to assign
+ *               contractDurationMonths:
+ *                 type: integer
+ *                 minimum: 1
+ *                 description: Contract duration in months
+ *               discountPercent:
+ *                 type: number
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 description: Discount percent for the assigned service package
  *     responses:
  *       200:
  *         description: Service package assigned successfully
@@ -235,7 +295,7 @@ router.patch('/:admissionId/reject', protect, authorize('admin', 'manager'), rej
  *       404:
  *         description: Admission or service package not found
  */
-router.patch('/:admissionId/assign-service-package', protect, authorize('admin', 'manager'), assignServicePackage);
+router.patch('/:admissionId/assign-service-package', protect, authorize('admin'), assignServicePackage);
 
 /**
  * @swagger
@@ -269,6 +329,15 @@ router.patch('/:admissionId/assign-service-package', protect, authorize('admin',
  *               contractEndDate:
  *                 type: string
  *                 format: date
+ *               contractDurationMonths:
+ *                 type: integer
+ *                 minimum: 1
+ *                 description: Contract duration in months
+ *               discountPercent:
+ *                 type: number
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 description: Contract discount percent
  *               contractTerms:
  *                 type: string
  *                 description: Contract terms and conditions
@@ -282,7 +351,10 @@ router.patch('/:admissionId/assign-service-package', protect, authorize('admin',
  *       404:
  *         description: Admission not found
  */
-router.patch('/:admissionId/create-contract', protect, authorize('admin', 'manager'), createAdmissionContract);
+router.patch('/:admissionId/create-contract', protect, authorize('admin'), createAdmissionContract);
+
+router.patch('/:admissionId/cancel-contract', protect, authorize('admin'), cancelAdmissionContract);
+router.patch('/:admissionId/change-contract-service-package', protect, authorize('admin'), changeContractServicePackage);
 
 /**
  * @swagger
@@ -318,6 +390,44 @@ router.patch('/:admissionId/create-contract', protect, authorize('admin', 'manag
  *       404:
  *         description: Admission, bed, or room not found
  */
-router.patch('/:admissionId/check-in', protect, authorize('admin', 'manager'), checkInResident);
+router.patch('/:admissionId/check-in', protect, authorize('admin'), checkInResident);
+
+/**
+ * @swagger
+ * /api/admin/admission-requests/{admissionId}/extend-contract:
+ *   patch:
+ *     summary: Extend contract end date (Admin)
+ *     tags: [Admin - Admission Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: admissionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Admission ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - contractEndDate
+ *             properties:
+ *               contractEndDate:
+ *                 type: string
+ *                 format: date-time
+ *                 description: New contract end date (ISO 8601 format)
+ *     responses:
+ *       200:
+ *         description: Contract extended successfully
+ *       400:
+ *         description: Invalid data or date validation failed
+ *       404:
+ *         description: Admission not found
+ */
+router.patch('/:admissionId/extend-contract', protect, authorize('admin', 'manager'), extendAdmissionContract);
 
 module.exports = router;

@@ -1,4 +1,4 @@
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const leaveRequestRepo = require('../repositories/leaveRequestRepository');
 const shiftRepo = require('../repositories/shiftRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
@@ -34,10 +34,16 @@ const calcDays = (start, end) => {
 
 const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reason }) => {
   if (!type || !startDate || !endDate || !reason) {
-    throw new ServiceError('type, startDate, endDate và reason là bắt buộc', 400);
+    throw apiErr(CODES.FIELD_REQUIRED, {
+      statusCode: 400,
+      params: { field: 'type, startDate, endDate, reason' },
+    });
   }
   if (!LEAVE_REQUEST_TYPES.includes(type)) {
-    throw new ServiceError(`type phải thuộc một trong: ${LEAVE_REQUEST_TYPES.join(', ')}`, 400);
+    throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+      statusCode: 400,
+      params: { field: 'type', allowed: LEAVE_REQUEST_TYPES.join(', ') },
+    });
   }
 
   const toUTCDate = (d, end = false) => {
@@ -47,21 +53,21 @@ const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reaso
   const start = toUTCDate(startDate);
   const end = toUTCDate(endDate, true);
 
-  if (end < start) throw new ServiceError('endDate phải sau hoặc bằng startDate', 400);
+  if (end < start) throw apiErr(CODES.LEAVE_END_BEFORE_START, { statusCode: 400 });
 
   // 24h advance notice (not required for emergency)
   if (type !== 'emergency') {
     const now = new Date();
     const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     if (start < cutoff) {
-      throw new ServiceError('Đơn nghỉ phải được gửi trước ít nhất 24 giờ (trừ trường hợp khẩn cấp)', 400);
+      throw apiErr(CODES.LEAVE_PAST_DATE, { statusCode: 400 });
     }
   }
 
   // Block if overlapping approved leave already exists
   const existing = await leaveRequestRepo.findApprovedOverlapping(currentUser._id, start, end);
   if (existing.length) {
-    throw new ServiceError('Bạn đã có đơn nghỉ được duyệt trùng khoảng thời gian này', 409);
+    throw apiErr(CODES.LEAVE_OVERLAP, { statusCode: 409 });
   }
 
   const daysRequested = calcDays(start, end);
@@ -97,7 +103,7 @@ const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reaso
   });
 
   return {
-    message: 'Gửi đơn nghỉ thành công',
+    ...apiSuccess(SUCCESS.LEAVE_SUBMITTED),
     request,
     ...(balanceWarning && { balanceWarning }),
     ...(shiftWarning && { shiftWarning }),
@@ -123,7 +129,7 @@ const listLeaveRequests = async (currentUser, { staffId, status, fromDate, toDat
 
   const filter = {};
 
-  if (!['admin', 'manager'].includes(currentUser.role)) {
+  if (!['admin'].includes(currentUser.role)) {
     filter.staffId = currentUser._id;
   } else if (staffId) {
     filter.staffId = staffId;
@@ -131,7 +137,10 @@ const listLeaveRequests = async (currentUser, { staffId, status, fromDate, toDat
 
   if (status) {
     if (!LEAVE_REQUEST_STATUSES.includes(status)) {
-      throw new ServiceError(`status phải thuộc một trong: ${LEAVE_REQUEST_STATUSES.join(', ')}`, 400);
+      throw apiErr(CODES.FIELD_MUST_BE_ONE_OF, {
+        statusCode: 400,
+        params: { field: 'status', allowed: LEAVE_REQUEST_STATUSES.join(', ') },
+      });
     }
     filter.status = status;
   }
@@ -157,11 +166,11 @@ const getLeaveRequest = async (currentUser, id) => {
   await autoRejectExpiredPending();
 
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
+  if (!request) throw apiErr(CODES.LEAVE_NOT_FOUND, { statusCode: 404 });
 
-  if (!['admin', 'manager'].includes(currentUser.role)) {
+  if (!['admin'].includes(currentUser.role)) {
     if (request.staffId._id.toString() !== currentUser._id.toString()) {
-      throw new ServiceError('Bạn không có quyền truy cập', 403);
+      throw apiErr(CODES.USER_NOT_IDENTIFIED, { statusCode: 403 });
     }
   }
   return request;
@@ -216,10 +225,7 @@ const validateCareTasksForReassignment = async (
   }
 
   if (blockingTasks.length) {
-    const err = new ServiceError(
-      'Không thể duyệt nghỉ: một số nhiệm vụ chăm sóc không thể chuyển cho nhân sự thay thế',
-      409
-    );
+    const err = apiErr(CODES.LEAVE_CANNOT_APPROVE, { statusCode: 409 });
     err.blockingTasks = blockingTasks;
     throw err;
   }
@@ -228,20 +234,20 @@ const validateCareTasksForReassignment = async (
 };
 
 const getReplacementCandidates = async (currentUser, id) => {
-  if (!['admin', 'manager'].includes(currentUser.role)) {
-    throw new ServiceError('Bạn không có quyền truy cập', 403);
+  if (!['admin'].includes(currentUser.role)) {
+    throw apiErr(CODES.USER_NOT_IDENTIFIED, { statusCode: 403 });
   }
 
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
+  if (!request) throw apiErr(CODES.LEAVE_NOT_FOUND, { statusCode: 404 });
   if (request.status !== 'pending') {
-    throw new ServiceError('Chỉ lấy được danh sách nhân sự thay thế cho đơn ở trạng thái chờ', 400);
+    throw apiErr(CODES.LEAVE_INVALID_STATUS, { statusCode: 400 });
   }
 
   const staffUserId = request.staffId._id || request.staffId;
   const requesterRole = request.staffId.role;
   const profile = await staffProfileRepo.findByUserId(staffUserId);
-  if (!profile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên của người gửi đơn nghỉ', 404);
+  if (!profile) throw apiErr(CODES.SHIFT_STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
   const shiftsToCover = profile
     ? await getShiftsToCoverOnLeave(profile._id, request.startDate, request.endDate)
@@ -275,8 +281,8 @@ const approveLeaveRequest = async (
   await autoRejectExpiredPending();
 
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
-  if (request.status !== 'pending') throw new ServiceError('Chỉ có thể duyệt đơn ở trạng thái chờ', 400);
+  if (!request) throw apiErr(CODES.LEAVE_NOT_FOUND, { statusCode: 404 });
+  if (request.status !== 'pending') throw apiErr(CODES.LEAVE_CANNOT_APPROVE, { statusCode: 400 });
 
   const staffUserId = request.staffId._id || request.staffId;
   const requesterRole = request.staffId.role;
@@ -342,7 +348,7 @@ const approveLeaveRequest = async (
             fieldsChanged: ['assignedStaffId'],
             oldValues: { assignedStaffId: previousStaffProfileId },
             newValues: { assignedStaffId: replacementProfileId },
-            reason: `Reassigned to cover approved leave (LeaveRequest: ${id})`,
+            reason: `Phân công lại để thay thế đơn nghỉ phép đã duyệt (LeaveRequest: ${id})`,
           },
         },
       });
@@ -368,7 +374,7 @@ const approveLeaveRequest = async (
   const finalRequest = await leaveRequestRepo.findById(id);
 
   return {
-    message: 'Duyệt đơn nghỉ thành công',
+    ...apiSuccess(SUCCESS.LEAVE_APPROVED),
     request: finalRequest,
     ...(reassignedShifts.length && {
       reassignedShifts: { count: reassignedShifts.length, shifts: reassignedShifts },
@@ -383,11 +389,14 @@ const approveLeaveRequest = async (
 
 const rejectLeaveRequest = async (currentUser, id, { reviewNote } = {}) => {
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
-  if (request.status !== 'pending') throw new ServiceError('Chỉ có thể từ chối đơn ở trạng thái chờ', 400);
+  if (!request) throw apiErr(CODES.LEAVE_NOT_FOUND, { statusCode: 404 });
+  if (request.status !== 'pending') throw apiErr(CODES.LEAVE_CANNOT_REJECT, { statusCode: 400 });
 
   if (!reviewNote || !reviewNote.trim()) {
-    throw new ServiceError('reviewNote (lý do từ chối) là bắt buộc', 400);
+    throw apiErr(CODES.FIELD_REQUIRED, {
+      statusCode: 400,
+      params: { field: 'reviewNote' },
+    });
   }
 
   const updated = await leaveRequestRepo.updateById(id, {
@@ -397,21 +406,21 @@ const rejectLeaveRequest = async (currentUser, id, { reviewNote } = {}) => {
     reviewNote: reviewNote.trim(),
   });
 
-  return { message: 'Từ chối đơn nghỉ thành công', request: updated };
+  return { ...apiSuccess(SUCCESS.LEAVE_REJECTED), request: updated };
 };
 
 // ── cancel own leave request ──────────────────────────────────────────────────
 
 const cancelLeaveRequest = async (currentUser, id) => {
   const request = await leaveRequestRepo.findById(id);
-  if (!request) throw new ServiceError('Không tìm thấy đơn nghỉ', 404);
+  if (!request) throw apiErr(CODES.LEAVE_NOT_FOUND, { statusCode: 404 });
   if (request.staffId._id.toString() !== currentUser._id.toString()) {
-    throw new ServiceError('Bạn chỉ có thể hủy đơn nghỉ của chính mình', 403);
+    throw apiErr(CODES.LEAVE_CANNOT_CANCEL_OTHERS, { statusCode: 403 });
   }
-  if (request.status !== 'pending') throw new ServiceError('Chỉ có thể hủy đơn ở trạng thái chờ', 400);
+  if (request.status !== 'pending') throw apiErr(CODES.LEAVE_CANNOT_CANCEL, { statusCode: 400 });
 
   await leaveRequestRepo.updateById(id, { status: 'cancelled' });
-  return { message: 'Hủy đơn nghỉ thành công' };
+  return apiSuccess(SUCCESS.LEAVE_CANCELLED);
 };
 
 module.exports = {

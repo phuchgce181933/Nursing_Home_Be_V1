@@ -18,7 +18,7 @@ const parseOptionalDate = (value, fieldName) => {
 	if (!value) return undefined;
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) {
-		throw new ServiceError(`${fieldName} is invalid`, 400);
+		throw new ServiceError(`${fieldName} không hợp lệ`, 400);
 	}
 	return date;
 };
@@ -71,7 +71,7 @@ const generateMedicationCode = async () => {
 		const exists = await medicationRepo.findByCode(code);
 		if (!exists) return code;
 	}
-	throw new ServiceError('Unable to generate medication code', 500);
+	throw new ServiceError('Không thể tạo mã thuốc', 500);
 };
 
 const formatMedication = (doc, availableQuantity = 0) => {
@@ -111,19 +111,23 @@ const formatSupplier = (doc) => {
 
 const createMedication = async (user, body, req) => {
 	if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
-		throw new ServiceError('Request body is empty', 400);
+		throw new ServiceError('Nội dung yêu cầu trống', 400);
 	}
 
 	const name = body.name ? String(body.name).trim() : '';
-	if (!name) throw new ServiceError('name is required', 400);
+	if (!name) throw new ServiceError('name là bắt buộc', 400);
 
-	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel < 0)) {
-		throw new ServiceError('minStockLevel must be a non-negative number', 400);
+	if (!/^[A-Za-z]/.test(name)) throw new ServiceError('name phải bắt đầu bằng một chữ cái', 400);
+
+	const minStockLevel = Number(body.minStockLevel);
+	if (body.minStockLevel == null || Number.isNaN(minStockLevel) || minStockLevel <= 1000) {
+		throw new ServiceError('minStockLevel phải lớn hơn 1000', 400);
 	}
 
 	const medicationCode = body.medicationCode ? String(body.medicationCode).trim() : await generateMedicationCode();
+
 	const existingCode = await medicationRepo.findByCode(medicationCode);
-	if (existingCode) throw new ServiceError('medicationCode already exists', 409);
+	if (existingCode) throw new ServiceError('medicationCode đã tồn tại', 409);
 
 	const medication = await medicationRepo.create({
 		medicationCode,
@@ -149,15 +153,15 @@ const createMedication = async (user, body, req) => {
 		req,
 	});
 
-	return { message: 'Medication created successfully', medication: formatMedication(medication, 0) };
+	return { message: 'Đã tạo thuốc thành công', medication: formatMedication(medication, 0) };
 };
 
 const updateMedication = async (user, medicationId, body, req) => {
 	const medication = await medicationRepo.findById(medicationId);
-	if (!medication) throw new ServiceError('Medication not found', 404);
+	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
 
-	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel < 0)) {
-		throw new ServiceError('minStockLevel must be a non-negative number', 400);
+	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel <= 1000)) {
+		throw new ServiceError('minStockLevel phải lớn hơn 1000', 400);
 	}
 
 	const updateData = { updatedBy: user._id };
@@ -185,13 +189,15 @@ const updateMedication = async (user, medicationId, body, req) => {
 	});
 
 	const available = await getAvailableQuantity(updated._id);
-	return { message: 'Medication updated successfully', medication: formatMedication(updated, available) };
+	return { message: 'Đã cập nhật thuốc thành công', medication: formatMedication(updated, available) };
 };
 
 const listMedications = async (query) => {
 	const filter = {};
-	if (query.isActive !== undefined) {
-		filter.isActive = query.isActive === 'true' || query.isActive === true;
+	if (query.isActive === 'true' || query.isActive === true) {
+		filter.isActive = true;
+	} else if (query.isActive === 'false' || query.isActive === false) {
+		filter.isActive = false;
 	}
 
 	if (query.search) {
@@ -224,17 +230,17 @@ const listMedications = async (query) => {
 
 const getMedication = async (medicationId) => {
 	const medication = await medicationRepo.findById(medicationId);
-	if (!medication) throw new ServiceError('Medication not found', 404);
+	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
 	const available = await getAvailableQuantity(medication._id);
 	return { medication: formatMedication(medication, available) };
 };
 
 const addMedicationNote = async (user, medicationId, body, req) => {
 	const medication = await medicationRepo.findById(medicationId);
-	if (!medication) throw new ServiceError('Medication not found', 404);
+	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
 
 	const note = body.note ? String(body.note).trim() : '';
-	if (!note) throw new ServiceError('note is required', 400);
+	if (!note) throw new ServiceError('note là bắt buộc', 400);
 
 	const created = await medicationNoteRepo.create({
 		medicationId: medication._id,
@@ -253,12 +259,12 @@ const addMedicationNote = async (user, medicationId, body, req) => {
 		req,
 	});
 
-	return { message: 'Medication note added', note: created };
+	return { message: 'Đã thêm ghi chú thuốc', note: created };
 };
 
 const listMedicationNotes = async (medicationId, query) => {
 	const medication = await medicationRepo.findById(medicationId);
-	if (!medication) throw new ServiceError('Medication not found', 404);
+	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
 
 	const { pageNum, limitNum, skip } = parsePagination(query);
 	const sort = { createdAt: -1 };
@@ -278,14 +284,14 @@ const listMedicationNotes = async (medicationId, query) => {
 
 const createSupplier = async (user, body, req) => {
 	if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
-		throw new ServiceError('Request body is empty', 400);
+		throw new ServiceError('Nội dung yêu cầu trống', 400);
 	}
 
 	const name = body.name ? String(body.name).trim() : '';
-	if (!name) throw new ServiceError('name is required', 400);
+	if (!name) throw new ServiceError('name là bắt buộc', 400);
 
 	const existing = await supplierRepo.findByName(name);
-	if (existing) throw new ServiceError('supplier name already exists', 409);
+	if (existing) throw new ServiceError('Tên nhà cung cấp đã tồn tại', 409);
 
 	const supplier = await supplierRepo.create({
 		name,
@@ -309,16 +315,16 @@ const createSupplier = async (user, body, req) => {
 		req,
 	});
 
-	return { message: 'Supplier created successfully', supplier: formatSupplier(supplier) };
+	return { message: 'Đã tạo nhà cung cấp thành công', supplier: formatSupplier(supplier) };
 };
 
 const updateSupplier = async (user, supplierId, body, req) => {
 	const supplier = await supplierRepo.findById(supplierId);
-	if (!supplier) throw new ServiceError('Supplier not found', 404);
+	if (!supplier) throw new ServiceError('Không tìm thấy nhà cung cấp', 404);
 
 	if (body.name) {
 		const existing = await supplierRepo.findByName(String(body.name).trim(), supplierId);
-		if (existing) throw new ServiceError('supplier name already exists', 409);
+		if (existing) throw new ServiceError('Tên nhà cung cấp đã tồn tại', 409);
 	}
 
 	const updateData = { updatedBy: user._id };
@@ -344,13 +350,13 @@ const updateSupplier = async (user, supplierId, body, req) => {
 		req,
 	});
 
-	return { message: 'Supplier updated successfully', supplier: formatSupplier(updated) };
+	return { message: 'Đã cập nhật nhà cung cấp thành công', supplier: formatSupplier(updated) };
 };
 
 const deleteSupplier = async (user, supplierId, req) => {
 	const supplier = await supplierRepo.findById(supplierId);
-	if (!supplier) throw new ServiceError('Supplier not found', 404);
-	if (!supplier.isActive) throw new ServiceError('Supplier is already inactive', 400);
+	if (!supplier) throw new ServiceError('Không tìm thấy nhà cung cấp', 404);
+	if (!supplier.isActive) throw new ServiceError('Nhà cung cấp đã ngừng hoạt động', 400);
 
 	const updated = await supplierRepo.softDelete(supplierId, user._id);
 
@@ -366,14 +372,17 @@ const deleteSupplier = async (user, supplierId, req) => {
 		req,
 	});
 
-	return { message: 'Supplier deactivated', supplier: formatSupplier(updated) };
+	return { message: 'Đã ngừng hoạt động nhà cung cấp', supplier: formatSupplier(updated) };
 };
 
 const listSuppliers = async (query) => {
 	const filter = {};
-	if (query.isActive !== undefined) {
-		filter.isActive = query.isActive === 'true' || query.isActive === true;
+	if (query.isActive === 'true' || query.isActive === true) {
+		filter.isActive = true;
+	} else if (query.isActive === 'false' || query.isActive === false) {
+		filter.isActive = false;
 	}
+	// any other value (e.g. "all", undefined) means no filter — all statuses
 	if (query.search) {
 		const term = String(query.search).trim();
 		filter.$or = [
@@ -402,32 +411,40 @@ const listSuppliers = async (query) => {
 
 const getSupplier = async (supplierId) => {
 	const supplier = await supplierRepo.findById(supplierId);
-	if (!supplier) throw new ServiceError('Supplier not found', 404);
+	if (!supplier) throw new ServiceError('Không tìm thấy nhà cung cấp', 404);
 	return { supplier: formatSupplier(supplier) };
 };
 
 const createStock = async (user, body, req) => {
 	if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
-		throw new ServiceError('Request body is empty', 400);
+		throw new ServiceError('Nội dung yêu cầu trống', 400);
 	}
 
-	if (!body.medicationId) throw new ServiceError('medicationId is required', 400);
+	if (!body.medicationId) throw new ServiceError('medicationId là bắt buộc', 400);
 	const medication = await medicationRepo.findById(body.medicationId);
-	if (!medication) throw new ServiceError('Medication not found', 404);
+	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
+	if (medication.isActive === false) throw new ServiceError('Thuốc đã ngừng hoạt động', 400);
 
 	if (typeof body.quantity !== 'number' || body.quantity <= 0) {
-		throw new ServiceError('quantity must be a positive number', 400);
+		throw new ServiceError('quantity phải là số dương', 400);
 	}
 
 	let supplierId;
 	if (body.supplierId) {
 		const supplier = await supplierRepo.findById(body.supplierId);
-		if (!supplier || !supplier.isActive) throw new ServiceError('Supplier not found', 404);
+		if (!supplier || !supplier.isActive) throw new ServiceError('Nhà cung cấp đã ngừng hoạt động', 400);
 		supplierId = supplier._id;
 	}
 
 	const expiryDate = parseOptionalDate(body.expiryDate, 'expiryDate');
 	const receivedDate = parseOptionalDate(body.receivedDate, 'receivedDate') || new Date();
+
+	if (expiryDate && receivedDate) {
+		const minExpiry = new Date(receivedDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+		if (expiryDate <= minExpiry) {
+			throw new ServiceError('Ngày hết hạn phải lớn hơn 12 tháng kể từ ngày nhập thuốc', 400);
+		}
+	}
 
 	const stock = await medicationStockRepo.create({
 		medicationId: medication._id,
@@ -452,25 +469,30 @@ const createStock = async (user, body, req) => {
 		req,
 	});
 
-	return { message: 'Stock received', stock };
+	return { message: 'Đã nhận hàng vào kho', stock };
 };
 
 const updateStock = async (user, stockId, body, req) => {
 	const stock = await medicationStockRepo.findById(stockId);
-	if (!stock) throw new ServiceError('Stock entry not found', 404);
+	if (!stock) throw new ServiceError('Không tìm thấy phiếu nhập kho', 404);
 
 	if (body.quantity != null && (typeof body.quantity !== 'number' || body.quantity < 0)) {
-		throw new ServiceError('quantity must be a non-negative number', 400);
+		throw new ServiceError('quantity phải là số không âm', 400);
 	}
 
 	let supplierId = stock.supplierId;
 	if (body.supplierId) {
 		const supplier = await supplierRepo.findById(body.supplierId);
-		if (!supplier || !supplier.isActive) throw new ServiceError('Supplier not found', 404);
+		if (!supplier || !supplier.isActive) throw new ServiceError('Không tìm thấy nhà cung cấp', 404);
 		supplierId = supplier._id;
 	}
 
 	const updateData = {};
+	if (body.medicationId) {
+		const medication = await medicationRepo.findById(body.medicationId);
+		if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
+		updateData.medicationId = medication._id;
+	}
 	if (body.quantity != null) updateData.quantity = body.quantity;
 	if (body.unit !== undefined) updateData.unit = String(body.unit || '').trim();
 	if (body.lotNumber !== undefined) updateData.lotNumber = String(body.lotNumber || '').trim();
@@ -479,6 +501,15 @@ const updateStock = async (user, stockId, body, req) => {
 	if (body.costPerUnit !== undefined) updateData.costPerUnit = body.costPerUnit;
 	if (body.notes !== undefined) updateData.notes = String(body.notes || '').trim();
 	if (supplierId) updateData.supplierId = supplierId;
+
+	const finalExpiry = updateData.expiryDate !== undefined ? updateData.expiryDate : stock.expiryDate;
+	const finalReceived = updateData.receivedDate !== undefined ? updateData.receivedDate : stock.receivedDate;
+	if (finalExpiry && finalReceived) {
+		const minExpiry = new Date(finalReceived.getTime() + 365 * 24 * 60 * 60 * 1000);
+		if (finalExpiry <= minExpiry) {
+			throw new ServiceError('Ngày hết hạn phải lớn hơn 12 tháng kể từ ngày nhập thuốc', 400);
+		}
+	}
 
 	const updated = await medicationStockRepo.updateById(stockId, updateData);
 
@@ -494,7 +525,7 @@ const updateStock = async (user, stockId, body, req) => {
 		req,
 	});
 
-	return { message: 'Stock updated', stock: updated };
+	return { message: 'Đã cập nhật tồn kho', stock: updated };
 };
 
 const listStocks = async (query) => {
@@ -528,29 +559,34 @@ const listStocks = async (query) => {
 
 const dispenseMedication = async (user, body, req) => {
 	if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
-		throw new ServiceError('Request body is empty', 400);
+		throw new ServiceError('Nội dung yêu cầu trống', 400);
 	}
 
-	if (!body.medicationId) throw new ServiceError('medicationId is required', 400);
+	if (!body.medicationId) throw new ServiceError('medicationId là bắt buộc', 400);
 	const medication = await medicationRepo.findById(body.medicationId);
-	if (!medication) throw new ServiceError('Medication not found', 404);
+	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
 
 	if (typeof body.quantity !== 'number' || body.quantity <= 0) {
-		throw new ServiceError('quantity must be a positive number', 400);
+		throw new ServiceError('quantity phải là số dương', 400);
 	}
 
 	if (body.prescriptionId) {
 		const prescription = await Prescription.findById(body.prescriptionId);
-		if (!prescription) throw new ServiceError('Prescription not found', 404);
-		if (!prescription.isVerified) throw new ServiceError('Prescription must be verified before dispensing', 400);
-		if (prescription.medicationName && prescription.medicationName.toLowerCase() !== medication.name.toLowerCase()) {
-			throw new ServiceError('Medication does not match prescription', 400);
+		if (!prescription) throw new ServiceError('Không tìm thấy đơn thuốc', 404);
+		if (!prescription.isVerified) throw new ServiceError('Đơn thuốc phải được xác minh trước khi cấp phát', 400);
+		if (prescription.items && prescription.items.length > 0) {
+			const matchingItem = prescription.items.find(
+				(item) => item.medicationName && item.medicationName.toLowerCase() === medication.name.toLowerCase()
+			);
+			if (!matchingItem) {
+				throw new ServiceError('Thuốc không khớp với bất kỳ mục nào trong đơn thuốc', 400);
+			}
 		}
 	}
 
 	const available = await getAvailableQuantity(medication._id);
 	if (available < body.quantity) {
-		throw new ServiceError(`Insufficient stock: available ${available}`, 400);
+		throw new ServiceError(`Không đủ tồn kho: còn lại ${available}`, 400);
 	}
 
 	const dispensedAt = parseOptionalDate(body.dispensedAt, 'dispensedAt') || new Date();
@@ -565,6 +601,12 @@ const dispenseMedication = async (user, body, req) => {
 		notes: body.notes ? String(body.notes).trim() : undefined,
 	});
 
+	const postDispenseAvailable = await getAvailableQuantity(medication._id);
+	if (postDispenseAvailable < 0) {
+		await medicationDispenseRepo.deleteById(dispense._id);
+		throw new ServiceError('Phát hiện cấp phát đồng thời: không đủ tồn kho. Vui lòng thử lại.', 409);
+	}
+
 	await createAuditLog({
 		actorUserId: user._id,
 		actorRole: user.role,
@@ -576,13 +618,13 @@ const dispenseMedication = async (user, body, req) => {
 		req,
 	});
 
-	return { message: 'Medication dispensed', dispense };
+	return { message: 'Đã xuất thuốc', dispense };
 };
 
 const verifyPrescription = async (user, prescriptionId, req) => {
 	const prescription = await Prescription.findById(prescriptionId);
-	if (!prescription) throw new ServiceError('Prescription not found', 404);
-	if (prescription.isVerified) throw new ServiceError('Prescription already verified', 400);
+	if (!prescription) throw new ServiceError('Không tìm thấy đơn thuốc', 404);
+	if (prescription.isVerified) throw new ServiceError('Đơn thuốc đã được xác minh', 400);
 
 	prescription.isVerified = true;
 	prescription.verifiedByUserId = user._id;
@@ -600,7 +642,7 @@ const verifyPrescription = async (user, prescriptionId, req) => {
 		req,
 	});
 
-	return { message: 'Prescription verified', prescription };
+	return { message: 'Đã xác minh đơn thuốc', prescription };
 };
 
 const getLowStockAlerts = async (query) => {
@@ -626,14 +668,16 @@ const getLowStockAlerts = async (query) => {
 };
 
 const trackExpiry = async (query) => {
-	const withinDays = query.withinDays ? parseInt(query.withinDays, 10) : 30;
-	if (Number.isNaN(withinDays) || withinDays <= 0) {
-		throw new ServiceError('withinDays must be a positive number', 400);
+	const hasWithinDays = query && query.withinDays !== undefined && query.withinDays !== null && query.withinDays !== '';
+	const withinDays = hasWithinDays ? parseInt(query.withinDays, 10) : null;
+	if (hasWithinDays && (Number.isNaN(withinDays) || withinDays <= 0)) {
+		throw new ServiceError('withinDays phải là số dương', 400);
 	}
 
 	const now = new Date();
-	const toDate = new Date(now.getTime() + withinDays * 24 * 60 * 60 * 1000);
-	const data = await medicationStockRepo.findExpiring(now, toDate);
+	const toDate = withinDays ? new Date(now.getTime() + withinDays * 24 * 60 * 60 * 1000) : undefined;
+	const fromDate = withinDays ? now : undefined;
+	const data = await medicationStockRepo.findExpiring(fromDate, toDate);
 
 	return { data, withinDays };
 };
@@ -659,7 +703,25 @@ const getUsageStats = async (query) => {
 		dispenseCount: row.count,
 	}));
 
-	return { from: fromDate, to: toDate, data };
+	const detailedRecords = await medicationDispenseRepo.findDetailedRecords(fromDate, toDate);
+	const dispensingDetails = detailedRecords.map((record) => ({
+		medicationName: record.medicationId?.name || 'N/A',
+		medication: record.medicationId,
+		medicationUnit: record.medicationId?.unit || 'N/A',
+		patientName: record.residentId?.fullName || 'N/A',
+		patient: record.residentId,
+		quantity: record.quantity,
+		dispensedTime: record.dispensedAt,
+		dispensedBy: record.dispensedByUserId?.fullName || 'N/A',
+		notes: record.notes || '',
+	}));
+
+	return { 
+		from: fromDate, 
+		to: toDate, 
+		data,
+		dispensingDetails,
+	};
 };
 
 const getReportSummary = async (query) => {
@@ -673,7 +735,7 @@ const getReportSummary = async (query) => {
 		medicationRepo.countAll({ isActive: true }),
 		supplierRepo.countAll({ isActive: true }),
 		getLowStockAlerts({}),
-		trackExpiry({ withinDays: 30 }),
+		trackExpiry({ withinDays: 365 }),
 		getUsageStats({ from: fromDate, to: toDate }),
 	]);
 

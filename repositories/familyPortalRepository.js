@@ -20,14 +20,14 @@ const getFamilyResidentIds = async (userId) => {
 
 const getResidentsForFamily = async (userId) =>
   Resident.find({ familyPortalAccountIds: userId, residencyStatus: 'admitted' })
-    .select('residentCode fullName dateOfBirth gender bloodType allergies chronicConditions residencyStatus admittedAt roomId bedId servicePackage')
-    .populate('roomId', 'roomCode name')
+    .select('residentCode fullName dateOfBirth gender bloodType avatarUrl allergies chronicConditions residencyStatus admittedAt roomId bedId servicePackage')
+    .populate('roomId', 'roomNumber')
     .populate('bedId', 'bedCode');
 
 const getResidentById = async (residentId) =>
   Resident.findById(residentId)
     .select('-familyPortalAccountIds')
-    .populate('roomId', 'roomCode name')
+    .populate('roomId', 'roomNumber')
     .populate('bedId', 'bedCode');
 
 const findMedicalRecords = async (filter, { sort = { measuredAt: -1 }, skip = 0, limit = 20 } = {}) =>
@@ -63,6 +63,13 @@ const findMedicationSchedules = async (filter, { sort = { scheduledTime: -1 }, s
     .limit(limit);
 
 const countMedicationSchedules = async (filter) => MedicationSchedule.countDocuments(filter);
+
+// Unpaged variant for history/compliance stats and daily-schedule views, where every
+// matching record within the (bounded) date range must be aggregated, not just a page.
+const findMedicationSchedulesUnpaged = async (filter, { sort = { scheduledTime: 1 } } = {}) =>
+  MedicationSchedule.find(filter)
+    .populate('markedBy', 'fullName role')
+    .sort(sort);
 
 // doctorId in new Prescription refs User directly (not StaffProfile)
 const findPrescriptions = async (filter, { sort = { prescriptionDate: -1 }, skip = 0, limit = 100 } = {}) =>
@@ -135,6 +142,7 @@ module.exports = {
   countCareNotes,
   findMedicationSchedules,
   countMedicationSchedules,
+  findMedicationSchedulesUnpaged,
   findPrescriptions,
   findActivities,
   findCareAppointments,

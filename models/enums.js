@@ -1,6 +1,7 @@
-const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'caregiver', 'chef', 'pharmacist', 'family', 'staff'];
-const NON_ASSIGNABLE_ROLES = ['admin', 'manager'];
-const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'caregiver', 'staff'];
+const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'caregiver', 'pharmacist', 'family', 'system'];
+const NON_ASSIGNABLE_ROLES = ['admin', 'family'];
+const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'caregiver'];
+const CARE_TASK_ASSIGNEE_ROLES = ['nurse', 'doctor', 'caregiver'];
 const GENDERS = ['male', 'female', 'other', 'unknown'];
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'unknown'];
 
@@ -18,7 +19,7 @@ const ADMISSION_STATUSES = ['new_request', 'consulting', 'assessing', 'contracti
 
 const SHIFT_STATUSES = ['draft', 'published', 'confirmed', 'completed', 'cancelled'];
 const SHIFT_TEMPLATE_STATUSES = ['active', 'inactive', 'archived'];
-const SHIFT_TYPES = ['morning', 'afternoon', 'night', 'on_call'];
+const SHIFT_TYPES = ['morning', 'afternoon', 'night', 'on_call', 'custom'];
 const CONFLICT_TYPES = [
   'INVALID_TIME',
   'OVERLAP',
@@ -26,10 +27,15 @@ const CONFLICT_TYPES = [
   'MULTIPLE_AREAS',
   'ROLE_MISMATCH',
   'STAFF_NOT_ASSIGNABLE',
+  'STAFF_ACCOUNT_LOCKED',
+  'STAFF_ACCOUNT_INACTIVE',
   'PAST_DATE',
   'OVERTIME',
   'REST_VIOLATION',
   'UNDERSTAFFED',
+  'SPLIT_DAILY_LIMIT',
+  'SPLIT_DAILY_RATIO',
+  'SPLIT_WEEKLY_LIMIT',
 ];
 const CONFLICT_SEVERITIES = ['ERROR', 'WARNING', 'INFO'];
 const ACTIVITY_STATUSES = ['draft', 'scheduled', 'ongoing', 'completed', 'cancelled'];
@@ -39,7 +45,7 @@ const MEDICATION_ADMIN_STATUSES = ['pending', 'taken', 'missed', 'overdue'];
 const INCIDENT_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const INCIDENT_STATUSES = ['open', 'investigating', 'resolved', 'closed'];
 const APPOINTMENT_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];
-const CARE_NOTE_TYPES = ['meal', 'activity', 'health', 'general'];
+const CARE_NOTE_TYPES = ['meal', 'activity', 'daily_living', 'health', 'general'];
 
 const INVOICE_STATUSES = ['draft', 'issued', 'partially_paid', 'paid', 'overdue', 'cancelled'];
 const PAYMENT_METHODS = ['bank_transfer', 'card', 'wallet', 'cash'];
@@ -48,7 +54,9 @@ const PAYMENT_STATUSES = ['pending', 'confirmed', 'failed', 'refunded'];
 const NOTIFICATION_CATEGORIES = ['incident', 'health', 'appointment', 'activity', 'billing', 'message', 'system'];
 const DELIVERY_CHANNELS = ['in_app', 'email', 'sms', 'push'];
 const SUPPORT_REQUEST_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
+const CONSULTATION_REQUEST_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
 const FACILITY_TOUR_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled'];
+const RESIDENT_VISIT_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'];
 const SERVICE_PACKAGE_TIERS = ['basic', 'standard', 'premium', 'vip'];
 
 const LEAVE_REQUEST_TYPES = ['annual', 'sick', 'emergency', 'unpaid', 'other'];
@@ -62,6 +70,7 @@ module.exports = {
   ROLES,
   NON_ASSIGNABLE_ROLES,
   OPERATIONAL_ASSIGNABLE_ROLES,
+  CARE_TASK_ASSIGNEE_ROLES,
   GENDERS,
   BLOOD_TYPES,
   ROOM_TYPES,
@@ -93,6 +102,7 @@ module.exports = {
   DELIVERY_CHANNELS,
   SUPPORT_REQUEST_STATUSES,
   FACILITY_TOUR_STATUSES,
+  RESIDENT_VISIT_STATUSES,
   SERVICE_PACKAGE_TIERS,
   LEAVE_REQUEST_TYPES,
   LEAVE_REQUEST_STATUSES,

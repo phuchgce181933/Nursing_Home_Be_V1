@@ -6,9 +6,12 @@ const {
   getActivity,
   updateActivity,
   deleteActivity,
+  bulkDeleteActivities,
+  bulkUpdateActivityStatus,
   updateActivityStatus,
   setParticipantList,
   registerResident,
+  unregisterResident,
   recordParticipationResult,
   getActivityStatistics,
   getActivityStatisticsById,
@@ -120,7 +123,7 @@ router.post('/', protect, authorize('admin'), createActivity);
  *       403:
  *         description: Access forbidden
  */
-router.get('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'family'), listActivities);
+router.get('/', protect, authorize('admin', 'doctor', 'nurse', 'caregiver', 'family'), listActivities);
 
 /**
  * @swagger
@@ -157,7 +160,7 @@ router.get('/', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'famil
  *       403:
  *         description: Access forbidden
  */
-router.get('/statistics', protect, authorize('admin', 'manager'), getActivityStatistics);
+router.get('/statistics', protect, authorize('admin'), getActivityStatistics);
 
 /**
  * @swagger
@@ -179,7 +182,10 @@ router.get('/statistics', protect, authorize('admin', 'manager'), getActivitySta
  *       404:
  *         description: Activity not found
  */
-router.get('/:activityId', protect, authorize('admin', 'manager', 'doctor', 'nurse', 'family'), getActivity);
+router.delete('/bulk', protect, authorize('admin'), bulkDeleteActivities);
+router.patch('/bulk/status', protect, authorize('admin'), bulkUpdateActivityStatus);
+
+router.get('/:activityId', protect, authorize('admin', 'doctor', 'nurse', 'caregiver', 'family'), getActivity);
 
 /**
  * @swagger
@@ -201,7 +207,7 @@ router.get('/:activityId', protect, authorize('admin', 'manager', 'doctor', 'nur
  *       404:
  *         description: Activity not found
  */
-router.get('/:activityId/statistics', protect, authorize('admin', 'manager'), getActivityStatisticsById);
+router.get('/:activityId/statistics', protect, authorize('admin'), getActivityStatisticsById);
 
 /**
  * @swagger
@@ -384,6 +390,40 @@ router.post('/:activityId/register', protect, authorize('admin', 'family'), regi
 
 /**
  * @swagger
+ * /api/admin/activities/{activityId}/unregister:
+ *   post:
+ *     summary: Cancel a resident's registration for an activity (Admin, Family)
+ *     tags: [Admin - Activity Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: activityId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [residentId]
+ *             properties:
+ *               residentId:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Registration cancelled successfully
+ *       400:
+ *         description: Validation error
+ *       404:
+ *         description: Activity not found
+ */
+router.post('/:activityId/unregister', protect, authorize('admin', 'family'), unregisterResident);
+
+/**
+ * @swagger
  * /api/admin/activities/{activityId}/record-result:
  *   post:
  *     summary: Record participation result for an activity (Admin only)
@@ -416,6 +456,6 @@ router.post('/:activityId/register', protect, authorize('admin', 'family'), regi
  *       404:
  *         description: Activity not found
  */
-router.post('/:activityId/record-result', protect, authorize('admin'), recordParticipationResult);
+router.post('/:activityId/record-result', protect, authorize('admin', 'nurse'), recordParticipationResult);
 
 module.exports = router;

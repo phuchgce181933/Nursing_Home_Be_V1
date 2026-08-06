@@ -1,27 +1,70 @@
 const mongoose = require('mongoose');
-const { INVOICE_STATUSES } = require('./enums');
-
 const { Schema, Types } = mongoose;
 
 const invoiceSchema = new Schema(
   {
-    invoiceNumber: { type: String, required: true, unique: true, trim: true, index: true },
     residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
-    familyAccountId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
-    prescriptionId: { type: Types.ObjectId, ref: 'Prescription', index: true },
-    billingPeriodStart: { type: Date, required: true },
-    billingPeriodEnd: { type: Date, required: true },
-    roomCost: { type: Number, required: true, min: 0, default: 0 },
-    medicationCost: { type: Number, required: true, min: 0, default: 0 },
-    careServiceCost: { type: Number, required: true, min: 0, default: 0 },
-    otherCost: { type: Number, required: true, min: 0, default: 0 },
-    totalAmount: { type: Number, required: true, min: 0 },
-    status: { type: String, enum: INVOICE_STATUSES, default: 'issued', index: true },
-    dueDate: { type: Date, index: true },
-    issuedAt: { type: Date, default: Date.now },
-    downloadedCount: { type: Number, default: 0, min: 0 },
+    invoiceNumber: { type: String, trim: true, index: true },
+    periodStart: { type: Date },
+    periodEnd: { type: Date },
+    billingPeriodStart: { type: Date },
+    billingPeriodEnd: { type: Date },
+    items: [
+      {
+        chargeId: { type: Types.ObjectId, ref: 'MedicalCharge' },
+        description: { type: String },
+        amount: { type: Number, default: 0 },
+        category: { type: String },
+      },
+    ],
+    subTotal: { type: Number, default: 0 },
+    tax: { type: Number, default: 0 },
+    total: { type: Number, default: 0 },
+    totalAmount: { type: Number, default: 0 },
+    originalTotalAmount: { type: Number, default: 0 },
+    remainingAmount: { type: Number, default: 0 },
+    familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
+    status: { type: String, enum: ['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'CANCELLED'], default: 'DRAFT', index: true },
+    cancellationReason: { type: String, trim: true },
+    createdBy: { type: String },
+    
+    // Service fee components
+    roomCost: { type: Number, default: 0 },
+    medicationCost: { type: Number, default: 0 },
+    careServiceCost: { type: Number, default: 0 },
+    otherCost: { type: Number, default: 0 },
+    
+    // Invoice metadata
+    type: { type: String, enum: ['SERVICE', 'MEDICATION', 'OTHER', 'COMBINED'], default: 'COMBINED' },
+    paymentPlan: { type: String, enum: ['FULL', 'HALF_NOW'], default: 'FULL' },
+    prescriptionId: { type: Types.ObjectId, ref: 'Prescription' },
+    dueDate: { type: Date },
+
+    // Set when a PayOS checkout is created for this invoice; used to verify the real payment
+    // status with PayOS before marking the invoice paid (never trust client-supplied status alone).
+    payosOrderCode: { type: Number, index: true },
+    issuedAt: { type: Date, default: Date.now, index: true },
+
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
   },
-  { timestamps: true }
+  { timestamps: false }
 );
+
+invoiceSchema.pre('save', function () {
+  this.updatedAt = new Date();
+  if (!this.issuedAt) {
+    this.issuedAt = this.createdAt || new Date();
+  }
+
+  if (Array.isArray(this.items) && this.items.length > 0) {
+    this.subTotal = (this.items || []).reduce((s, it) => s + (it.amount || 0), 0);
+    this.total = (this.subTotal || 0) + (this.tax || 0);
+    this.totalAmount = this.total;
+  } else {
+    this.subTotal = 0;
+    this.total = this.totalAmount || 0;
+  }
+});
 
 module.exports = mongoose.models.Invoice || mongoose.model('Invoice', invoiceSchema);

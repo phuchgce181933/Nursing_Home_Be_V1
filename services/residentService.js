@@ -1,5 +1,5 @@
 const { Types } = require('mongoose');
-const ServiceError = require('./serviceError');
+const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const residentRepo = require('../repositories/residentRepository');
 const roomRepo = require('../repositories/roomRepository');
 const bedRepo = require('../repositories/bedRepository');
@@ -7,6 +7,7 @@ const floorRepo = require('../repositories/floorRepository');
 const { GENDERS, BLOOD_TYPES, RESIDENCY_STATUSES } = require('../models/enums');
 const { validateFullName, validatePhone } = require('../utils/validators');
 const User = require('../models/user');
+const Admission = require('../models/admission');
 const { createAuditLog } = require('../utils/auditLog');
 const { syncStaffAreasAfterResidentTransfer } = require('../utils/syncStaffAreasAfterResidentTransfer');
 
@@ -14,16 +15,30 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
-  const limitNum = Math.min(100, Math.max(1, parseInt(query.limit || 20, 10)));
+  const limitNum = Math.min(200, Math.max(1, parseInt(query.limit || 20, 10)));
   const skip = (pageNum - 1) * limitNum;
   return { pageNum, limitNum, skip };
+};
+
+const startOfDay = (value, fieldName) => {
+  const date = parseOptionalDate(value, fieldName);
+  if (!date) return undefined;
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const endOfDay = (value, fieldName) => {
+  const date = parseOptionalDate(value, fieldName);
+  if (!date) return undefined;
+  date.setHours(23, 59, 59, 999);
+  return date;
 };
 
 const parseOptionalDate = (value, fieldName) => {
   if (!value) return undefined;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    throw new ServiceError(`${fieldName} không hợp lệ`, 400);
+    throw apiErr(CODES.FIELD_INVALID_FORMAT, { statusCode: 400, params: { field: fieldName, format: 'valid date' } });
   }
   return date;
 };
@@ -35,19 +50,115 @@ const normalizeStringArray = (value) => {
   return [String(value).trim()].filter(Boolean);
 };
 
+const STRING_LIST_MAX_ITEMS = 30;
+const STRING_LIST_ITEM_MIN_LENGTH = 2;
+const STRING_LIST_ITEM_MAX_LENGTH = 200;
+
+// Dedupe case-insensitively while keeping the first-seen casing.
+const dedupeStringArray = (arr) => {
+  if (!arr) return arr;
+  const seen = new Set();
+  const result = [];
+  for (const item of arr) {
+    const key = item.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+  return result;
+};
+
+const assertStringArrayBounds = (arr, fieldName) => {
+  if (!arr) return arr;
+  if (arr.length > STRING_LIST_MAX_ITEMS) {
+    throw apiErr(CODES.RESIDENT_LIST_TOO_MANY_ITEMS, {
+      statusCode: 400,
+      params: { field: fieldName, max: STRING_LIST_MAX_ITEMS },
+    });
+  }
+  for (const item of arr) {
+    if (item.length < STRING_LIST_ITEM_MIN_LENGTH || item.length > STRING_LIST_ITEM_MAX_LENGTH) {
+      throw apiErr(CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID, {
+        statusCode: 400,
+        params: { field: fieldName, min: STRING_LIST_ITEM_MIN_LENGTH, max: STRING_LIST_ITEM_MAX_LENGTH },
+      });
+    }
+  }
+  return dedupeStringArray(arr);
+};
+
+const contactPhoneKey = (contact) => String(contact?.phone || '').replace(/\D/g, '');
+
+const contactEmailKey = (contact) => {
+  const email = String(contact?.email || '').trim().toLowerCase();
+  return email || null;
+};
+
+const throwDuplicateEmergencyContact = (candidate, existingContact) => {
+  throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_DUPLICATE, {
+    statusCode: 409,
+    params: { phone: candidate.phone, fullName: existingContact.fullName },
+  });
+};
+
+const throwDuplicateEmergencyContactEmail = (candidate, existingContact) => {
+  throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_EMAIL_DUPLICATE, {
+    statusCode: 409,
+    params: { email: candidate.email, fullName: existingContact.fullName },
+  });
+};
+
+const assertNoDuplicateEmergencyContact = (existingContacts, candidate, { excludeContactId } = {}) => {
+  const phoneKey = contactPhoneKey(candidate);
+  const phoneDup = (existingContacts || []).find((c) => {
+    if (excludeContactId && c._id?.toString() === String(excludeContactId)) return false;
+    return contactPhoneKey(c) === phoneKey;
+  });
+  if (phoneDup) throwDuplicateEmergencyContact(candidate, phoneDup);
+
+  const emailKey = contactEmailKey(candidate);
+  if (!emailKey) return;
+
+  const emailDup = (existingContacts || []).find((c) => {
+    if (excludeContactId && c._id?.toString() === String(excludeContactId)) return false;
+    return contactEmailKey(c) === emailKey;
+  });
+  if (emailDup) throwDuplicateEmergencyContactEmail(candidate, emailDup);
+};
+
+const assertEmergencyContactsListUnique = (contacts) => {
+  const seenPhones = new Map();
+  const seenEmails = new Map();
+  for (const c of contacts || []) {
+    const phoneKey = contactPhoneKey(c);
+    if (seenPhones.has(phoneKey)) throwDuplicateEmergencyContact(c, seenPhones.get(phoneKey));
+    seenPhones.set(phoneKey, c);
+
+    const emailKey = contactEmailKey(c);
+    if (!emailKey) continue;
+    if (seenEmails.has(emailKey)) throwDuplicateEmergencyContactEmail(c, seenEmails.get(emailKey));
+    seenEmails.set(emailKey, c);
+  }
+};
+
 const normalizeEmergencyContacts = (value) => {
   if (value === undefined) return undefined;
   if (value === null) return [];
-  if (!Array.isArray(value)) throw new ServiceError('emergencyContacts phải là mảng', 400);
-  return value.map((contact, index) => {
+  if (!Array.isArray(value)) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'emergencyContacts phải là mảng' } });
+  const normalized = value.map((contact, index) => {
     if (!contact || typeof contact !== 'object') {
-      throw new ServiceError(`emergencyContacts[${index}] phải là object`, 400);
+      throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}] phải là object` } });
     }
     const fullName = String(contact.fullName || '').trim();
     const relationship = String(contact.relationship || '').trim();
     const phone = String(contact.phone || '').trim();
     if (!fullName || !relationship || !phone) {
-      throw new ServiceError(`emergencyContacts[${index}] phải có đầy đủ fullName, relationship và phone`, 400);
+      throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}] phải có đầy đủ fullName, relationship và phone` } });
+    }
+    const phoneErr = validatePhone(phone);
+    if (phoneErr) {
+      throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `emergencyContacts[${index}]: ${phoneErr}` } });
     }
     return {
       fullName,
@@ -58,6 +169,8 @@ const normalizeEmergencyContacts = (value) => {
       isPrimary: Boolean(contact.isPrimary),
     };
   });
+  assertEmergencyContactsListUnique(normalized);
+  return normalized;
 };
 
 const normalizeFamilyAccountIds = async (value) => {
@@ -68,10 +181,10 @@ const normalizeFamilyAccountIds = async (value) => {
   const uniqueIds = [...new Set(ids)];
   if (uniqueIds.length === 0) return [];
   const invalidIds = uniqueIds.filter((id) => !Types.ObjectId.isValid(id));
-  if (invalidIds.length) throw new ServiceError(`familyPortalAccountIds không hợp lệ: ${invalidIds.join(', ')}`, 400);
+  if (invalidIds.length) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `familyPortalAccountIds không hợp lệ: ${invalidIds.join(', ')}` } });
   const users = await User.find({ _id: { $in: uniqueIds }, role: 'family' }).select('_id');
   if (users.length !== uniqueIds.length) {
-    throw new ServiceError('Một số familyPortalAccountIds không tồn tại hoặc không phải tài khoản family', 400);
+    throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'Một số familyPortalAccountIds không tồn tại hoặc không phải tài khoản family' } });
   }
   return uniqueIds;
 };
@@ -82,7 +195,7 @@ const generateResidentCode = async () => {
     const exists = await residentRepo.findByResidentCode(code);
     if (!exists) return code;
   }
-  throw new ServiceError('Không thể tạo residentCode', 500);
+  throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500 });
 };
 
 const calcAge = (dateOfBirth) => {
@@ -100,14 +213,15 @@ const mapAreaFromRoom = (room) => {
   if (!room) return { room: null, floor: null, building: null };
   const floor = room.floorId;
   const building = floor?.buildingId || room.buildingId;
+  const roomNumber = room.roomNumber || room.roomCode;
   const floorName = floor?.name || (floor?.floorNumber != null ? `Tang ${floor.floorNumber}` : null);
   const buildingName = building?.name || building?.code;
   return {
     room: {
       _id: room._id,
-      roomNumber: room.roomNumber,
+      roomNumber,
       roomType: room.roomType,
-      label: room.roomNumber ? `Phong ${room.roomNumber}` : null,
+      label: roomNumber ? `Phong ${roomNumber}` : null,
     },
     floor: floor
       ? {
@@ -138,6 +252,7 @@ const formatResident = (residentDoc) => {
     insuranceNumber: resident.insuranceNumber,
     bloodType: resident.bloodType,
     personalAddress: resident.personalAddress,
+    avatarUrl: resident.avatarUrl || undefined,
     emergencyContacts: resident.emergencyContacts || [],
     allergies: resident.allergies || [],
     drugAllergies: resident.drugAllergies || [],
@@ -165,7 +280,11 @@ const formatResident = (residentDoc) => {
         : null,
     },
     room: resident.roomId
-      ? { _id: resident.roomId._id || resident.roomId, roomCode: resident.roomId.roomCode, name: resident.roomId.name }
+      ? {
+          _id: resident.roomId._id || resident.roomId,
+          roomNumber: resident.roomId.roomNumber,
+          roomType: resident.roomId.roomType,
+        }
       : null,
     bed: resident.bedId ? { _id: resident.bedId._id || resident.bedId, bedCode: resident.bedId.bedCode } : null,
     familyPortalAccounts: Array.isArray(resident.familyPortalAccountIds)
@@ -182,13 +301,13 @@ const formatResident = (residentDoc) => {
 };
 
 const assertResidentId = (residentId) => {
-  if (!residentRepo.assertValidObjectId(residentId)) throw new ServiceError('residentId không hợp lệ', 400);
+  if (!residentRepo.assertValidObjectId(residentId)) throw apiErr(CODES.RESIDENT_INVALID_ID, { statusCode: 400 });
 };
 
 /** Resolve MongoDB resident _id from ObjectId string or residentCode (e.g. RES001). */
 const resolveResidentId = async (residentIdOrCode) => {
   const raw = String(residentIdOrCode || '').trim();
-  if (!raw) throw new ServiceError('residentId là bắt buộc', 400);
+  if (!raw) throw apiErr(CODES.RESIDENT_ID_REQUIRED, { statusCode: 400 });
 
   if (residentRepo.assertValidObjectId(raw)) {
     const byId = await residentRepo.findById(raw);
@@ -198,7 +317,7 @@ const resolveResidentId = async (residentIdOrCode) => {
   const byCode = await residentRepo.findByResidentCode(raw);
   if (byCode) return byCode._id;
 
-  throw new ServiceError('Không tìm thấy cư dân', 404);
+  throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
 };
 
 const RESIDENCY_STATUS_ALIASES = {
@@ -249,11 +368,11 @@ const parseBloodTypeFromBody = (body) => {
 };
 
 const assertContactId = (contactId) => {
-  if (!residentRepo.assertValidObjectId(contactId)) throw new ServiceError('contactId không hợp lệ', 400);
+  if (!residentRepo.assertValidObjectId(contactId)) throw apiErr(CODES.RESIDENT_ID_INVALID, { statusCode: 400, params: { label: 'contactId' } });
 };
 
 const assertObjectId = (value, label) => {
-  if (!residentRepo.assertValidObjectId(value)) throw new ServiceError(`${label} không hợp lệ`, 400);
+  if (!residentRepo.assertValidObjectId(value)) throw apiErr(CODES.RESIDENT_ID_INVALID, { statusCode: 400, params: { label } });
 };
 
 const validateOptionalEmail = (email) => {
@@ -293,39 +412,80 @@ const validateContactPayload = (contact, { requireAll = true, partial = false } 
     const emailErr = validateOptionalEmail(contact.email);
     if (emailErr) errors.push(emailErr);
   }
-  if (errors.length) throw new ServiceError(errors.join('; '), 400);
+  if (errors.length) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: errors.join('; ') } });
   return normalizeContactInput(contact, { partial });
 };
 
 const ensureSinglePrimary = (contacts) => {
   const primaryCount = contacts.filter((c) => c.isPrimary).length;
-  if (primaryCount > 1) throw new ServiceError('Chỉ được đánh dấu tối đa một liên hệ khẩn cấp là chính', 400);
+  if (primaryCount > 1) throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_PRIMARY_LIMIT, { statusCode: 400 });
+};
+
+const matchEmergencyContact = (a, b) => {
+  const aId = a?._id?.toString?.();
+  const bId = b?._id?.toString?.();
+  if (aId && bId && aId === bId) return true;
+  return contactPhoneKey(a) === contactPhoneKey(b);
+};
+
+const assertPrimaryContactNotRemoved = (existingContacts, nextContacts) => {
+  const primaryBefore = (existingContacts || []).find((c) => c.isPrimary);
+  if (!primaryBefore) return;
+
+  const stillPresent = (nextContacts || []).some((c) => matchEmergencyContact(c, primaryBefore));
+  if (stillPresent) return;
+
+  const hasNewPrimary = (nextContacts || []).some((c) => c.isPrimary);
+  if (!hasNewPrimary) throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_CANNOT_DELETE_PRIMARY, { statusCode: 400 });
 };
 
 const mapResidentFamilySummary = (resident) => ({
   _id: resident._id,
   residentCode: resident.residentCode,
   fullName: resident.fullName,
-  roomId: resident.roomId,
+  avatarUrl: resident.avatarUrl || undefined,
+  citizenId: resident.citizenId,
+  insuranceNumber: resident.insuranceNumber,
+  bloodType: resident.bloodType,
+  gender: resident.gender,
+  room: resident.roomId && typeof resident.roomId === 'object'
+    ? {
+        _id: resident.roomId._id,
+        roomNumber: resident.roomId.roomNumber,
+        floor: resident.roomId.floorId && typeof resident.roomId.floorId === 'object'
+          ? { _id: resident.roomId.floorId._id, name: resident.roomId.floorId.name, floorNumber: resident.roomId.floorId.floorNumber }
+          : resident.roomId.floorId,
+      }
+    : resident.roomId,
+  bed: resident.bedId && typeof resident.bedId === 'object'
+    ? { _id: resident.bedId._id, bedCode: resident.bedId.bedCode }
+    : resident.bedId,
+  admittedAt: resident.admittedAt,
   residencyStatus: resident.residencyStatus,
   emergencyContactCount: resident.emergencyContacts?.length ?? 0,
 });
 
 const parseAssignmentStatusFilter = (status) => {
-  let queryStatus = status || 'admitted';
-  if (status && String(status).includes(',')) {
+  if (!status || String(status).toLowerCase() === 'all') {
+    return undefined;
+  }
+
+  let queryStatus = status;
+  if (String(status).includes(',')) {
     const statuses = String(status)
       .split(',')
-      .map((s) => s.trim());
+      .map((s) => s.trim())
+      .filter(Boolean);
     statuses.forEach((s) => {
       if (!RESIDENCY_STATUSES.includes(s)) {
-        throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+        throw apiErr(CODES.RESIDENT_STATUS_INVALID, { statusCode: 400, params: { allowed: RESIDENCY_STATUSES.join(', ') } });
       }
     });
     queryStatus = statuses;
-  } else if (status && !RESIDENCY_STATUSES.includes(status)) {
-    throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+  } else if (!RESIDENCY_STATUSES.includes(String(status))) {
+    throw apiErr(CODES.RESIDENT_STATUS_INVALID, { statusCode: 400, params: { allowed: RESIDENCY_STATUSES.join(', ') } });
   }
+
   return queryStatus;
 };
 
@@ -333,10 +493,10 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
   const queryStatus = parseAssignmentStatusFilter(status);
 
   let residentIds = null;
-  if (user && ['doctor', 'nurse'].includes(user.role)) {
+  if (user && ['doctor', 'nurse', 'caregiver'].includes(user.role)) {
     const staffProfileRepo = require('../repositories/staffProfileRepository');
     const profile = await staffProfileRepo.findByUserId(user._id);
-    if (!profile) throw new ServiceError('Staff profile not found for this account', 404);
+    if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
     const idsSet = new Set((profile.assignedResidentIds || []).map((id) => id.toString()));
 
@@ -361,14 +521,15 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
   }
 
   const data = await residentRepo.findForAssignment({ floorId, roomId, search, status: queryStatus, residentIds });
-  return { data, total: data.length };
+  const formatted = data.map((row) => formatResident(row)).filter(Boolean);
+  return { data: formatted, total: formatted.length };
 };
 
 const listResidentsForFamilyManagement = async ({ search, status, page = 1, limit = 20 }) => {
-  const queryStatus = parseAssignmentStatusFilter(status);
+  const queryStatus = String(status || '').toLowerCase() === 'all' ? undefined : status;
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const limitNum = Math.min(1000, Math.max(1, parseInt(limit, 10) || 20));
   const { data, total, page: currentPage, limit: currentLimit } = await residentRepo.findForFamilyManagement({
     search,
     status: queryStatus,
@@ -387,7 +548,7 @@ const listResidentsForFamilyManagement = async ({ search, status, page = 1, limi
 const getResidentFamilyInfo = async (residentId) => {
   assertResidentId(residentId);
   const resident = await residentRepo.findByIdWithFamily(residentId);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   return {
     resident: {
       _id: resident._id,
@@ -405,15 +566,18 @@ const getResidentFamilyInfo = async (residentId) => {
 const addEmergencyContact = async (residentId, body) => {
   assertResidentId(residentId);
   const contact = validateContactPayload(body, { requireAll: true });
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  assertNoDuplicateEmergencyContact(existing.emergencyContacts, contact);
   const resident = await residentRepo.addEmergencyContact(residentId, contact);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   const added = resident.emergencyContacts[resident.emergencyContacts.length - 1];
-  return { message: 'Thêm liên hệ khẩn cấp thành công', emergencyContact: added, emergencyContacts: resident.emergencyContacts };
+  return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_ADDED), emergencyContact: added, emergencyContacts: resident.emergencyContacts };
 };
 
 const replaceEmergencyContacts = async (residentId, contactsInput) => {
   assertResidentId(residentId);
-  if (!Array.isArray(contactsInput)) throw new ServiceError('contacts phải là mảng', 400);
+  if (!Array.isArray(contactsInput)) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'contacts phải là mảng' } });
   const contacts = contactsInput.map((c) => validateContactPayload(c, { requireAll: true }));
   ensureSinglePrimary(contacts);
   let primarySet = false;
@@ -424,45 +588,68 @@ const replaceEmergencyContacts = async (residentId, contactsInput) => {
     }
     return { ...c, isPrimary: false };
   });
+  if (!primarySet && normalized.length > 0) {
+    normalized[0].isPrimary = true;
+  }
+  assertEmergencyContactsListUnique(normalized);
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  assertPrimaryContactNotRemoved(existing.emergencyContacts, normalized);
   const resident = await residentRepo.replaceEmergencyContacts(residentId, normalized);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
-  return { message: 'Cập nhật liên hệ khẩn cấp thành công', emergencyContacts: resident.emergencyContacts };
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_UPDATED), emergencyContacts: resident.emergencyContacts };
 };
 
 const updateEmergencyContact = async (residentId, contactId, body) => {
   assertResidentId(residentId);
   assertContactId(contactId);
   const patch = validateContactPayload(body, { requireAll: false, partial: true });
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  const current = existing.emergencyContacts?.id?.(contactId);
+  if (!current) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
+  const merged = {
+    fullName: patch.fullName !== undefined ? patch.fullName : current.fullName,
+    phone: patch.phone !== undefined ? patch.phone : current.phone,
+    relationship: patch.relationship !== undefined ? patch.relationship : current.relationship,
+    email: patch.email !== undefined ? patch.email : current.email,
+    address: patch.address !== undefined ? patch.address : current.address,
+    isPrimary: patch.isPrimary !== undefined ? patch.isPrimary : current.isPrimary,
+  };
+  assertNoDuplicateEmergencyContact(existing.emergencyContacts, merged, { excludeContactId: contactId });
   const resident = await residentRepo.updateEmergencyContact(residentId, contactId, patch);
-  if (!resident) {
-    const exists = await residentRepo.findById(residentId);
-    if (!exists) throw new ServiceError('Không tìm thấy cư dân', 404);
-    throw new ServiceError('Không tìm thấy liên hệ khẩn cấp', 404);
-  }
+  if (!resident) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
   const updated = resident.emergencyContacts.id(contactId);
-  return { message: 'Cập nhật liên hệ khẩn cấp thành công', emergencyContact: updated, emergencyContacts: resident.emergencyContacts };
+  return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_UPDATED), emergencyContact: updated, emergencyContacts: resident.emergencyContacts };
 };
 
 const removeEmergencyContact = async (residentId, contactId) => {
   assertResidentId(residentId);
   assertContactId(contactId);
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  const contact = existing.emergencyContacts?.id?.(contactId);
+  if (!contact) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
+  if (contact.isPrimary) throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_CANNOT_DELETE_PRIMARY, { statusCode: 400 });
   const resident = await residentRepo.removeEmergencyContact(residentId, contactId);
-  if (!resident) {
-    const exists = await residentRepo.findById(residentId);
-    if (!exists) throw new ServiceError('Không tìm thấy cư dân', 404);
-    throw new ServiceError('Không tìm thấy liên hệ khẩn cấp', 404);
-  }
-  return { message: 'Xóa liên hệ khẩn cấp thành công', emergencyContacts: resident.emergencyContacts };
+  return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_DELETED), emergencyContacts: resident.emergencyContacts };
 };
 
 const assertAreaFilter = ({ buildingId, floorId, roomId }) => {
-  if (!buildingId && !floorId && !roomId) throw new ServiceError('buildingId, floorId hoặc roomId là bắt buộc', 400);
-  if (buildingId && !residentRepo.assertValidObjectId(buildingId)) throw new ServiceError('buildingId không hợp lệ', 400);
-  if (floorId && !residentRepo.assertValidObjectId(floorId)) throw new ServiceError('floorId không hợp lệ', 400);
-  if (roomId && !residentRepo.assertValidObjectId(roomId)) throw new ServiceError('roomId không hợp lệ', 400);
+  if (!buildingId && !floorId && !roomId) throw apiErr(CODES.RESIDENT_LOCATION_ID_REQUIRED, { statusCode: 400 });
+  if (buildingId && !residentRepo.assertValidObjectId(buildingId)) throw apiErr(CODES.RESIDENT_LOCATION_ID_INVALID, { statusCode: 400, params: { label: 'buildingId' } });
+  if (floorId && !residentRepo.assertValidObjectId(floorId)) throw apiErr(CODES.RESIDENT_LOCATION_ID_INVALID, { statusCode: 400, params: { label: 'floorId' } });
+  if (roomId && !residentRepo.assertValidObjectId(roomId)) throw apiErr(CODES.RESIDENT_LOCATION_ID_INVALID, { statusCode: 400, params: { label: 'roomId' } });
 };
 
 const mapResolveError = (error) => {
+  const codeMap = {
+    room_not_found: CODES.RESIDENT_VALIDATION_FAILED,
+    floor_not_found: CODES.RESIDENT_VALIDATION_FAILED,
+    room_floor_mismatch: CODES.RESIDENT_VALIDATION_FAILED,
+    room_building_mismatch: CODES.RESIDENT_VALIDATION_FAILED,
+    floor_building_mismatch: CODES.RESIDENT_VALIDATION_FAILED,
+  };
   const messages = {
     room_not_found: 'Không tìm thấy phòng',
     floor_not_found: 'Không tìm thấy tầng',
@@ -470,13 +657,15 @@ const mapResolveError = (error) => {
     room_building_mismatch: 'roomId does not belong to the specified buildingId',
     floor_building_mismatch: 'floorId does not belong to the specified buildingId',
   };
-  if (error && messages[error]) throw new ServiceError(messages[error], 400);
+  if (error && messages[error]) {
+    throw apiErr(codeMap[error], { statusCode: 400, params: { detail: messages[error] } });
+  }
 };
 
 const getResidentsAreaSummary = async ({ buildingId, status }) => {
-  if (buildingId && !residentRepo.assertValidObjectId(buildingId)) throw new ServiceError('buildingId không hợp lệ', 400);
+  if (buildingId && !residentRepo.assertValidObjectId(buildingId)) throw apiErr(CODES.RESIDENT_LOCATION_ID_INVALID, { statusCode: 400, params: { label: 'buildingId' } });
   if (status && !RESIDENCY_STATUSES.includes(status)) {
-    throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+    throw apiErr(CODES.RESIDENT_STATUS_INVALID, { statusCode: 400, params: { allowed: RESIDENCY_STATUSES.join(', ') } });
   }
   return residentRepo.getAreaSummary({ buildingId, status: status || 'admitted' });
 };
@@ -485,7 +674,7 @@ const listResidentsByArea = async ({ buildingId, floorId, roomId, search, status
   assertAreaFilter({ buildingId, floorId, roomId });
   const normalizedStatus = normalizeResidencyStatusFilter(status);
   if (normalizedStatus && !RESIDENCY_STATUSES.includes(normalizedStatus)) {
-    throw new ServiceError(`status phải thuộc một trong: ${RESIDENCY_STATUSES.join(', ')}`, 400);
+    throw apiErr(CODES.RESIDENT_STATUS_INVALID, { statusCode: 400, params: { allowed: RESIDENCY_STATUSES.join(', ') } });
   }
   const result = await residentRepo.findByArea({
     buildingId,
@@ -509,7 +698,7 @@ const listResidentsByArea = async ({ buildingId, floorId, roomId, search, status
 const getResidentDetail = async (residentIdOrCode) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findByIdWithDetail(residentId);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   return { resident: formatResident(resident) };
 };
 
@@ -535,14 +724,16 @@ const getTransferTargets = async (residentId, { floorId }) => {
   assertResidentId(residentId);
   assertObjectId(floorId, 'floorId');
   const resident = await residentRepo.findByIdForTransfer(residentId);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
-  if (resident.residencyStatus !== 'admitted') throw new ServiceError('Chỉ cư dân đang ở trạng thái admitted mới được chuyển phòng', 400);
-  if (!resident.roomId || !resident.bedId) throw new ServiceError('Cư dân hiện chưa được gán phòng/giường', 400);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
 
   const floor = await floorRepo.findById(floorId);
-  if (!floor) throw new ServiceError('Không tìm thấy tầng', 404);
+  if (!floor) throw apiErr(CODES.RESIDENT_TRANSFER_FLOOR_NOT_FOUND, { statusCode: 404 });
+
+  const currentAssignment = mapTransferAssignment(resident);
+  const hasCurrentAssignment = Boolean(resident?.roomId || resident?.bedId);
   const rooms = await roomRepo.findByFloorId(floorId);
   const roomIds = rooms.map((room) => room._id);
+  const admittedCountByRoomId = await residentRepo.countAdmittedByRoomIds(roomIds);
   const availableBeds = await bedRepo.findAvailableByRoomIds(roomIds);
   const bedsByRoomId = new Map();
   for (const bed of availableBeds) {
@@ -550,7 +741,9 @@ const getTransferTargets = async (residentId, { floorId }) => {
     if (!bedsByRoomId.has(key)) bedsByRoomId.set(key, []);
     bedsByRoomId.get(key).push({ _id: bed._id, bedCode: bed.bedCode, bedType: bed.bedType, status: bed.status });
   }
-  const currentRoomId = String(resident.roomId?._id || resident.roomId);
+
+  const currentBedId = resident?.bedId ? String(resident.bedId?._id || resident.bedId) : '';
+  const currentRoomId = resident?.roomId ? String(resident.roomId?._id || resident.roomId) : '';
   const targets = rooms
     .map((room) => ({
       _id: room._id,
@@ -559,18 +752,20 @@ const getTransferTargets = async (residentId, { floorId }) => {
       capacity: room.capacity,
       occupiedCount: room.occupiedCount,
       status: room.status,
-      availableBeds: bedsByRoomId.get(String(room._id)) || [],
+      availableBeds: (bedsByRoomId.get(String(room._id)) || []).filter(
+        (bed) => !currentBedId || String(bed._id) !== currentBedId
+      ),
     }))
-    .filter(
-      (room) =>
-        String(room._id) !== currentRoomId &&
-        room.availableBeds.length > 0
-    );
+    .filter((room) => {
+      if (room.availableBeds.length === 0) return false;
+      if (room.status === 'closed') return false;
+      if (currentRoomId && String(room._id) === currentRoomId) return true;
+      const admittedCount = admittedCountByRoomId.get(String(room._id)) || 0;
+      return admittedCount < room.capacity;
+    });
 
-  const message =
-    targets.length === 0
-      ? 'Không có phòng/giường trống trên tầng đã chọn. Chọn tầng khác hoặc giải phóng giường trước.'
-      : undefined;
+  const noTargets = targets.length === 0;
+  const infoMessage = noTargets ? apiSuccess(SUCCESS.RESIDENT_TRANSFER_NO_TARGETS) : null;
 
   return {
     resident: {
@@ -579,9 +774,9 @@ const getTransferTargets = async (residentId, { floorId }) => {
       fullName: resident.fullName,
       residencyStatus: resident.residencyStatus,
     },
-    currentAssignment: mapTransferAssignment(resident),
+    currentAssignment: hasCurrentAssignment ? currentAssignment : null,
     targets,
-    message,
+    ...(infoMessage || {}),
   };
 };
 
@@ -590,28 +785,49 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   assertObjectId(targetRoomId, 'targetRoomId');
   assertObjectId(targetBedId, 'targetBedId');
   const resident = await residentRepo.findByIdForTransfer(residentId);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
-  if (resident.residencyStatus !== 'admitted') throw new ServiceError('Chỉ cư dân đang ở trạng thái admitted mới được chuyển phòng', 400);
-  if (!resident.roomId || !resident.bedId) throw new ServiceError('Cư dân hiện chưa được gán phòng/giường', 400);
-  if (String(resident.bedId._id) === String(targetBedId)) throw new ServiceError('Cư dân đã nằm ở giường này', 400);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  if (resident.residencyStatus !== 'admitted') throw apiErr(CODES.RESIDENT_TRANSFER_NOT_ADMITTED, { statusCode: 400 });
+
+  const hasCurrentAssignment = Boolean(resident.roomId || resident.bedId);
+  const currentBedId = resident.bedId ? String(resident.bedId._id || resident.bedId) : null;
+  if (currentBedId && currentBedId === String(targetBedId)) throw apiErr(CODES.RESIDENT_TRANSFER_SAME_BED, { statusCode: 400 });
 
   const targetRoom = await roomRepo.findById(targetRoomId);
-  if (!targetRoom) throw new ServiceError('Không tìm thấy phòng đích', 404);
-  if (targetRoom.status === 'closed') throw new ServiceError('Phòng đích đang đóng', 400);
-  if (targetRoom.occupiedCount >= targetRoom.capacity) throw new ServiceError('Phòng đích đã đầy', 400);
+  if (!targetRoom) throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_NOT_FOUND, { statusCode: 404 });
+  if (targetRoom.status === 'closed') throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_CLOSED, { statusCode: 400 });
+
+  const sourceRoomId = resident.roomId ? String(resident.roomId._id || resident.roomId) : null;
+  const sameRoom = sourceRoomId && sourceRoomId === String(targetRoomId);
+  if (!sameRoom) {
+    const admittedInTarget = await residentRepo.countAdmittedInRoom(targetRoomId);
+    if (admittedInTarget >= targetRoom.capacity) {
+      throw apiErr(CODES.RESIDENT_TRANSFER_ROOM_FULL, { statusCode: 400 });
+    }
+  }
 
   const targetBed = await bedRepo.findById(targetBedId);
-  if (!targetBed) throw new ServiceError('Không tìm thấy giường đích', 404);
-  if (String(targetBed.roomId) !== String(targetRoomId)) throw new ServiceError('targetBedId không thuộc targetRoomId', 400);
-  if (targetBed.status !== 'available' || targetBed.assignedResidentId) throw new ServiceError('Giường đích không khả dụng', 400);
+  if (!targetBed) throw apiErr(CODES.RESIDENT_TRANSFER_BED_NOT_FOUND, { statusCode: 404 });
+  if (String(targetBed.roomId) !== String(targetRoomId)) throw apiErr(CODES.RESIDENT_TRANSFER_BED_MISMATCH, { statusCode: 400 });
+  if (targetBed.status !== 'available' || targetBed.assignedResidentId) throw apiErr(CODES.RESIDENT_TRANSFER_BED_UNAVAILABLE, { statusCode: 400 });
 
-  await bedRepo.releaseBed(resident.bedId._id, new Date());
-  await roomRepo.adjustOccupiedCount(resident.roomId._id, -1);
+  if (resident.bedId) {
+    await bedRepo.releaseBed(resident.bedId._id, new Date());
+  }
+  if (!sameRoom && resident.roomId) {
+    await roomRepo.adjustOccupiedCount(resident.roomId._id, -1);
+  }
   await bedRepo.occupyBed(targetBedId, resident._id, new Date());
-  await roomRepo.adjustOccupiedCount(targetRoomId, 1);
+  if (!sameRoom) {
+    await roomRepo.adjustOccupiedCount(targetRoomId, 1);
+  }
 
   const updatedResident = await residentRepo.updateRoomAssignment(residentId, { roomId: targetRoomId, bedId: targetBedId });
-  if (!updatedResident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!updatedResident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+
+  if (resident.roomId) {
+    await roomRepo.syncRoomOccupancy(resident.roomId._id);
+  }
+  await roomRepo.syncRoomOccupancy(targetRoomId);
 
   const targetFloorId = targetRoom.floorId?._id || targetRoom.floorId;
   const staffAreasSynced = await syncStaffAreasAfterResidentTransfer(residentId, {
@@ -620,7 +836,7 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   });
 
   return {
-    message: 'Chuyển cư dân thành công',
+    ...apiSuccess(SUCCESS.RESIDENT_TRANSFERRED),
     resident: {
       _id: updatedResident._id,
       residentCode: updatedResident.residentCode,
@@ -632,6 +848,74 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
     from: mapTransferAssignment(resident),
     to: mapTransferAssignment(updatedResident),
     staffAreasSynced,
+  };
+};
+
+const adminReleaseResident = async (admin, residentId, req) => {
+  assertResidentId(residentId);
+  const resident = await residentRepo.findByIdForTransfer(residentId);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+
+  const currentRoomId = resident.roomId?._id || resident.roomId;
+  const currentBedId = resident.bedId?._id || resident.bedId;
+
+  if (currentBedId) {
+    await bedRepo.releaseBed(currentBedId, new Date());
+  }
+  if (currentRoomId) {
+    await roomRepo.adjustOccupiedCount(currentRoomId, -1);
+  }
+
+  const updatedResident = await residentRepo.updateById(residentId, {
+    roomId: null,
+    bedId: null,
+    servicePackage: null,
+    residencyStatus: 'pending',
+  });
+
+  const linkedAdmission = await Admission.findOne({ residentId }).sort({ createdAt: -1 });
+  if (linkedAdmission) {
+    await Admission.findByIdAndUpdate(
+      linkedAdmission._id,
+      {
+        servicePackageId: null,
+        assignedServicePackage: null,
+      },
+      { new: true, runValidators: true }
+    );
+  }
+
+  if (currentRoomId) {
+    await roomRepo.syncRoomOccupancy(currentRoomId);
+  }
+
+  await createAuditLog({
+    actorUserId: admin._id,
+    actorRole: admin.role,
+    action: 'RELEASE_RESIDENT_ROOM_BED',
+    displayAction: 'Giải phóng phòng/giường cư dân',
+    businessModule: 'resident',
+    module: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    beforeData: {
+      roomId: resident.roomId,
+      bedId: resident.bedId,
+      servicePackage: resident.servicePackage,
+      residencyStatus: resident.residencyStatus,
+    },
+    afterData: {
+      roomId: null,
+      bedId: null,
+      servicePackage: null,
+      residencyStatus: 'pending',
+    },
+    req,
+  });
+
+  return {
+    ...apiSuccess(SUCCESS.RESIDENT_UPDATED, { message: 'Giải phóng phòng/giường cư dân thành công.' }),
+    resident: formatResident(updatedResident),
   };
 };
 
@@ -799,7 +1083,7 @@ const listResidentsForDrugAllergies = async ({ search, status, recorded, page = 
 const getInitialHealth = async (residentIdOrCode) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findInitialHealthByResidentId(residentId);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   return { resident: formatResident(resident), initialHealth: mapInitialHealth(resident) };
 };
 
@@ -807,10 +1091,13 @@ const recordInitialHealth = async (residentIdOrCode, body) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const description = parseInitialHealthConditionFromBody(body);
   if (!description) {
-    throw new ServiceError('initialHealthCondition là bắt buộc', 400);
+    throw apiErr(CODES.RESIDENT_HEALTH_CONDITION_REQUIRED, { statusCode: 400 });
   }
   if (description.length < 10) {
-    throw new ServiceError('initialHealthCondition phải có ít nhất 10 ký tự', 400);
+    throw apiErr(CODES.RESIDENT_HEALTH_CONDITION_TOO_SHORT, { statusCode: 400, params: { min: 10 } });
+  }
+  if (description.length > 500) {
+    throw apiErr(CODES.RESIDENT_HEALTH_CONDITION_TOO_LONG, { statusCode: 400, params: { max: 500 } });
   }
 
   const update = { initialHealthCondition: description };
@@ -821,21 +1108,19 @@ const recordInitialHealth = async (residentIdOrCode, body) => {
       : undefined);
   if (bloodType !== undefined) {
     if (!BLOOD_TYPES.includes(bloodType)) {
-      throw new ServiceError(`bloodType phải thuộc một trong: ${BLOOD_TYPES.join(', ')}`, 400);
+      throw apiErr(CODES.RESIDENT_BLOOD_TYPE_INVALID, { statusCode: 400, params: { allowed: BLOOD_TYPES.join(', ') } });
     }
     update.bloodType = bloodType;
   }
 
   const existing = await residentRepo.findById(residentId);
-  if (!existing) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
 
   const updated = await residentRepo.updateInitialHealth(residentId, update);
-  if (!updated) throw new ServiceError('Lưu tình trạng sức khỏe ban đầu thất bại', 500);
+  if (!updated) throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500 });
 
   return {
-    message: hasInitialHealthRecord(existing)
-      ? 'Cập nhật tình trạng sức khỏe ban đầu thành công'
-      : 'Ghi nhận tình trạng sức khỏe ban đầu thành công',
+    ...apiSuccess(SUCCESS.RESIDENT_HEALTH_SAVED),
     resident: formatResident(updated),
     initialHealth: mapInitialHealth(updated),
   };
@@ -844,7 +1129,7 @@ const recordInitialHealth = async (residentIdOrCode, body) => {
 const getPreExistingConditions = async (residentIdOrCode) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findPreExistingByResidentId(residentId);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   return {
     resident: formatResident(resident),
     preExistingConditions: mapPreExistingConditions(resident),
@@ -855,15 +1140,15 @@ const updatePreExistingConditions = async (residentIdOrCode, body) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const { chronicConditions: chronic, medicalHistory: history } = parsePreExistingBody(body);
   const update = {};
-  if (chronic !== undefined) update.chronicConditions = chronic;
-  if (history !== undefined) update.medicalHistory = history;
+  if (chronic !== undefined) update.chronicConditions = assertStringArrayBounds(chronic, 'chronicConditions');
+  if (history !== undefined) update.medicalHistory = assertStringArrayBounds(history, 'medicalHistory');
   if (Object.keys(update).length === 0) {
-    throw new ServiceError('Cần cung cấp ít nhất một trong hai: chronicConditions hoặc medicalHistory', 400);
+    throw apiErr(CODES.RESIDENT_MEDICAL_HISTORY_REQUIRED, { statusCode: 400 });
   }
   const updated = await residentRepo.updatePreExistingConditions(residentId, update);
-  if (!updated) throw new ServiceError('Lưu bệnh nền/tiền sử bệnh thất bại', 500);
+  if (!updated) throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500 });
   return {
-    message: 'Cập nhật bệnh nền/tiền sử bệnh thành công',
+    ...apiSuccess(SUCCESS.RESIDENT_MEDICAL_HISTORY_SAVED),
     resident: formatResident(updated),
     preExistingConditions: mapPreExistingConditions(updated),
   };
@@ -872,7 +1157,7 @@ const updatePreExistingConditions = async (residentIdOrCode, body) => {
 const getDrugAllergies = async (residentIdOrCode) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const resident = await residentRepo.findDrugAllergiesByResidentId(residentId);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   return {
     resident: formatResident(resident),
     drugAllergies: mapDrugAllergies(resident),
@@ -883,12 +1168,13 @@ const updateDrugAllergies = async (residentIdOrCode, body) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const parsed = parseDrugAllergiesBody(body);
   if (parsed === undefined) {
-    throw new ServiceError('drugAllergies là bắt buộc (kiểu mảng, có thể rỗng)', 400);
+    throw apiErr(CODES.RESIDENT_DRUG_ALLERGIES_REQUIRED, { statusCode: 400 });
   }
-  const updated = await residentRepo.updateDrugAllergies(residentId, { drugAllergies: parsed });
-  if (!updated) throw new ServiceError('Lưu dị ứng thuốc thất bại', 500);
+  const bounded = assertStringArrayBounds(parsed, 'drugAllergies');
+  const updated = await residentRepo.updateDrugAllergies(residentId, { drugAllergies: bounded });
+  if (!updated) throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500 });
   return {
-    message: 'Cập nhật dị ứng thuốc thành công',
+    ...apiSuccess(SUCCESS.RESIDENT_ALLERGIES_SAVED),
     resident: formatResident(updated),
     drugAllergies: mapDrugAllergies(updated),
   };
@@ -896,26 +1182,39 @@ const updateDrugAllergies = async (residentIdOrCode, body) => {
 
 const adminCreateResident = async (user, body, req) => {
   if (!body || typeof body !== 'object' || Object.keys(body).length === 0) {
-    throw new ServiceError('Nội dung request body rỗng hoặc parse thất bại. Hãy dùng POST với Header Content-Type: application/json và Body raw JSON.', 400);
+    throw apiErr(CODES.RESIDENT_BODY_EMPTY, { statusCode: 400 });
   }
   const fullName = body.fullName ? String(body.fullName).trim() : '';
-  if (!fullName) throw new ServiceError('fullName là bắt buộc', 400);
+  if (!fullName) throw apiErr(CODES.RESIDENT_FULL_NAME_REQUIRED, { statusCode: 400 });
   const residentCode = body.residentCode ? String(body.residentCode).trim() : null;
   if (residentCode) {
     const existing = await residentRepo.findByResidentCode(residentCode);
-    if (existing) throw new ServiceError('residentCode đã tồn tại', 409);
+    if (existing) throw apiErr(CODES.RESIDENT_CODE_EXISTS, { statusCode: 409 });
   }
+  const dateOfBirth = parseOptionalDate(body.dateOfBirth, 'dateOfBirth');
+  if (dateOfBirth) {
+    const today = new Date();
+    let age = today.getFullYear() - dateOfBirth.getFullYear();
+    const m = today.getMonth() - dateOfBirth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dateOfBirth.getDate())) {
+      age--;
+    }
+    if (age < 50) {
+      throw apiErr(CODES.RESIDENT_AGE_MINIMUM, { statusCode: 400, params: { minAge: 50 } });
+    }
+  }
+
   const payload = {
     residentCode: residentCode || (await generateResidentCode()),
     fullName,
-    dateOfBirth: parseOptionalDate(body.dateOfBirth, 'dateOfBirth'),
+    dateOfBirth,
     gender: body.gender || 'unknown',
     citizenId: body.citizenId ? String(body.citizenId).trim() : undefined,
     insuranceNumber: body.insuranceNumber ? String(body.insuranceNumber).trim() : undefined,
     bloodType: body.bloodType || 'unknown',
     personalAddress: body.personalAddress ? String(body.personalAddress).trim() : undefined,
-    allergies: normalizeStringArray(body.allergies) || [],
-    chronicConditions: normalizeStringArray(body.chronicConditions) || [],
+    allergies: assertStringArrayBounds(normalizeStringArray(body.allergies), 'allergies') || [],
+    chronicConditions: assertStringArrayBounds(normalizeStringArray(body.chronicConditions), 'chronicConditions') || [],
     initialHealthCondition: body.initialHealthCondition ? String(body.initialHealthCondition).trim() : undefined,
     residencyStatus: body.residencyStatus || 'pending',
     admittedAt: parseOptionalDate(body.admittedAt, 'admittedAt'),
@@ -938,7 +1237,7 @@ const adminCreateResident = async (user, body, req) => {
     req,
   });
   const populated = await residentRepo.findByIdForAdmin(resident._id);
-  return { message: 'Tạo hồ sơ cư dân thành công', resident: formatResident(populated) };
+  return { ...apiSuccess(SUCCESS.RESIDENT_CREATED), resident: formatResident(populated) };
 };
 
 const adminListResidents = async (query) => {
@@ -948,6 +1247,13 @@ const adminListResidents = async (query) => {
   if (query.bloodType) filter.bloodType = query.bloodType;
   if (query.roomId) filter.roomId = query.roomId;
   if (query.bedId) filter.bedId = query.bedId;
+  if (query.admittedFrom || query.admittedTo) {
+    filter.admittedAt = {};
+    const from = startOfDay(query.admittedFrom, 'admittedFrom');
+    const to = endOfDay(query.admittedTo, 'admittedTo');
+    if (from) filter.admittedAt.$gte = from;
+    if (to) filter.admittedAt.$lte = to;
+  }
   if (query.search) {
     const term = String(query.search).trim();
     if (term) {
@@ -969,32 +1275,51 @@ const adminListResidents = async (query) => {
 
 const adminGetResident = async (residentId) => {
   const resident = await residentRepo.findByIdForAdmin(residentId);
-  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   return { resident: formatResident(resident) };
 };
 
 const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
-  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw new ServiceError('Nội dung request body rỗng', 400);
+  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw apiErr(CODES.RESIDENT_BODY_EMPTY, { statusCode: 400 });
+  const role = String(user?.role || '').toLowerCase();
+  if (body.allergies !== undefined && (role === 'admin' || role === 'manager')) {
+    throw apiErr(CODES.RESIDENT_DRUG_ALLERGIES_FORBIDDEN, { statusCode: 403 });
+  }
   const update = {};
   if (body.fullName !== undefined) {
     const fullName = String(body.fullName).trim();
-    if (!fullName) throw new ServiceError('fullName không được để trống', 400);
+    if (!fullName) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'fullName không được để trống' } });
     update.fullName = fullName;
   }
-  if (body.dateOfBirth !== undefined) update.dateOfBirth = parseOptionalDate(body.dateOfBirth, 'dateOfBirth');
+  if (body.dateOfBirth !== undefined) {
+    const dob = parseOptionalDate(body.dateOfBirth, 'dateOfBirth');
+    if (dob) {
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+        age--;
+      }
+      if (age < 50) {
+        throw apiErr(CODES.RESIDENT_AGE_MINIMUM, { statusCode: 400, params: { minAge: 50 } });
+      }
+    }
+    update.dateOfBirth = dob;
+  }
   if (body.gender !== undefined) update.gender = body.gender;
   if (body.citizenId !== undefined) update.citizenId = String(body.citizenId || '').trim() || undefined;
   if (body.insuranceNumber !== undefined) update.insuranceNumber = String(body.insuranceNumber || '').trim() || undefined;
   if (body.bloodType !== undefined) update.bloodType = body.bloodType;
   if (body.personalAddress !== undefined) update.personalAddress = String(body.personalAddress || '').trim() || undefined;
+  if (body.avatarUrl !== undefined) update.avatarUrl = String(body.avatarUrl || '').trim() || undefined;
   const allergies = normalizeStringArray(body.allergies);
-  if (allergies !== undefined) update.allergies = allergies;
+  if (allergies !== undefined) update.allergies = assertStringArrayBounds(allergies, 'allergies');
   const chronicConditions = normalizeStringArray(body.chronicConditions);
-  if (chronicConditions !== undefined) update.chronicConditions = chronicConditions;
+  if (chronicConditions !== undefined) update.chronicConditions = assertStringArrayBounds(chronicConditions, 'chronicConditions');
   if (body.initialHealthCondition !== undefined) update.initialHealthCondition = String(body.initialHealthCondition || '').trim() || undefined;
-  if (Object.keys(update).length === 0) throw new ServiceError('Không có trường thông tin cá nhân hợp lệ để cập nhật', 400);
+  if (Object.keys(update).length === 0) throw apiErr(CODES.RESIDENT_PERSONAL_INFO_NO_FIELDS, { statusCode: 400 });
   const before = await residentRepo.findByIdForAdmin(residentId);
-  if (!before) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!before) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   const updated = await residentRepo.updateById(residentId, update);
   await createAuditLog({
     actorUserId: user._id,
@@ -1007,19 +1332,22 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
     afterData: { fullName: updated.fullName, citizenId: updated.citizenId },
     req,
   });
-  return { message: 'Cập nhật thông tin cá nhân cư dân thành công', resident: formatResident(updated) };
+  return { ...apiSuccess(SUCCESS.RESIDENT_UPDATED), resident: formatResident(updated) };
 };
 
 const adminUpdateFamilyInfo = async (user, residentId, body, req) => {
-  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw new ServiceError('Nội dung request body rỗng', 400);
+  if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw apiErr(CODES.RESIDENT_BODY_EMPTY, { statusCode: 400 });
   const update = {};
   const emergencyContacts = normalizeEmergencyContacts(body.emergencyContacts);
   if (emergencyContacts !== undefined) update.emergencyContacts = emergencyContacts;
   const familyPortalAccountIds = await normalizeFamilyAccountIds(body.familyPortalAccountIds);
   if (familyPortalAccountIds !== undefined) update.familyPortalAccountIds = familyPortalAccountIds;
-  if (Object.keys(update).length === 0) throw new ServiceError('Không có trường thông tin gia đình hợp lệ để cập nhật', 400);
+  if (Object.keys(update).length === 0) throw apiErr(CODES.RESIDENT_FAMILY_INFO_NO_FIELDS, { statusCode: 400 });
   const before = await residentRepo.findByIdForAdmin(residentId);
-  if (!before) throw new ServiceError('Không tìm thấy cư dân', 404);
+  if (!before) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  if (emergencyContacts !== undefined) {
+    assertPrimaryContactNotRemoved(before.emergencyContacts, emergencyContacts);
+  }
   const updated = await residentRepo.updateById(residentId, update);
   await createAuditLog({
     actorUserId: user._id,
@@ -1032,7 +1360,50 @@ const adminUpdateFamilyInfo = async (user, residentId, body, req) => {
     afterData: { familyPortalAccountIds: updated.familyPortalAccountIds },
     req,
   });
-  return { message: 'Cập nhật thông tin gia đình cư dân thành công', resident: formatResident(updated) };
+  return { ...apiSuccess(SUCCESS.RESIDENT_UPDATED), resident: formatResident(updated) };
+};
+
+const adminUploadAvatar = async (user, residentId, file, req) => {
+  if (!file || !file.buffer) throw apiErr(CODES.RESIDENT_FILE_REQUIRED, { statusCode: 400 });
+  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  if (!allowed.includes(file.mimetype)) throw apiErr(CODES.RESIDENT_FILE_TYPE_UNSUPPORTED, { statusCode: 400 });
+  if (file.size > 5 * 1024 * 1024) throw apiErr(CODES.RESIDENT_FILE_TOO_LARGE, { statusCode: 400 });
+
+  const { uploadImageBuffer, isCloudinaryConfigured } = require('../utils/cloudinaryUpload');
+  if (!isCloudinaryConfigured()) {
+    throw apiErr(CODES.RESIDENT_CLOUDINARY_NOT_CONFIGURED, { statusCode: 400 });
+  }
+
+  let uploadResult;
+  try {
+    uploadResult = await uploadImageBuffer(file.buffer, {
+      folder: 'residents',
+      mimeType: file.mimetype,
+      options: { use_filename: true, unique_filename: false },
+    });
+  } catch (uploadErr) {
+    console.error('Cloudinary upload error:', uploadErr);
+    throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500, message: uploadErr.message || undefined });
+  }
+
+  const before = await residentRepo.findByIdForAdmin(residentId);
+  if (!before) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+
+  const updated = await residentRepo.updateById(residentId, { avatarUrl: uploadResult.secure_url });
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'UPLOAD_RESIDENT_AVATAR',
+    module: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    beforeData: { avatarUrl: before.avatarUrl },
+    afterData: { avatarUrl: updated.avatarUrl },
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.RESIDENT_AVATAR_UPDATED), resident: formatResident(updated) };
 };
 
 module.exports = {
@@ -1048,6 +1419,7 @@ module.exports = {
   getResidentDetail,
   getTransferTargets,
   transferResidentToRoom,
+  adminReleaseResident,
   listResidentsForInitialHealth,
   listResidentsForPreExisting,
   listResidentsForDrugAllergies,
@@ -1058,6 +1430,7 @@ module.exports = {
   getDrugAllergies,
   updateDrugAllergies,
   adminCreateResident,
+  adminUploadAvatar,
   adminListResidents,
   adminGetResident,
   adminUpdatePersonalInfo,

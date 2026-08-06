@@ -1,12 +1,12 @@
 const mongoose = require('mongoose');
-const { GENDERS, ROLES } = require('./enums');
+const { GENDERS, ROLES, NOTIFICATION_CATEGORIES, DELIVERY_CHANNELS } = require('./enums');
 
 const { Schema } = mongoose;
 
 const userSchema = new Schema(
   {
     fullName: { type: String, required: true, trim: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
+    email: { type: String, unique: true, sparse: true, lowercase: true, trim: true, index: true },
     phone: { type: String, trim: true, index: true },
     username: { type: String, trim: true, unique: true, sparse: true },
     passwordHash: { type: String, required: true },
@@ -23,6 +23,11 @@ const userSchema = new Schema(
     passwordChangedAt: { type: Date },
     resetPasswordTokenHash: { type: String },
     resetPasswordExpiresAt: { type: Date },
+    notificationSettings: {
+      enabledCategories: [{ type: String, enum: NOTIFICATION_CATEGORIES }],
+      deliveryChannels: [{ type: String, enum: DELIVERY_CHANNELS }],
+      doNotDisturb: { type: Boolean, default: false },
+    },
   },
   { timestamps: true }
 );

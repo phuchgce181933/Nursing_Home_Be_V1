@@ -29,6 +29,8 @@ const shiftSchema = new Schema(
     taskDescription: { type: String, trim: true },
     status: { type: String, enum: SHIFT_STATUSES, default: 'draft', index: true },
     publishedAt: { type: Date },
+    checkInTime: { type: Date },
+    checkOutTime: { type: Date },
     changeReason: { type: String, trim: true },
     changeLog: [changeLogEntrySchema],
     notes: { type: String, trim: true },

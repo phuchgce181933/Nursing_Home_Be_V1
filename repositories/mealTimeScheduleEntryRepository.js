@@ -68,9 +68,16 @@ const findByPublishedWorkDate = async (workDate, residentIds = []) => {
   return result;
 };
 
+const findByFilterLean = async (filter, { populate } = {}) => {
+  let q = MealTimeScheduleEntry.find(filter);
+  if (populate) q = q.populate(populate);
+  return q.lean();
+};
+
 module.exports = {
   createMany,
   findByDayId,
   deleteByDayId,
   findByPublishedWorkDate,
+  findByFilterLean,
 };

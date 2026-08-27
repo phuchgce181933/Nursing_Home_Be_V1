@@ -5,7 +5,7 @@ const staffProfileRepo = require('../repositories/staffProfileRepository');
 const residentRepo = require('../repositories/residentRepository');
 const notificationService = require('./notificationService');
 const { createAuditLog } = require('../utils/auditLog');
-const CareAppointment = require('../models/careAppointment');
+const careTaskRepo = require('../repositories/careTaskRepository');
 const shiftRepo = require('../repositories/shiftRepository');
 const { getShiftStartDateTime, getShiftEndDateTime } = require('../utils/shiftTime');
 const userRepo = require('../repositories/userRepository');
@@ -135,7 +135,7 @@ const validateStaffAvailability = async (staffProfileId, roleCategory, startAt, 
   if (appointmentId) {
     query._id = { $ne: appointmentId };
   }
-  const conflict = await CareAppointment.findOne(query).populate('residentId', 'fullName');
+  const conflict = await careAppointmentRepo.findOneByFilter(query, { populate: { path: 'residentId', select: 'fullName' } });
   if (conflict) {
     const residentName = conflict.residentId?.fullName || 'Bệnh nhân khác';
     const roleLabel = roleCategory === 'doctor' ? 'Bác sĩ' : 'Y tá';
@@ -146,14 +146,13 @@ const validateStaffAvailability = async (staffProfileId, roleCategory, startAt, 
   }
 
   // 3. Kiểm tra trùng lịch với Nhiệm vụ chăm sóc (CareTask) cùng ngày
-  const CareTask = require('../models/careTask');
   const dayStart = new Date(dateStr + 'T00:00:00+07:00');
   const dayEnd = new Date(dateStr + 'T23:59:59+07:00');
-  const tasksOnDate = await CareTask.find({
+  const tasksOnDate = await careTaskRepo.findByFilter({
     staffProfileId,
     status: { $in: ['pending', 'in_progress'] },
     workDate: { $gte: dayStart, $lte: dayEnd },
-  }).populate('residentId', 'fullName');
+  }, { populate: { path: 'residentId', select: 'fullName' } });
 
   for (const task of tasksOnDate) {
     if (task.scheduledTime) {

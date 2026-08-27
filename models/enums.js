@@ -1,4 +1,4 @@
-const ROLES = ['admin', 'manager', 'doctor', 'nurse', 'caregiver', 'pharmacist', 'family', 'system'];
+const ROLES = ['admin', 'doctor', 'nurse', 'caregiver', 'pharmacist', 'family'];
 const NON_ASSIGNABLE_ROLES = ['admin', 'family'];
 const OPERATIONAL_ASSIGNABLE_ROLES = ['doctor', 'nurse', 'caregiver'];
 const CARE_TASK_ASSIGNEE_ROLES = ['nurse', 'doctor', 'caregiver'];
@@ -40,8 +40,8 @@ const CONFLICT_TYPES = [
 const CONFLICT_SEVERITIES = ['ERROR', 'WARNING', 'INFO'];
 const ACTIVITY_STATUSES = ['draft', 'scheduled', 'ongoing', 'completed', 'cancelled'];
 
-const PRESCRIPTION_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];
-const MEDICATION_ADMIN_STATUSES = ['pending', 'taken', 'missed', 'overdue'];
+const PRESCRIPTION_STATUSES = ['DRAFT', 'ACTIVE', 'SUSPENDED', 'COMPLETED', 'CANCELLED', 'EXPIRED'];
+const MEDICATION_ADMIN_STATUSES = ['pending', 'taken', 'missed', 'overdue', 'refused', 'held', 'not_available', 'discontinued'];
 const INCIDENT_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const INCIDENT_STATUSES = ['open', 'investigating', 'resolved', 'closed'];
 const APPOINTMENT_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];

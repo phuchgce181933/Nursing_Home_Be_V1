@@ -1,4 +1,4 @@
-const CareAppointment = require('../models/careAppointment');
+const careAppointmentRepo = require('../repositories/careAppointmentRepository');
 const careTaskRepo = require('../repositories/careTaskRepository');
 const { apiErr, CODES } = require('./apiError');
 const { toMinutes, formatTimeVN } = require('./shiftTime');
@@ -34,12 +34,7 @@ const assertNoClinicalAppointmentAtTime = async (
   const role = String(assigneeRole || '').trim().toLowerCase();
   if (!CLINICAL_APPOINTMENT_ROLES.includes(role)) return;
 
-  const conflict = await CareAppointment.findOne({
-    $or: [{ doctorStaffId: staffProfileId }, { nurseStaffId: staffProfileId }],
-    status: { $ne: 'cancelled' },
-    scheduledStartAt: { $lte: effectiveAt },
-    scheduledEndAt: { $gte: effectiveAt },
-  }).lean();
+  const conflict = await careAppointmentRepo.findOneStaffConflictAtTime(staffProfileId, effectiveAt);
 
   if (!conflict) return;
 

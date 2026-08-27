@@ -3,8 +3,7 @@ const leaveRequestRepo = require('../repositories/leaveRequestRepository');
 const shiftRepo = require('../repositories/shiftRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const careTaskRepo = require('../repositories/careTaskRepository');
-const Resident = require('../models/resident');
-const StaffProfile = require('../models/staffProfile');
+const residentRepo = require('../repositories/residentRepository');
 const { LEAVE_REQUEST_TYPES, LEAVE_REQUEST_STATUSES } = require('../models/enums');
 const { residentCoversStaffArea } = require('../utils/staffAssignment');
 const {
@@ -183,9 +182,7 @@ const validateCareTasksForReassignment = async (
   requesterProfileId,
   replacementProfileId
 ) => {
-  const replacementProfile = await StaffProfile.findById(replacementProfileId)
-    .populate('responsibleAreaIds')
-    .populate('responsibleRoomIds');
+  const replacementProfile = await staffProfileRepo.findById(replacementProfileId);
 
   const blockingTasks = [];
   const tasksToReassign = [];
@@ -203,10 +200,7 @@ const validateCareTasksForReassignment = async (
         room &&
         (room.floorId?._id || room.floorId);
       if (!resident || !hasFloor) {
-        resident = await Resident.findById(residentId).populate({
-          path: 'roomId',
-          select: 'roomNumber floorId',
-        });
+        resident = await residentRepo.findByIdWithFamily(residentId);
       }
 
       if (!resident || !residentCoversStaffArea(resident, replacementProfile)) {

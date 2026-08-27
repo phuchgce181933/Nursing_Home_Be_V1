@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
 const { apiErr, CODES } = require('../utils/apiError');
-const SpecialDietDay = require('../models/specialDietDay');
-const SpecialDietEntry = require('../models/specialDietEntry');
+const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
 const assignedResidentService = require('./assignedResidentService');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
@@ -89,10 +88,10 @@ const loadPublishedSpecialDietsForResident = async (residentId, workDateStr) => 
     return { published: false, planTitle: null, entries: [] };
   }
 
-  const entries = await SpecialDietEntry.find({
+  const entries = await specialDietEntryRepo.findByFilterLean({
     specialDietDayId: day._id,
     residentId,
-  }).lean();
+  });
 
   return {
     published: entries.length > 0,
@@ -140,12 +139,10 @@ const listDietPlansOverview = async (userId, query) => {
   let dietCountsByResident = new Map();
 
   if (specialDietDay && residentIds.length) {
-    const dietEntries = await SpecialDietEntry.find({
-      specialDietDayId: specialDietDay._id,
-      residentId: { $in: residentIds },
-    })
-      .select('residentId')
-      .lean();
+    const dietEntries = await specialDietEntryRepo.findByFilterLean(
+      { specialDietDayId: specialDietDay._id, residentId: { $in: residentIds } },
+      { select: 'residentId' }
+    );
     for (const entry of dietEntries) {
       const rid = String(entry.residentId);
       dietCountsByResident.set(rid, (dietCountsByResident.get(rid) || 0) + 1);

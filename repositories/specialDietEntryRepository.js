@@ -12,8 +12,16 @@ const findByDayId = async (specialDietDayId) =>
 const deleteByDayId = async (specialDietDayId, options = {}) =>
   SpecialDietEntry.deleteMany({ specialDietDayId }, options);
 
+const findByFilterLean = async (filter, { populate, select } = {}) => {
+  let q = SpecialDietEntry.find(filter);
+  if (select) q = q.select(select);
+  if (populate) q = q.populate(populate);
+  return q.lean();
+};
+
 module.exports = {
   createMany,
   findByDayId,
   deleteByDayId,
+  findByFilterLean,
 };

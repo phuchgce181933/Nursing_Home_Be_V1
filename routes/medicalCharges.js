@@ -3,7 +3,7 @@ const router = express.Router();
 const { protect, authorize } = require('../middleware/auth');
 const ctrl = require('../controllers/medicalChargeController');
 
-router.use(protect, authorize('admin', 'manager', 'doctor', 'nurse'));
+router.use(protect, authorize('admin', 'doctor', 'nurse'));
 router.get('/', ctrl.listCharges);
 router.get('/:id', ctrl.getCharge);
 router.put('/:id', ctrl.updateCharge);

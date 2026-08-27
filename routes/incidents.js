@@ -14,7 +14,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 
 router.use(protect);
-router.use(authorize('doctor', 'nurse', 'admin', 'manager', 'caregiver', 'pharmacist'));
+router.use(authorize('doctor', 'nurse', 'admin', 'caregiver', 'pharmacist'));
 
 /**
  * @swagger

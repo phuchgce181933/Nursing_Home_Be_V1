@@ -9,6 +9,12 @@ const CANCELLABLE_STATUSES = [...ACTIVE_ADMISSION_STATUSES];
 const APPROVABLE_STATUSES = ['new_request', 'consulting'];
 const REJECTABLE_STATUSES = ['new_request', 'consulting'];
 
+const findOneSorted = (filter, { sort } = {}) => {
+  let q = Admission.findOne(filter);
+  if (sort) q = q.sort(sort);
+  return q;
+};
+
 const findActiveAdmission = (filter) =>
   Admission.findOne({ ...filter, status: { $in: ACTIVE_ADMISSION_STATUSES } });
 
@@ -87,7 +93,22 @@ const findByIdForAdmin = (id) =>
     .populate('assignedBedId', 'bedCode')
     .populate('assignedRoomId', 'roomNumber');
 
+const distinct = (field, filter) => Admission.distinct(field, filter);
+
+const findByFilterLean = (filter, { select } = {}) => {
+  let q = Admission.find(filter);
+  if (select) q = q.select(select);
+  return q.lean();
+};
+
+const findOneAndUpdate = (filter, update, opts = {}) =>
+  Admission.findOneAndUpdate(filter, update, opts);
+
 module.exports = {
+  distinct,
+  findByFilterLean,
+  findOneSorted,
+  findOneAndUpdate,
   ACTIVE_ADMISSION_STATUSES,
   CANCELLABLE_STATUSES,
   APPROVABLE_STATUSES,

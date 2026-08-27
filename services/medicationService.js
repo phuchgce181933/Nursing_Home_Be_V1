@@ -28,10 +28,11 @@ const getMyResidents = async (user) => {
   const residentIds = await getResidentScope(user);
   if (residentIds === null) {
     // admin/manager: return all active residents
-    const Resident = require('../models/resident');
-    return Resident.find({ residencyStatus: 'admitted' })
-      .select('residentCode fullName allergies chronicConditions dateOfBirth gender bloodType')
-      .sort({ fullName: 1 });
+    const residentRepo = require('../repositories/residentRepository');
+    return residentRepo.findByFilterLean(
+      { residencyStatus: 'admitted' },
+      { select: 'residentCode fullName allergies chronicConditions dateOfBirth gender bloodType', sort: { fullName: 1 } }
+    );
   }
   return medRepo.findResidentsByIds(residentIds);
 };
@@ -55,9 +56,9 @@ const listPrescriptions = async (user, query) => {
     medRepo.countPrescriptions(filter),
   ]);
 
-  const Invoice = require('../models/invoice');
+  const invoiceRepo = require('../repositories/invoiceRepository');
   const prescriptionIds = data.map((rx) => rx._id);
-  const allInvoices = await Invoice.find({ prescriptionId: { $in: prescriptionIds } }).select('prescriptionId status');
+  const allInvoices = await invoiceRepo.findByFilterLean({ prescriptionId: { $in: prescriptionIds } }, { select: 'prescriptionId status' });
   const invoicesByPrescription = {};
   for (const inv of allInvoices) {
     const key = inv.prescriptionId.toString();

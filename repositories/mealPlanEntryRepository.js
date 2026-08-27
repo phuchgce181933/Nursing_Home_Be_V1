@@ -50,5 +50,15 @@ const findByDayId = async (mealPlanDayId) =>
 const deleteByDayId = async (mealPlanDayId, options = {}) =>
   MealPlanEntry.deleteMany({ mealPlanDayId }, options);
 
-module.exports = { createMany, findByDayId, deleteByDayId, findByResidentsOnWorkDate };
+const findOneLean = async (filter) => MealPlanEntry.findOne(filter).lean();
+
+const findByFilterLean = async (filter, { select } = {}) => {
+  let q = MealPlanEntry.find(filter);
+  if (select) q = q.select(select);
+  return q.lean();
+};
+
+const exists = async (filter) => MealPlanEntry.exists(filter);
+
+module.exports = { createMany, findByDayId, deleteByDayId, findByResidentsOnWorkDate, findOneLean, findByFilterLean, exists };
 

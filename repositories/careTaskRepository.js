@@ -7,7 +7,7 @@ const POPULATE = [
   { path: 'assignedBy', select: 'fullName role' },
 ];
 
-const create = async (data) => CareTask.create(data);
+const create = async (data, opts) => CareTask.create(Array.isArray(data) ? data : [data], opts);
 
 const findById = async (id) => CareTask.findById(id).populate(POPULATE);
 
@@ -73,6 +73,18 @@ const findSkippedWithLegacyAutoShiftNote = async () =>
     .select('_id notes workDate')
     .lean();
 
+const findOneByFilter = async (filter, { populate } = {}) => {
+  let q = CareTask.findOne(filter);
+  if (populate) q = q.populate(populate);
+  return q;
+};
+
+const findByFilter = async (filter, { populate } = {}) => {
+  let q = CareTask.find(filter);
+  if (populate) q = q.populate(populate);
+  return q;
+};
+
 const updateById = async (id, data) =>
   CareTask.findByIdAndUpdate(id, data, { new: true, runValidators: true }).populate(POPULATE);
 
@@ -91,6 +103,8 @@ module.exports = {
   findActiveByShift,
   findActiveWithShift,
   findSkippedWithLegacyAutoShiftNote,
+  findOneByFilter,
+  findByFilter,
   updateById,
   deleteById,
 };

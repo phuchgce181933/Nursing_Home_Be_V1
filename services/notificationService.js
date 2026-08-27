@@ -1,5 +1,5 @@
 const notificationRepo = require('../repositories/notificationRepository');
-const User = require('../models/user');
+const userRepo = require('../repositories/userRepository');
 const { escapeRegex } = require('../utils/validators');
 const pushNotificationService = require('./pushNotificationService');
 
@@ -56,7 +56,7 @@ const updateSettingsForUser = async (userId, updates) => {
   if (updates.enabledCategories) update['notificationSettings.enabledCategories'] = updates.enabledCategories;
   if (updates.deliveryChannels) update['notificationSettings.deliveryChannels'] = updates.deliveryChannels;
   if (typeof updates.doNotDisturb !== 'undefined') update['notificationSettings.doNotDisturb'] = !!updates.doNotDisturb;
-  const user = await User.findByIdAndUpdate(userId, { $set: update }, { new: true }).select('notificationSettings');
+  const user = await userRepo.updateSettingsById(userId, update);
   return user.notificationSettings;
 };
 

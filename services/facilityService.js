@@ -1,6 +1,9 @@
-const Building = require('../models/building');
+const buildingRepo = require('../repositories/buildingRepository');
 const floorRepo = require('../repositories/floorRepository');
 const roomRepo = require('../repositories/roomRepository');
+const bedRepo = require('../repositories/bedRepository');
+const equipmentRepo = require('../repositories/equipmentRepository');
+const residentRepo = require('../repositories/residentRepository');
 
 const formatFloorLabel = (floor) => {
   const floorName = floor.name || `Tầng ${floor.floorNumber}`;
@@ -10,7 +13,7 @@ const formatFloorLabel = (floor) => {
 
 const listBuildings = async ({ activeOnly = true } = {}) => {
   const filter = activeOnly ? { isActive: { $ne: false } } : {};
-  return Building.find(filter).select('code name address description isActive').sort({ name: 1 }).lean();
+  return buildingRepo.findByFilterLean(filter, { select: 'code name address description isActive', sort: { name: 1 } });
 };
 
 const listFloors = async ({ buildingId, activeOnly = true } = {}) => {
@@ -59,34 +62,31 @@ const listRoomsByFloor = async (floorId) => {
 };
 
 const listAllRooms = async ({ activeOnly = false } = {}) => {
-  const Room = require('../models/room');
   const filter = activeOnly ? { status: { $ne: 'closed' } } : {};
-  return Room.find(filter).select('_id roomNumber roomType status floorId buildingId').lean();
+  return roomRepo.findByFilterLean(filter, { select: '_id roomNumber roomType status floorId buildingId' });
 };
 
 const listAllBeds = async ({ activeOnly = false } = {}) => {
-  const Bed = require('../models/bed');
   const filter = activeOnly ? { status: { $ne: 'maintenance' } } : {};
-  return Bed.find(filter).select('_id bedCode status roomId').lean();
+  return bedRepo.findByFilterLean(filter, { select: '_id bedCode status roomId' });
 };
 
 const getStats = async () => {
   const [buildings, floors, rooms, beds] = await Promise.all([
-    require('../models/building').countDocuments({}),
-    require('../models/floor').countDocuments({}),
-    require('../models/room').countDocuments({}),
-    require('../models/bed').countDocuments({}),
+    buildingRepo.countDocuments({}),
+    floorRepo.countDocuments({}),
+    roomRepo.countDocuments({}),
+    bedRepo.countDocuments({}),
   ]);
   return { buildingsCount: buildings, floorsCount: floors, roomsCount: rooms, bedsCount: beds };
 };
 
 const listAvailableBedsByRoom = async (roomId, { all = false } = {}) => {
-  const Bed = require('../models/bed');
   const filter = { roomId };
   if (!all) {
     filter.status = 'available';
   }
-  return Bed.find(filter).sort({ bedCode: 1 }).lean();
+  return bedRepo.findByFilterLean(filter, { sort: { bedCode: 1 } });
 };
 
 const createBuilding = async (data, user, req) => {
@@ -98,10 +98,10 @@ const createBuilding = async (data, user, req) => {
   if (!code) throw Object.assign(new Error('Mã tòa nhà là bắt buộc'), { status: 400 });
   if (!name) throw Object.assign(new Error('Tên tòa nhà là bắt buộc'), { status: 400 });
 
-  const existing = await Building.findOne({ code });
+  const existing = await buildingRepo.findOne({ code });
   if (existing) throw Object.assign(new Error('Mã tòa nhà đã tồn tại'), { status: 409 });
 
-  const building = await Building.create({
+  const building = await buildingRepo.create({
     code,
     name,
     address: address || undefined,
@@ -125,7 +125,7 @@ const createBuilding = async (data, user, req) => {
 };
 
 const updateBuilding = async (buildingId, data, user, req) => {
-  const building = await Building.findById(buildingId);
+  const building = await buildingRepo.findById(buildingId);
   if (!building) throw Object.assign(new Error('Không tìm thấy tòa nhà'), { status: 404 });
 
   const beforeData = { code: building.code, name: building.name, address: building.address, description: building.description, isActive: building.isActive };
@@ -134,7 +134,7 @@ const updateBuilding = async (buildingId, data, user, req) => {
     const nextCode = String(data.code || '').trim().toUpperCase();
     if (!nextCode) throw Object.assign(new Error('Mã tòa nhà không được để trống'), { status: 400 });
     if (nextCode !== building.code) {
-      const existing = await Building.findOne({ code: nextCode });
+      const existing = await buildingRepo.findOne({ code: nextCode });
       if (existing) throw Object.assign(new Error('Mã tòa nhà đã tồn tại'), { status: 409 });
       building.code = nextCode;
     }
@@ -177,7 +177,7 @@ const updateBuilding = async (buildingId, data, user, req) => {
 };
 
 const deleteBuilding = async (buildingId, user, req) => {
-  const building = await Building.findById(buildingId);
+  const building = await buildingRepo.findById(buildingId);
   if (!building) throw Object.assign(new Error('Không tìm thấy tòa nhà'), { status: 404 });
 
   const beforeData = { code: building.code, name: building.name, isActive: building.isActive };
@@ -185,11 +185,8 @@ const deleteBuilding = async (buildingId, user, req) => {
   building.isActive = false;
   await building.save();
 
-  const Floor = require('../models/floor');
-  await Floor.updateMany({ buildingId }, { isActive: false });
-
-  const Room = require('../models/room');
-  await Room.updateMany({ buildingId }, { status: 'closed' });
+  await floorRepo.updateMany({ buildingId }, { isActive: false });
+  await roomRepo.updateMany({ buildingId }, { status: 'closed' });
 
   const { createAuditLog } = require('../utils/auditLog');
   await createAuditLog({
@@ -208,7 +205,6 @@ const deleteBuilding = async (buildingId, user, req) => {
 };
 
 const createFloor = async (data, user, req) => {
-  const Floor = require('../models/floor');
   const buildingId = data.buildingId;
   const floorNumber = Number(data.floorNumber);
   const name = String(data.name || '').trim();
@@ -218,13 +214,13 @@ const createFloor = async (data, user, req) => {
   if (Number.isNaN(floorNumber)) throw Object.assign(new Error('floorNumber phải là số và là bắt buộc'), { status: 400 });
   if (floorNumber <= 0) throw Object.assign(new Error('floorNumber phải lớn hơn 0'), { status: 400 });
 
-  const building = await Building.findById(buildingId);
+  const building = await buildingRepo.findById(buildingId);
   if (!building) throw Object.assign(new Error('Không tìm thấy tòa nhà'), { status: 404 });
 
-  const existing = await Floor.findOne({ buildingId, floorNumber });
+  const existing = await floorRepo.findOne({ buildingId, floorNumber });
   if (existing) throw Object.assign(new Error(`Tầng số ${floorNumber} đã tồn tại trong tòa nhà này`), { status: 409 });
 
-  const floor = await Floor.create({
+  const floor = await floorRepo.create({
     buildingId,
     floorNumber,
     name: name || undefined,
@@ -248,8 +244,7 @@ const createFloor = async (data, user, req) => {
 };
 
 const updateFloor = async (floorId, data, user, req) => {
-  const Floor = require('../models/floor');
-  const floor = await Floor.findById(floorId);
+  const floor = await floorRepo.findById(floorId);
   if (!floor) throw Object.assign(new Error('Không tìm thấy tầng'), { status: 404 });
 
   const beforeData = { floorNumber: floor.floorNumber, name: floor.name, description: floor.description, isActive: floor.isActive };
@@ -259,7 +254,7 @@ const updateFloor = async (floorId, data, user, req) => {
     if (Number.isNaN(nextNum)) throw Object.assign(new Error('floorNumber phải là số hợp lệ'), { status: 400 });
     if (nextNum <= 0) throw Object.assign(new Error('floorNumber phải lớn hơn 0'), { status: 400 });
     if (nextNum !== floor.floorNumber) {
-      const existing = await Floor.findOne({ buildingId: floor.buildingId, floorNumber: nextNum });
+      const existing = await floorRepo.findOne({ buildingId: floor.buildingId, floorNumber: nextNum });
       if (existing) throw Object.assign(new Error(`Tầng số ${nextNum} đã tồn tại trong tòa nhà này`), { status: 409 });
       floor.floorNumber = nextNum;
     }
@@ -296,8 +291,7 @@ const updateFloor = async (floorId, data, user, req) => {
 };
 
 const deleteFloor = async (floorId, user, req) => {
-  const Floor = require('../models/floor');
-  const floor = await Floor.findById(floorId);
+  const floor = await floorRepo.findById(floorId);
   if (!floor) throw Object.assign(new Error('Không tìm thấy tầng'), { status: 404 });
 
   const beforeData = { floorNumber: floor.floorNumber, name: floor.name, isActive: floor.isActive };
@@ -305,8 +299,7 @@ const deleteFloor = async (floorId, user, req) => {
   floor.isActive = false;
   await floor.save();
 
-  const Room = require('../models/room');
-  await Room.updateMany({ floorId }, { status: 'closed' });
+  await roomRepo.updateMany({ floorId }, { status: 'closed' });
 
   const { createAuditLog } = require('../utils/auditLog');
   await createAuditLog({
@@ -325,8 +318,6 @@ const deleteFloor = async (floorId, user, req) => {
 };
 
 const createRoom = async (data, user, req) => {
-  const Room = require('../models/room');
-  const Floor = require('../models/floor');
   const buildingId = data.buildingId;
   const floorId = data.floorId;
   const roomNumber = String(data.roomNumber || '').trim();
@@ -342,13 +333,13 @@ const createRoom = async (data, user, req) => {
   }
   if (Number.isNaN(capacity) || capacity < 1) throw Object.assign(new Error('capacity phải là số lớn hơn hoặc bằng 1'), { status: 400 });
 
-  const floor = await Floor.findById(floorId);
+  const floor = await floorRepo.findById(floorId);
   if (!floor) throw Object.assign(new Error('Không tìm thấy tầng'), { status: 404 });
   if (String(floor.buildingId) !== String(buildingId)) {
     throw Object.assign(new Error('Tầng đã chọn không thuộc tòa nhà đã chọn'), { status: 400 });
   }
 
-  const existing = await Room.findOne({ floorId, roomNumber });
+  const existing = await roomRepo.findOne({ floorId, roomNumber });
   if (existing) throw Object.assign(new Error(`Phòng số ${roomNumber} đã tồn tại ở tầng này`), { status: 409 });
 
   const { ROOM_TYPES } = require('../models/enums');
@@ -356,7 +347,7 @@ const createRoom = async (data, user, req) => {
     throw Object.assign(new Error(`Loại phòng không hợp lệ. Phải thuộc: ${ROOM_TYPES.join(', ')}`), { status: 400 });
   }
 
-  const room = await Room.create({
+  const room = await roomRepo.create({
     buildingId,
     floorId,
     roomNumber,
@@ -383,8 +374,7 @@ const createRoom = async (data, user, req) => {
 };
 
 const updateRoom = async (roomId, data, user, req) => {
-  const Room = require('../models/room');
-  const room = await Room.findById(roomId);
+  const room = await roomRepo.findByIdDoc(roomId);
   if (!room) throw Object.assign(new Error('Không tìm thấy phòng'), { status: 404 });
 
   const beforeData = { roomNumber: room.roomNumber, roomType: room.roomType, capacity: room.capacity, status: room.status, notes: room.notes };
@@ -396,7 +386,7 @@ const updateRoom = async (roomId, data, user, req) => {
       throw Object.assign(new Error('Số phòng phải lớn hơn 0'), { status: 400 });
     }
     if (nextNum !== room.roomNumber) {
-      const existing = await Room.findOne({ floorId: room.floorId, roomNumber: nextNum });
+      const existing = await roomRepo.findOne({ floorId: room.floorId, roomNumber: nextNum });
       if (existing) throw Object.assign(new Error(`Phòng số ${nextNum} đã tồn tại ở tầng này`), { status: 409 });
       room.roomNumber = nextNum;
     }
@@ -457,8 +447,7 @@ const updateRoom = async (roomId, data, user, req) => {
 };
 
 const deleteRoom = async (roomId, user, req) => {
-  const Room = require('../models/room');
-  const room = await Room.findById(roomId);
+  const room = await roomRepo.findByIdDoc(roomId);
   if (!room) throw Object.assign(new Error('Không tìm thấy phòng'), { status: 404 });
 
   if (room.occupiedCount > 0) {
@@ -470,8 +459,7 @@ const deleteRoom = async (roomId, user, req) => {
   room.status = 'closed';
   await room.save();
 
-  const Bed = require('../models/bed');
-  await Bed.updateMany({ roomId }, { status: 'maintenance' });
+  await bedRepo.updateMany({ roomId }, { status: 'maintenance' });
 
   const { createAuditLog } = require('../utils/auditLog');
   await createAuditLog({
@@ -490,8 +478,6 @@ const deleteRoom = async (roomId, user, req) => {
 };
 
 const createBed = async (data, user, req) => {
-  const Bed = require('../models/bed');
-  const Room = require('../models/room');
   const roomId = data.roomId;
   const bedCode = String(data.bedCode || '').trim();
   const bedType = data.bedType || 'normal';
@@ -501,16 +487,16 @@ const createBed = async (data, user, req) => {
   if (!roomId) throw Object.assign(new Error('roomId là bắt buộc'), { status: 400 });
   if (!bedCode) throw Object.assign(new Error('bedCode là bắt buộc'), { status: 400 });
 
-  const room = await Room.findById(roomId);
+  const room = await roomRepo.findById(roomId);
   if (!room) throw Object.assign(new Error('Không tìm thấy phòng'), { status: 404 });
 
-  const currentBedCount = await Bed.countDocuments({ roomId });
+  const currentBedCount = await bedRepo.countDocuments({ roomId });
   if (currentBedCount >= room.capacity) {
     throw Object.assign(new Error(`Số giường trong phòng đã đạt giới hạn sức chứa của phòng (${room.capacity} giường)`), { status: 400 });
   }
 
   const escapedBedCode = bedCode.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-  const existing = await Bed.findOne({
+  const existing = await bedRepo.findOne({
     roomId,
     bedCode: { $regex: new RegExp(`^${escapedBedCode}$`, 'i') }
   });
@@ -524,7 +510,7 @@ const createBed = async (data, user, req) => {
     throw Object.assign(new Error(`Tình trạng giường không hợp lệ. Phải thuộc: ${BED_CONDITIONS.join(', ')}`), { status: 400 });
   }
 
-  const bed = await Bed.create({
+  const bed = await bedRepo.create({
     roomId,
     bedCode,
     bedType,
@@ -549,8 +535,7 @@ const createBed = async (data, user, req) => {
 };
 
 const updateBed = async (bedId, data, user, req) => {
-  const Bed = require('../models/bed');
-  const bed = await Bed.findById(bedId);
+  const bed = await bedRepo.findByIdDoc(bedId);
   if (!bed) throw Object.assign(new Error('Không tìm thấy giường'), { status: 404 });
 
   const beforeData = { bedCode: bed.bedCode, bedType: bed.bedType, status: bed.status, condition: bed.condition, notes: bed.notes };
@@ -560,7 +545,7 @@ const updateBed = async (bedId, data, user, req) => {
     if (!nextCode) throw Object.assign(new Error('bedCode không được để trống'), { status: 400 });
     if (nextCode !== bed.bedCode) {
       const escapedNextCode = nextCode.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-      const existing = await Bed.findOne({
+      const existing = await bedRepo.findOne({
         roomId: bed.roomId,
         bedCode: { $regex: new RegExp(`^${escapedNextCode}$`, 'i') },
         _id: { $ne: bed._id }
@@ -598,11 +583,10 @@ const updateBed = async (bedId, data, user, req) => {
       if (bed.assignedResidentId) {
         throw Object.assign(new Error('Không thể đặt trạng thái trống khi giường vẫn gán cho cư dân'), { status: 400 });
       }
-      const Resident = require('../models/resident');
-      const residentOnBed = await Resident.findOne({
-        bedId: bed._id,
-        residencyStatus: 'admitted',
-      }).select('_id fullName residentCode');
+      const residentOnBed = await residentRepo.findOneByFilterLean(
+        { bedId: bed._id, residencyStatus: 'admitted' },
+        { select: '_id fullName residentCode' }
+      );
       if (residentOnBed) {
         throw Object.assign(
           new Error(`Không thể đặt trạng thái trống — cư dân ${residentOnBed.fullName || residentOnBed.residentCode} đang gán giường này`),
@@ -636,8 +620,7 @@ const updateBed = async (bedId, data, user, req) => {
 };
 
 const deleteBed = async (bedId, user, req) => {
-  const Bed = require('../models/bed');
-  const bed = await Bed.findById(bedId);
+  const bed = await bedRepo.findByIdDoc(bedId);
   if (!bed) throw Object.assign(new Error('Không tìm thấy giường'), { status: 404 });
 
   if (bed.status === 'occupied') {
@@ -646,7 +629,7 @@ const deleteBed = async (bedId, user, req) => {
 
   const beforeData = { bedCode: bed.bedCode, status: bed.status };
 
-  await Bed.findByIdAndDelete(bedId);
+  await bedRepo.findByIdAndDelete(bedId);
 
   const { createAuditLog } = require('../utils/auditLog');
   await createAuditLog({
@@ -665,23 +648,15 @@ const deleteBed = async (bedId, user, req) => {
 };
 
 const listEquipment = async (filters = {}) => {
-  const Equipment = require('../models/equipment');
   const query = {};
   if (filters.status) query.status = filters.status;
   if (filters.category) query.category = filters.category;
   if (filters.roomId) query.roomId = filters.roomId;
 
-  return Equipment.find(query)
-    .populate('buildingId', 'name code')
-    .populate('floorId', 'name floorNumber')
-    .populate('roomId', 'roomNumber')
-    .populate('bedId', 'bedCode')
-    .sort({ name: 1 })
-    .lean();
+  return equipmentRepo.findByFilterPopulated(query, { sort: { name: 1 } });
 };
 
 const createEquipment = async (data, user, req) => {
-  const Equipment = require('../models/equipment');
   const code = String(data.code || '').trim().toUpperCase();
   const name = String(data.name || '').trim();
   const category = String(data.category || '').trim();
@@ -704,7 +679,7 @@ const createEquipment = async (data, user, req) => {
     if (mDate < today) throw Object.assign(new Error('Hạn bảo trì phải ở hiện tại hoặc tương lai'), { status: 400 });
   }
 
-  const existing = await Equipment.findOne({ code });
+  const existing = await equipmentRepo.findOne({ code });
   if (existing) throw Object.assign(new Error(`Mã thiết bị ${code} đã tồn tại`), { status: 409 });
 
   const { EQUIPMENT_STATUSES, EQUIPMENT_LOCATION_TYPES } = require('../models/enums');
@@ -715,7 +690,7 @@ const createEquipment = async (data, user, req) => {
     throw Object.assign(new Error('Loại vị trí thiết bị không hợp lệ'), { status: 400 });
   }
 
-  const equipment = await Equipment.create({
+  const equipment = await equipmentRepo.create({
     code,
     name,
     category: category || undefined,
@@ -745,8 +720,7 @@ const createEquipment = async (data, user, req) => {
 };
 
 const updateEquipment = async (id, data, user, req) => {
-  const Equipment = require('../models/equipment');
-  const equipment = await Equipment.findById(id);
+  const equipment = await equipmentRepo.findById(id);
   if (!equipment) throw Object.assign(new Error('Không tìm thấy thiết bị'), { status: 404 });
 
   const beforeData = {
@@ -767,7 +741,7 @@ const updateEquipment = async (id, data, user, req) => {
     const nextCode = String(data.code || '').trim().toUpperCase();
     if (!nextCode) throw Object.assign(new Error('Mã thiết bị không được để trống'), { status: 400 });
     if (nextCode !== equipment.code) {
-      const existing = await Equipment.findOne({ code: nextCode });
+      const existing = await equipmentRepo.findOne({ code: nextCode });
       if (existing) throw Object.assign(new Error(`Mã thiết bị ${nextCode} đã tồn tại`), { status: 409 });
       equipment.code = nextCode;
     }
@@ -803,7 +777,6 @@ const updateEquipment = async (id, data, user, req) => {
     equipment.locationType = data.locationType;
   }
 
-  // Handle locations mapping
   if (data.buildingId !== undefined) equipment.buildingId = data.buildingId || undefined;
   if (data.floorId !== undefined) equipment.floorId = data.floorId || undefined;
   if (data.roomId !== undefined) equipment.roomId = data.roomId || undefined;
@@ -852,13 +825,12 @@ const updateEquipment = async (id, data, user, req) => {
 };
 
 const deleteEquipment = async (id, user, req) => {
-  const Equipment = require('../models/equipment');
-  const equipment = await Equipment.findById(id);
+  const equipment = await equipmentRepo.findById(id);
   if (!equipment) throw Object.assign(new Error('Không tìm thấy thiết bị'), { status: 404 });
 
   const beforeData = { code: equipment.code, status: equipment.status };
 
-  await Equipment.findByIdAndDelete(id);
+  await equipmentRepo.findByIdAndDelete(id);
 
   const { createAuditLog } = require('../utils/auditLog');
   await createAuditLog({
@@ -877,26 +849,20 @@ const deleteEquipment = async (id, user, req) => {
 };
 
 const getBuildingStats = async (buildingId) => {
-  const Floor = require('../models/floor');
-  const Room = require('../models/room');
-  const Bed = require('../models/bed');
-
-  const building = await Building.findById(buildingId).lean();
+  const building = await buildingRepo.findByIdLean(buildingId);
   if (!building) {
     throw Object.assign(new Error('Không tìm thấy tòa nhà'), { status: 404 });
   }
 
-  const floorsCount = await Floor.countDocuments({ buildingId });
-  const roomsCount = await Room.countDocuments({ buildingId });
+  const floorsCount = await floorRepo.countDocuments({ buildingId });
+  const roomsCount = await roomRepo.countDocuments({ buildingId });
 
-  // Get rooms to find bed statistics
-  const rooms = await Room.find({ buildingId }).select('_id').lean();
+  const rooms = await roomRepo.findByFilterLean({ buildingId }, { select: '_id' });
   const roomIds = rooms.map((r) => r._id);
 
-  const totalBeds = await Bed.countDocuments({ roomId: { $in: roomIds } });
+  const totalBeds = await bedRepo.countDocuments({ roomId: { $in: roomIds } });
 
-  // Aggregate bed statuses
-  const bedStatsRaw = await Bed.aggregate([
+  const bedStatsRaw = await bedRepo.aggregate([
     { $match: { roomId: { $in: roomIds } } },
     { $group: { _id: '$status', count: { $sum: 1 } } },
   ]);

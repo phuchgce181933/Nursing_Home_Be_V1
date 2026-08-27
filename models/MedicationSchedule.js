@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const { Schema, Types } = mongoose;
 
-const SCHEDULE_STATUSES = ['PENDING', 'TAKEN', 'LATE_TAKEN', 'MISSED', 'SKIPPED', 'OVERDUE'];
+const SCHEDULE_STATUSES = ['PENDING', 'TAKEN', 'LATE_TAKEN', 'MISSED', 'SKIPPED', 'OVERDUE', 'REFUSED', 'HELD', 'NOT_AVAILABLE', 'DISCONTINUED'];
 
 const medicationScheduleSchema = new Schema(
   {
@@ -20,6 +20,11 @@ const medicationScheduleSchema = new Schema(
     administrationTiming: { type: String, enum: ['early', 'on_time', 'late'] },
     missedReason: { type: String, trim: true },
     notes: { type: String, trim: true },
+    isPRN: { type: Boolean, default: false },
+    prnReason: { type: String, trim: true },
+    refusedReason: { type: String, trim: true },
+    heldReason: { type: String, trim: true },
+    notAvailableReason: { type: String, trim: true },
   },
   { timestamps: true }
 );

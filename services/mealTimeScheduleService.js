@@ -4,7 +4,7 @@ const mealTimeScheduleDayRepo = require('../repositories/mealTimeScheduleDayRepo
 const mealTimeScheduleEntryRepo = require('../repositories/mealTimeScheduleEntryRepository');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
 const { assertNoPublishedScheduleConflicts } = require('../utils/nutritionPublishGuards');
-const Resident = require('../models/resident');
+const residentRepo = require('../repositories/residentRepository');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 
 const NON_TX_ERROR_PATTERNS = [
@@ -260,7 +260,7 @@ const createDraft = async (body, actorUserId) => {
     throw apiErr(CODES.MEAL_TIME_SCHEDULE_NO_RESIDENTS, { statusCode: 400 });
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
-  const residentCount = await Resident.countDocuments({ _id: { $in: residentIds } });
+  const residentCount = await residentRepo.countAll({ _id: { $in: residentIds } });
   if (residentCount !== residentIds.length) {
     throw apiErr(CODES.MEAL_RESIDENTS_NOT_FOUND, { statusCode: 400 });
   }
@@ -375,8 +375,8 @@ const deleteDraft = async (id) => {
     throw apiErr(CODES.MEAL_TIME_SCHEDULE_DRAFT_ONLY_DELETE, { statusCode: 400 });
   }
 
-  const MealPlanDay = require('../models/mealPlanDay');
-  const linkedPlans = await MealPlanDay.countDocuments({ mealTimeScheduleDayId: id });
+  const mealPlanDayRepo = require('../repositories/mealPlanDayRepository');
+  const linkedPlans = await mealPlanDayRepo.countAll({ mealTimeScheduleDayId: id });
   if (linkedPlans > 0) {
     throw apiErr(CODES.MEAL_TIME_SCHEDULE_IN_USE, { statusCode: 409 });
   }

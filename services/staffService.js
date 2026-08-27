@@ -4,10 +4,9 @@ const staffProfileRepo = require('../repositories/staffProfileRepository');
 const shiftRepo = require('../repositories/shiftRepository');
 const leaveRequestRepo = require('../repositories/leaveRequestRepository');
 const careTaskRepo = require('../repositories/careTaskRepository');
-const Floor = require('../models/floor');
-const Room = require('../models/room');
-const Resident = require('../models/resident');
-const StaffProfile = require('../models/staffProfile');
+const floorRepo = require('../repositories/floorRepository');
+const roomRepo = require('../repositories/roomRepository');
+const residentRepo = require('../repositories/residentRepository');
 const {
   assertAssignableStaffByUserId,
   getAssignableFlags,
@@ -478,7 +477,7 @@ const validateStaffAreaAssignment = async (floorIds, roomIds) => {
   const allowedFloors = new Set();
 
   if (floorIds?.length) {
-    const floors = await Floor.find({ _id: { $in: floorIds }, isActive: { $ne: false } });
+    const floors = await floorRepo.findByFilter({ _id: { $in: floorIds }, isActive: { $ne: false } });
     if (floors.length !== floorIds.length) {
       throw apiErr(CODES.STAFF_FLOOR_IDS_INVALID, { statusCode: 400 });
     }
@@ -486,7 +485,7 @@ const validateStaffAreaAssignment = async (floorIds, roomIds) => {
   }
 
   if (roomIds?.length) {
-    const rooms = await Room.find({ _id: { $in: roomIds }, status: { $nin: ['closed'] } });
+    const rooms = await roomRepo.findByFilter({ _id: { $in: roomIds }, status: { $nin: ['closed'] } });
     if (rooms.length !== roomIds.length) {
       throw apiErr(CODES.STAFF_ROOM_IDS_INVALID, { statusCode: 400 });
     }
@@ -504,14 +503,11 @@ const validateStaffAreaAssignment = async (floorIds, roomIds) => {
 };
 
 const pruneAssignedResidentsToAreas = async (profile) => {
-  const populated = await StaffProfile.findById(profile._id)
-    .populate({
-      path: 'assignedResidentIds',
-      select: 'fullName residentCode roomId',
-      populate: { path: 'roomId', select: 'roomNumber floorId' },
-    })
-    .populate('responsibleAreaIds', 'floorNumber name')
-    .populate('responsibleRoomIds', 'roomNumber roomType');
+  const populated = await staffProfileRepo.findByIdPopulated(profile._id, [
+    { path: 'assignedResidentIds', select: 'fullName residentCode roomId', populate: { path: 'roomId', select: 'roomNumber floorId' } },
+    { path: 'responsibleAreaIds', select: 'floorNumber name' },
+    { path: 'responsibleRoomIds', select: 'roomNumber roomType' },
+  ]);
 
   if (!populated) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
@@ -538,10 +534,11 @@ const pruneAssignedResidentsToAreas = async (profile) => {
     roomNumber: r.roomId?.roomNumber,
   }));
 
-  const staffProfile = await StaffProfile.findById(profile._id)
-    .populate('assignedResidentIds', 'fullName residentCode roomId')
-    .populate('responsibleAreaIds', 'floorNumber name')
-    .populate('responsibleRoomIds', 'roomNumber roomType');
+  const staffProfile = await staffProfileRepo.findByIdPopulated(profile._id, [
+    { path: 'assignedResidentIds', select: 'fullName residentCode roomId' },
+    { path: 'responsibleAreaIds', select: 'floorNumber name' },
+    { path: 'responsibleRoomIds', select: 'roomNumber roomType' },
+  ]);
 
   return {
     staffProfile,
@@ -565,7 +562,7 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
   await validateStaffAreaAssignment(floorIds, roomIds);
 
   if (roomIds?.length && floorIds === undefined) {
-    const rooms = await Room.find({ _id: { $in: roomIds } }).select('floorId');
+    const rooms = await roomRepo.findByFilterLean({ _id: { $in: roomIds } }, { select: 'floorId' });
     const derivedFloors = [...new Set(rooms.map((r) => r.floorId.toString()))];
     const existing = (profile.responsibleAreaIds || []).map((f) => String(f));
     updateData.responsibleAreaIds = [...new Set([...existing, ...derivedFloors])];
@@ -631,12 +628,9 @@ const listResidentsAvailableForStaff = async (userId, { search, status } = {}) =
 };
 
 const listAssignedResidents = async (userId) => {
-  const profile = await StaffProfile.findOne({ userId })
-    .populate({
-      path: 'assignedResidentIds',
-      select: 'fullName residentCode roomId residencyStatus',
-      populate: { path: 'roomId', select: 'roomNumber floorId' },
-    });
+  const profile = await staffProfileRepo.findOnePopulated({ userId }, [
+    { path: 'assignedResidentIds', select: 'fullName residentCode roomId residencyStatus', populate: { path: 'roomId', select: 'roomNumber floorId' } },
+  ]);
 
   if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
 
@@ -664,8 +658,10 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
   const objectIds = validateObjectIds(parsedIds, 'residentId');
 
   if (objectIds.length) {
-    const residents = await Resident.find({ _id: { $in: objectIds } })
-      .populate({ path: 'roomId', select: 'roomNumber floorId' });
+    const residents = await residentRepo.findByFilterLean(
+      { _id: { $in: objectIds } },
+      { populate: { path: 'roomId', select: 'roomNumber floorId' } }
+    );
 
     if (residents.length !== objectIds.length) {
       const found = new Set(residents.map((r) => r._id.toString()));
@@ -695,10 +691,11 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
 
   await staffProfileRepo.updateById(profile._id, { assignedResidentIds: objectIds });
 
-  const staffProfile = await StaffProfile.findById(profile._id)
-    .populate('assignedResidentIds', 'fullName residentCode roomId')
-    .populate('responsibleAreaIds', 'floorNumber name')
-    .populate('responsibleRoomIds', 'roomNumber roomType');
+  const staffProfile = await staffProfileRepo.findByIdPopulated(profile._id, [
+    { path: 'assignedResidentIds', select: 'fullName residentCode roomId' },
+    { path: 'responsibleAreaIds', select: 'floorNumber name' },
+    { path: 'responsibleRoomIds', select: 'roomNumber roomType' },
+  ]);
 
   return { ...apiSuccess(SUCCESS.STAFF_RESIDENTS_UPDATED), staffProfile };
 };

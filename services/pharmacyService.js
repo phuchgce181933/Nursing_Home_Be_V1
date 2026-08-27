@@ -5,7 +5,7 @@ const medicationStockRepo = require('../repositories/medicationStockRepository')
 const medicationDispenseRepo = require('../repositories/medicationDispenseRepository');
 const medicationNoteRepo = require('../repositories/medicationNoteRepository');
 const supplierRepo = require('../repositories/supplierRepository');
-const Prescription = require('../models/prescription');
+const prescriptionRepo = require('../repositories/prescriptionRepository');
 
 const parsePagination = (query) => {
 	const pageNum = Math.max(1, parseInt(query.page || 1, 10));
@@ -571,7 +571,7 @@ const dispenseMedication = async (user, body, req) => {
 	}
 
 	if (body.prescriptionId) {
-		const prescription = await Prescription.findById(body.prescriptionId);
+		const prescription = await prescriptionRepo.findById(body.prescriptionId);
 		if (!prescription) throw new ServiceError('Không tìm thấy đơn thuốc', 404);
 		if (!prescription.isVerified) throw new ServiceError('Đơn thuốc phải được xác minh trước khi cấp phát', 400);
 		if (prescription.items && prescription.items.length > 0) {
@@ -622,7 +622,7 @@ const dispenseMedication = async (user, body, req) => {
 };
 
 const verifyPrescription = async (user, prescriptionId, req) => {
-	const prescription = await Prescription.findById(prescriptionId);
+	const prescription = await prescriptionRepo.findById(prescriptionId);
 	if (!prescription) throw new ServiceError('Không tìm thấy đơn thuốc', 404);
 	if (prescription.isVerified) throw new ServiceError('Đơn thuốc đã được xác minh', 400);
 

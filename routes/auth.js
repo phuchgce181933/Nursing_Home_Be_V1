@@ -5,8 +5,6 @@ const {
   getMe,
   createStaffAccount,
   searchFamilyAccounts,
-  requestRegisterOtp,
-  verifyRegisterOtp,
   listStaffAccounts,
   toggleStaffActive,
   createFirebaseToken,
@@ -23,12 +21,6 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { uploadAvatar, uploadAvatarAndCertifications } = require('../middleware/uploadMiddleware');
 const rateLimit = require('express-rate-limit');
-
-const registerLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 registration attempts per windowMs
-  message: { message: 'Quá nhiều lần đăng ký từ địa chỉ IP này, vui lòng thử lại sau' },
-});
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -65,61 +57,6 @@ const loginLimiter = rateLimit({
  *         description: Invalid credentials or account inactive/banned
  */
 router.post('/login', loginLimiter, login);
-
-/**
- * @swagger
- * /api/auth/register-otp:
- *   post:
- *     summary: Step 1 of self-registration — validate fields and send an OTP to the given email or phone (public, no auth required)
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [fullName, password]
- *             description: Provide exactly one of email or phone
- *             properties:
- *               fullName: { type: string }
- *               email: { type: string }
- *               phone: { type: string }
- *               password: { type: string, minLength: 8 }
- *     responses:
- *       201:
- *         description: OTP sent, returns { otpId, maskedRecipient }
- *       400:
- *         description: Validation error, or both/neither of email+phone provided
- *       409:
- *         description: Email or phone already in use
- */
-router.post('/register-otp', registerLimiter, requestRegisterOtp);
-
-/**
- * @swagger
- * /api/auth/register-verify:
- *   post:
- *     summary: Step 2 of self-registration — verify the OTP and create the family account (public, no auth required)
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [otpId, code]
- *             properties:
- *               otpId: { type: string }
- *               code: { type: string }
- *     responses:
- *       201:
- *         description: Account created, returns JWT token (role always 'family')
- *       400:
- *         description: Invalid/expired OTP
- *       409:
- *         description: Email or phone already in use
- */
-router.post('/register-verify', registerLimiter, verifyRegisterOtp);
 
 /**
  * @swagger
@@ -286,7 +223,7 @@ router.post('/create-staff', protect, authorize('admin'), uploadAvatarAndCertifi
  *       200:
  *         description: Staff list retrieved
  */
-router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
+router.get('/staff', protect, authorize('admin'), listStaffAccounts);
 
 /**
  * @swagger
@@ -311,7 +248,7 @@ router.get('/staff', protect, authorize('admin', 'manager'), listStaffAccounts);
  *       200:
  *         description: Matching family accounts
  */
-router.get('/family-accounts', protect, authorize('admin', 'manager'), searchFamilyAccounts);
+router.get('/family-accounts', protect, authorize('admin'), searchFamilyAccounts);
 
 /**
  * @swagger

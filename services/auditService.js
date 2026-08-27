@@ -1,5 +1,5 @@
 const { Types } = require('mongoose');
-const AuditLog = require('../models/auditLog');
+const auditLogRepo = require('../repositories/auditLogRepository');
 const ServiceError = require('./serviceError');
 
 const buildAuditLogFilter = (query = {}) => {
@@ -118,8 +118,8 @@ const listAuditLogs = async (query = {}) => {
 
   const filter = buildAuditLogFilter(query);
   const [data, total] = await Promise.all([
-    AuditLog.find(filter).sort({ [sortBy]: sortOrder }).skip(skip).limit(limit).lean(),
-    AuditLog.countDocuments(filter),
+    auditLogRepo.findByFilterLean(filter, { sort: { [sortBy]: sortOrder }, skip, limit }),
+    auditLogRepo.countByFilter(filter),
   ]);
 
   return {
@@ -143,9 +143,9 @@ const getAuditLogFilters = async (query = {}) => {
   }
 
   const [actions, businessModules, roles] = await Promise.all([
-    AuditLog.distinct('action', filter),
-    AuditLog.distinct('businessModule', filter),
-    AuditLog.distinct('performedByRole', filter),
+    auditLogRepo.distinct('action', filter),
+    auditLogRepo.distinct('businessModule', filter),
+    auditLogRepo.distinct('performedByRole', filter),
   ]);
 
   return {
@@ -160,7 +160,7 @@ const getAuditLogById = async (id) => {
     throw new ServiceError('ID nhật ký kiểm tra không hợp lệ', 400);
   }
 
-  const auditLog = await AuditLog.findById(id).lean();
+  const auditLog = await auditLogRepo.findByIdLean(id);
   if (!auditLog) {
     throw new ServiceError('Không tìm thấy bản ghi nhật ký kiểm tra', 404);
   }

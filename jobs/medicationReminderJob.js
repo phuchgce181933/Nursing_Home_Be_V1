@@ -1,13 +1,12 @@
 const cron = require('node-cron');
-const MedicationSchedule = require('../models/MedicationSchedule');
-const Notification = require('../models/notification');
-const Resident = require('../models/resident');
-const User = require('../models/user');
+const medicationScheduleRepo = require('../repositories/medicationScheduleRepository');
+const prescriptionRepo = require('../repositories/prescriptionRepository');
+const notificationRepo = require('../repositories/notificationRepository');
+const userRepo = require('../repositories/userRepository');
 const notificationService = require('../services/notificationService');
 
-// Fetch all active nurse user IDs (cached per job run — not module-level to stay fresh)
 const getNurseIds = async () => {
-  const nurses = await User.find({ role: 'nurse', isActive: true }).select('_id');
+  const nurses = await userRepo.findStaffUsers({ role: 'nurse', isActive: true }, { skip: 0, limit: 10000 });
   return nurses.map((u) => u._id);
 };
 
@@ -21,28 +20,22 @@ const buildNotification = (nurseId, title, content, scheduleId) => ({
   deliveryChannels: ['in_app'],
 });
 
-/**
- * Job A — Upcoming reminder: PENDING schedules due within the next 30 minutes.
- * Runs every 15 minutes. Creates an in-app notification for each nurse.
- */
 const runUpcomingReminders = async () => {
   const now = new Date();
-  const in15 = new Date(now.getTime() + 15 * 60 * 1000);
   const in30 = new Date(now.getTime() + 30 * 60 * 1000);
 
-  const upcoming = await MedicationSchedule.find({
-    status: 'PENDING',
-    scheduledTime: { $gt: now, $lte: in30 },
-  }).populate('residentId', 'fullName');
+  const upcoming = await medicationScheduleRepo.findByFilter(
+    { status: 'PENDING', scheduledTime: { $gt: now, $lte: in30 } },
+    { populate: [{ path: 'residentId', select: 'fullName' }] }
+  );
 
   if (!upcoming.length) return;
 
   const scheduleIds = upcoming.map((s) => s._id);
-  const existingNotifs = await Notification.find({
-    targetEntityType: 'MedicationSchedule',
-    targetEntityId: { $in: scheduleIds },
-    title: 'Nhắc nhở uống thuốc',
-  }).select('targetEntityId');
+  const existingNotifs = await notificationRepo.findByFilter(
+    { targetEntityType: 'MedicationSchedule', targetEntityId: { $in: scheduleIds }, title: 'Nhắc nhở uống thuốc' },
+    'targetEntityId'
+  );
   const alreadyNotified = new Set(existingNotifs.map((n) => n.targetEntityId.toString()));
 
   const toNotify = upcoming.filter((s) => !alreadyNotified.has(s._id.toString()));
@@ -60,31 +53,26 @@ const runUpcomingReminders = async () => {
       timeZone: 'Asia/Ho_Chi_Minh',
     });
     const content = `Nhắc nhở: ${residentName} cần uống ${schedule.medicationName} lúc ${timeStr}`;
-    const title = 'Nhắc nhở uống thuốc';
     for (const nurseId of nurseIds) {
-      notifications.push(buildNotification(nurseId, title, content, schedule._id));
+      notifications.push(buildNotification(nurseId, 'Nhắc nhở uống thuốc', content, schedule._id));
     }
   }
 
   if (notifications.length) await notificationService.createMany(notifications);
 };
 
-/**
- * Job B — Overdue: PENDING schedules whose scheduledTime is more than 30 minutes ago.
- * Runs every 15 minutes. Marks as OVERDUE and notifies all nurses.
- */
 const runOverdueCheck = async () => {
   const threshold = new Date(Date.now() - 30 * 60 * 1000);
 
-  const overdue = await MedicationSchedule.find({
-    status: 'PENDING',
-    scheduledTime: { $lt: threshold },
-  }).populate('residentId', 'fullName');
+  const overdue = await medicationScheduleRepo.findByFilter(
+    { status: 'PENDING', scheduledTime: { $lt: threshold } },
+    { populate: [{ path: 'residentId', select: 'fullName' }] }
+  );
 
   if (!overdue.length) return;
 
   const overdueIds = overdue.map((s) => s._id);
-  await MedicationSchedule.updateMany(
+  await medicationScheduleRepo.updateManyByFilter(
     { _id: { $in: overdueIds } },
     { $set: { status: 'OVERDUE' } }
   );
@@ -101,17 +89,44 @@ const runOverdueCheck = async () => {
       timeZone: 'Asia/Ho_Chi_Minh',
     });
     const content = `Quá hạn: ${residentName} chưa uống ${schedule.medicationName} (lúc ${timeStr})`;
-    const title = 'Thuốc quá hạn chưa được uống';
     for (const nurseId of nurseIds) {
-      notifications.push(buildNotification(nurseId, title, content, schedule._id));
+      notifications.push(buildNotification(nurseId, 'Thuốc quá hạn chưa được uống', content, schedule._id));
     }
   }
 
   if (notifications.length) await notificationService.createMany(notifications);
 };
 
+const runAutoExpire = async () => {
+  const now = new Date();
+  const expiredPrescriptions = await prescriptionRepo.findByFilter({
+    status: { $in: ['ACTIVE', 'SUSPENDED'] },
+    validUntil: { $lt: now },
+  });
+
+  for (const rx of expiredPrescriptions) {
+    rx.status = 'EXPIRED';
+    rx.expiredAt = now;
+    rx.editHistory.push({
+      editedBy: rx.doctorId,
+      editedAt: now,
+      changes: 'Auto-expired: validUntil passed',
+      action: 'AUTO_EXPIRE',
+    });
+    await prescriptionRepo.saveDoc(rx);
+
+    await medicationScheduleRepo.updateManyByFilter(
+      { prescriptionId: rx._id, status: { $in: ['PENDING', 'OVERDUE', 'HELD'] } },
+      { $set: { status: 'DISCONTINUED' } }
+    );
+  }
+
+  if (expiredPrescriptions.length) {
+    console.log(`[MedicationJob] Auto-expired ${expiredPrescriptions.length} prescriptions`);
+  }
+};
+
 const initMedicationJobs = () => {
-  // Every 15 minutes
   cron.schedule('*/15 * * * *', async () => {
     try {
       await runUpcomingReminders();
@@ -125,7 +140,15 @@ const initMedicationJobs = () => {
     }
   });
 
-  console.log('[MedicationJob] Medication reminder jobs scheduled (every 15 min)');
+  cron.schedule('0 * * * *', async () => {
+    try {
+      await runAutoExpire();
+    } catch (err) {
+      console.error('[MedicationJob] Auto-expire error:', err.message);
+    }
+  });
+
+  console.log('[MedicationJob] Medication reminder jobs scheduled (every 15 min + hourly expiry)');
 };
 
 module.exports = { initMedicationJobs };

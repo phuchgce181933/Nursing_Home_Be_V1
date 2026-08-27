@@ -1,4 +1,4 @@
-const ShiftTemplate = require('../models/shiftTemplate');
+const shiftTemplateRepo = require('../repositories/shiftTemplateRepository');
 const { DEFAULT_SHIFTS, SYSTEM_SHIFT_CODES } = require('../config/defaultShifts');
 const { calcShiftDurationHours } = require('../utils/shiftValidation');
 
@@ -6,7 +6,7 @@ const ensureDefaultShiftTemplates = async () => {
   for (const def of DEFAULT_SHIFTS) {
     const totalHours = Math.round(calcShiftDurationHours(def.startTime, def.endTime) * 100) / 100;
     const crossesMidnight = def.endTime <= def.startTime;
-    await ShiftTemplate.findOneAndUpdate(
+    await shiftTemplateRepo.findOneAndUpdate(
       { shiftCode: def.shiftCode },
       {
         $set: {
@@ -29,7 +29,7 @@ const ensureDefaultShiftTemplates = async () => {
     );
   }
 
-  const archiveResult = await ShiftTemplate.updateMany(
+  const archiveResult = await shiftTemplateRepo.updateMany(
     { shiftCode: { $nin: SYSTEM_SHIFT_CODES } },
     { $set: { status: 'archived' } }
   );

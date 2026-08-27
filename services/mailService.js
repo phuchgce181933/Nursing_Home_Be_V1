@@ -113,7 +113,6 @@ const sendEmailVerificationOtp = async ({ to, code, expiresMinutes = 10 }) => {
 
 const ROLE_BASE_PATH = {
   admin: '/admin',
-  manager: '/manager',
   doctor: '/doctor',
   nurse: '/nurse',
   caregiver: '/caregiver',
@@ -258,7 +257,6 @@ const sendIncidentNotificationEmail = async ({
 
 const STAFF_ROLE_LABELS = {
   admin: 'Quản trị viên',
-  manager: 'Quản lý',
   doctor: 'Bác sĩ',
   nurse: 'Điều dưỡng',
   pharmacist: 'Dược sĩ',

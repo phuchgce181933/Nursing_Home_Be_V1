@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const { Schema, Types } = mongoose;
 
-const PRESCRIPTION_STATUSES = ['ACTIVE', 'COMPLETED', 'CANCELLED'];
+const PRESCRIPTION_STATUSES = ['DRAFT', 'ACTIVE', 'SUSPENDED', 'COMPLETED', 'CANCELLED', 'EXPIRED'];
 const ITEM_ROUTES = ['oral', 'injection', 'topical', 'inhaled'];
 
 const prescriptionItemSchema = new Schema({
@@ -20,6 +20,9 @@ const prescriptionItemSchema = new Schema({
   instructions: { type: String, trim: true },
   elderlyDosageAdjusted: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true },
+  isPRN: { type: Boolean, default: false },
+  prnReason: { type: String, trim: true },
+  maxDailyDoses: { type: Number, min: 1, max: 12 },
 });
 
 const editHistorySchema = new Schema(
@@ -27,6 +30,9 @@ const editHistorySchema = new Schema(
     editedBy: { type: Types.ObjectId, ref: 'User', required: true },
     editedAt: { type: Date, default: Date.now },
     changes: { type: String, required: true, trim: true },
+    beforeData: { type: Schema.Types.Mixed },
+    afterData: { type: Schema.Types.Mixed },
+    action: { type: String, trim: true },
   },
   { _id: false }
 );
@@ -55,6 +61,14 @@ const prescriptionSchema = new Schema(
     isVerified: { type: Boolean, default: false, index: true },
     verifiedByUserId: { type: Types.ObjectId, ref: 'User' },
     verifiedAt: { type: Date },
+    // lifecycle fields
+    version: { type: Number, default: 1 },
+    suspendedAt: { type: Date },
+    suspendedBy: { type: Types.ObjectId, ref: 'User' },
+    suspendedReason: { type: String, trim: true },
+    expiredAt: { type: Date },
+    activatedAt: { type: Date },
+    activatedBy: { type: Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }
 );

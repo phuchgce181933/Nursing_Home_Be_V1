@@ -26,12 +26,32 @@ const adjustOccupiedCount = async (roomId, delta) => {
   return room.toObject();
 };
 
+const findByFilterLean = async (filter, { select } = {}) => {
+  let q = Room.find(filter);
+  if (select) q = q.select(select);
+  return q.lean();
+};
+
+const findByFilter = async (filter) => Room.find(filter);
+const findByIdDoc = async (id) => Room.findById(id);
+const findOne = async (filter) => Room.findOne(filter);
+const create = async (data) => Room.create(data);
+const updateMany = async (filter, update) => Room.updateMany(filter, update);
+const countDocuments = async (filter) => Room.countDocuments(filter);
+
 const { syncRoomOccupancy, syncAllRoomOccupancy } = require('../utils/roomOccupancySync');
 
 module.exports = {
   findByFloorId,
   findById,
+  findByIdDoc,
   adjustOccupiedCount,
+  findByFilterLean,
+  findByFilter,
+  findOne,
+  create,
+  updateMany,
+  countDocuments,
   syncRoomOccupancy,
   syncAllRoomOccupancy,
 };

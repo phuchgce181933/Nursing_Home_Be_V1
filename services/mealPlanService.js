@@ -5,7 +5,7 @@ const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
 const { getActiveDishMap } = require('./dishService');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
-const Resident = require('../models/resident');
+const residentRepo = require('../repositories/residentRepository');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 const { assertNoMealPlanConflicts } = require('../utils/mealPlanValidation');
 
@@ -312,7 +312,7 @@ const createDraft = async (body, actorUserId) => {
     throw apiErr(CODES.MEAL_NO_RESIDENTS, { statusCode: 400 });
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
-  const residentCount = await Resident.countDocuments({ _id: { $in: residentIds } });
+  const residentCount = await residentRepo.countAll({ _id: { $in: residentIds } });
   if (residentCount !== residentIds.length) {
     throw apiErr(CODES.MEAL_RESIDENTS_NOT_FOUND, { statusCode: 400 });
   }

@@ -9,9 +9,9 @@ const residentRepo = require('../repositories/residentRepository');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 const medicationStockRepo = require('../repositories/medicationStockRepository');
-const MedicalCharge = require('../models/medicalCharge');
-const Admission = require('../models/admission');
-const Prescription = require('../models/prescription');
+const medicalChargeRepo = require('../repositories/medicalChargeRepository');
+const admissionRepo = require('../repositories/admissionRepository');
+const prescriptionRepo = require('../repositories/prescriptionRepository');
 const medicationDispenseRepo = require('../repositories/medicationDispenseRepository');
 const { createAuditLog } = require('../utils/auditLog');
 
@@ -67,11 +67,11 @@ const markInvoiceAsPaid = async (invoiceId) => {
     ? { $or: [{ invoiceId: invoice._id }, { _id: { $in: chargeIds } }] }
     : { invoiceId: invoice._id };
 
-  await MedicalCharge.updateMany(chargeQuery, { $set: { billingStatus: 'PAID' } });
+  await medicalChargeRepo.updateMany(chargeQuery, { $set: { billingStatus: 'PAID' } });
   // If this invoice represents medication charges for a prescription, create MedicationDispense
   try {
     if (String(invoice.type || '').toUpperCase() === 'MEDICATION' && invoice.prescriptionId) {
-      const prescription = await Prescription.findById(invoice.prescriptionId).lean();
+      const prescription = await prescriptionRepo.findByIdLean(invoice.prescriptionId);
       if (prescription && Array.isArray(prescription.items) && prescription.items.length > 0) {
         // aggregate quantities per medicationId
         const qtyMap = {};
@@ -517,7 +517,7 @@ const estimateMedicationCostForPrescription = async (prescriptionId, residentId)
     throw new ServiceError('prescriptionId không hợp lệ', 400);
   }
 
-  const prescription = await Prescription.findById(prescriptionId).populate('residentId');
+  const prescription = await prescriptionRepo.findByIdWithResident(prescriptionId);
   if (!prescription) {
     throw new ServiceError('Không tìm thấy đơn thuốc', 404);
   }
@@ -536,7 +536,7 @@ const createInvoice = async (user, residentId, body) => {
     if (!Types.ObjectId.isValid(body.admissionId)) {
       throw new ServiceError('admissionId không hợp lệ', 400);
     }
-    const admission = await Admission.findById(body.admissionId).select('residentId contractNumber').lean();
+    const admission = await admissionRepo.findById(body.admissionId);
     if (!admission) throw new ServiceError('Không tìm thấy yêu cầu tiếp nhận', 404);
     if (String(admission.residentId) !== String(residentId)) {
       throw new ServiceError('Yêu cầu tiếp nhận không thuộc về cư dân này', 400);
@@ -579,7 +579,7 @@ const createInvoice = async (user, residentId, body) => {
       throw new ServiceError('prescriptionId không hợp lệ', 400);
     }
 
-    const prescription = await Prescription.findById(prescriptionId).populate('residentId');
+    const prescription = await prescriptionRepo.findByIdWithResident(prescriptionId);
     if (!prescription) {
       throw new ServiceError('Không tìm thấy đơn thuốc', 404);
     }
@@ -643,7 +643,7 @@ const createInvoice = async (user, residentId, body) => {
       .filter(Boolean);
 
     if (chargeIds.length > 0) {
-      await MedicalCharge.updateMany(
+      await medicalChargeRepo.updateMany(
         { _id: { $in: chargeIds }, residentId },
         { $set: { billingStatus: 'BILLED', invoiceId: invoice._id } }
       );
@@ -749,7 +749,7 @@ const createInvoice = async (user, residentId, body) => {
     const startDate = new Date(body.billingPeriodStart);
     const endDate = new Date(body.billingPeriodEnd);
     if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
-      await Admission.findOneAndUpdate(
+      await admissionRepo.findOneAndUpdate(
         {
           residentId,
           status: { $in: ['checked_in', 'contracting'] },

@@ -16,8 +16,19 @@ const findByBuildingId = async (buildingId, { activeOnly = true } = {}) => {
   return findAll(filter);
 };
 
+const findByFilter = async (filter) => Floor.find(filter);
+const findOne = async (filter) => Floor.findOne(filter);
+const create = async (data) => Floor.create(data);
+const updateMany = async (filter, update) => Floor.updateMany(filter, update);
+const countDocuments = async (filter) => Floor.countDocuments(filter);
+
 module.exports = {
   findAll,
   findById,
   findByBuildingId,
+  findByFilter,
+  findOne,
+  create,
+  updateMany,
+  countDocuments,
 };

@@ -2,10 +2,10 @@ const mongoose = require('mongoose');
 const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiError');
 const careScheduleDayRepo = require('../repositories/careScheduleDayRepository');
 const careScheduleEntryRepo = require('../repositories/careScheduleEntryRepository');
-const Resident = require('../models/resident');
-const StaffProfile = require('../models/staffProfile');
-const Shift = require('../models/shift');
-const CareTask = require('../models/careTask');
+const residentRepo = require('../repositories/residentRepository');
+const staffProfileRepo = require('../repositories/staffProfileRepository');
+const shiftRepo = require('../repositories/shiftRepository');
+const careTaskRepo = require('../repositories/careTaskRepository');
 const { CARE_TASK_TYPES, CARE_LEVELS } = require('../models/enums');
 const {
   parseWorkDate,
@@ -367,12 +367,9 @@ const deleteDraft = async (id, actorUserId) => {
 
 const validateEntryForPublish = async (entry, workDateStr) => {
   const [resident, staffProfile, shift] = await Promise.all([
-    Resident.findById(entry.residentId).populate({ path: 'roomId', select: 'roomNumber floorId' }),
-    StaffProfile.findById(entry.staffProfileId)
-      .populate('responsibleAreaIds')
-      .populate('responsibleRoomIds')
-      .populate('assignedResidentIds'),
-    Shift.findById(entry.shiftId),
+    residentRepo.findByIdWithRoom(entry.residentId),
+    staffProfileRepo.findByIdWithAreas(entry.staffProfileId),
+    shiftRepo.findById(entry.shiftId),
   ]);
   if (!resident) {
     throw apiErr(CODES.CARE_SCHEDULE_ENTRY_RESIDENT_NOT_FOUND, {
@@ -484,13 +481,13 @@ const publishSchedule = async (id, actorUserId) => {
     for (const row of validatedEntries) {
       const { entry, needsResidentAssignment, resident } = row;
       if (needsResidentAssignment) {
-        await StaffProfile.updateOne(
+        await staffProfileRepo.updateOne(
           { _id: entry.staffProfileId._id || entry.staffProfileId },
           { $addToSet: { assignedResidentIds: resident._id } },
           dbOpts
         );
       }
-      await CareTask.create(
+      await careTaskRepo.create(
         [
           {
             staffProfileId: entry.staffProfileId._id || entry.staffProfileId,

@@ -15,10 +15,6 @@ const findById = async (id) =>
     .populate(REPLACEMENT_POPULATE);
 
 const findAll = async (filter, { skip = 0, limit = 20 } = {}) => {
-  await LeaveRequest.updateMany(
-    { reviewedBy: { $type: 'string' } },
-    { $unset: { reviewedBy: '' } }
-  );
   return LeaveRequest.find(filter)
     .populate('staffId', 'fullName email role')
     .populate('reviewedBy', 'fullName email role')
@@ -62,6 +58,8 @@ const rejectExpiredPending = async (asOf, reviewNote) =>
     }
   );
 
+const findOne = async (filter) => LeaveRequest.findOne(filter);
+
 const deleteById = async (id) => LeaveRequest.findByIdAndDelete(id);
 
 module.exports = {
@@ -72,6 +70,7 @@ module.exports = {
   findApprovedOverlapping,
   findOverlappingApprovedByDate,
   updateById,
+  findOne,
   rejectExpiredPending,
   deleteById,
 };

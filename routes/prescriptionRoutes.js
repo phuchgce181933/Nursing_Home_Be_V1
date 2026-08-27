@@ -6,6 +6,9 @@ const {
   listPrescriptions,
   getPrescription,
   estimatePrescriptionCost,
+  activatePrescription,
+  suspendPrescription,
+  resumePrescription,
 } = require('../controllers/prescriptionController');
 const { protect, authorize } = require('../middleware/auth');
 const {
@@ -178,6 +181,10 @@ router.get('/', protect, authorize('doctor', 'nurse', 'admin'), listPrescription
 router.get('/:id', protect, authorize('doctor', 'nurse', 'admin'), getPrescription);
 
 router.get('/:id/estimate-cost', protect, authorize('doctor', 'nurse', 'admin'), estimatePrescriptionCost);
+
+router.patch('/:id/activate', protect, authorize('doctor'), activatePrescription);
+router.patch('/:id/suspend', protect, authorize('doctor'), suspendPrescription);
+router.patch('/:id/resume', protect, authorize('doctor'), resumePrescription);
 
 /**
  * @swagger

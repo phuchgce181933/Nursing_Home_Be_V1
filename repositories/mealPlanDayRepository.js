@@ -18,5 +18,23 @@ const updateById = async (id, data, options = {}) =>
 
 const deleteById = async (id, options = {}) => MealPlanDay.findByIdAndDelete(id, options);
 
-module.exports = { create, findById, findAll, countAll, updateById, deleteById };
+const findByFilterLean = async (filter, { sort } = {}) => {
+  let q = MealPlanDay.find(filter);
+  if (sort) q = q.sort(sort);
+  return q.lean();
+};
+
+const findByIdLean = async (id, { populate } = {}) => {
+  let q = MealPlanDay.findById(id);
+  if (populate) q = q.populate(populate);
+  return q.lean();
+};
+
+const findOneLean = async (filter, { select } = {}) => {
+  let q = MealPlanDay.findOne(filter);
+  if (select) q = q.select(select);
+  return q.lean();
+};
+
+module.exports = { create, findById, findByIdLean, findAll, countAll, updateById, deleteById, findByFilterLean, findOneLean };
 

@@ -4,9 +4,9 @@ const specialDietDayRepo = require('../repositories/specialDietDayRepository');
 const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
 const { assertNoPublishedSpecialDietConflicts } = require('../utils/nutritionPublishGuards');
-const Resident = require('../models/resident');
-const ServicePackage = require('../models/servicePackage');
-const Admission = require('../models/admission');
+const residentRepo = require('../repositories/residentRepository');
+const servicePackageRepo = require('../repositories/servicePackageRepository');
+const admissionRepo = require('../repositories/admissionRepository');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 
 const NON_TX_ERROR_PATTERNS = [
@@ -152,9 +152,10 @@ const hydratePlan = async (day) => {
 };
 
 const getEligiblePackageMeta = async () => {
-  const packages = await ServicePackage.find({ tier: { $in: SPECIAL_DIET_ELIGIBLE_TIERS } })
-    .select('_id name')
-    .lean();
+  const packages = await servicePackageRepo.findByFilterLean(
+    { tier: { $in: SPECIAL_DIET_ELIGIBLE_TIERS } },
+    { select: '_id name' }
+  );
   return {
     ids: packages.map((p) => p._id),
     names: packages.map((p) => p.name),
@@ -171,14 +172,14 @@ const resolveEligibleResidentIds = async (residentIds) => {
 
   const [fromAdmission, fromResident] = await Promise.all([
     packageIds.length
-      ? Admission.distinct('residentId', {
+      ? admissionRepo.distinct('residentId', {
           residentId: { $in: objectIds },
           status: 'checked_in',
           servicePackageId: { $in: packageIds },
         })
       : [],
     packageNames.length
-      ? Resident.distinct('_id', {
+      ? residentRepo.distinct('_id', {
           _id: { $in: objectIds },
           residencyStatus: 'admitted',
           servicePackage: { $in: packageNames },
@@ -249,7 +250,7 @@ const createDraft = async (body, actorUserId) => {
   }
   await assertResidentsAssignedToUser(actorUserId, residentIds);
   await assertResidentsEligibleForSpecialDiet(residentIds);
-  const residentCount = await Resident.countDocuments({ _id: { $in: residentIds } });
+  const residentCount = await residentRepo.countAll({ _id: { $in: residentIds } });
   if (residentCount !== residentIds.length) {
     throw apiErr(CODES.MEAL_RESIDENTS_NOT_FOUND, { statusCode: 400 });
   }

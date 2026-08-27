@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
-const Dish = require('../models/dish');
-const MealPlanEntry = require('../models/mealPlanEntry');
+const dishRepo = require('../repositories/dishRepository');
+const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const {
   validateDishName,
@@ -31,10 +31,10 @@ const formatDish = (dish) => ({
 const findByNameInsensitive = async (name, excludeId) => {
   const filter = { name: { $regex: new RegExp(`^${escapeRegex(name)}$`, 'i') } };
   if (excludeId) filter._id = { $ne: excludeId };
-  return Dish.findOne(filter).lean();
+  return dishRepo.findOneLean(filter);
 };
 
-const isDishInMealPlan = async (dishId) => Boolean(await MealPlanEntry.exists({ dishId }));
+const isDishInMealPlan = async (dishId) => Boolean(await mealPlanEntryRepo.exists({ dishId }));
 
 const assertDishNotInMealPlan = async (dishId) => {
   if (await isDishInMealPlan(dishId)) {
@@ -51,13 +51,13 @@ const listDishes = async (query = {}, user = {}) => {
   if (query.search) {
     filter.name = { $regex: String(query.search).trim(), $options: 'i' };
   }
-  const data = await Dish.find(filter).sort({ name: 1 }).lean();
+  const data = await dishRepo.findByFilterLean(filter, { sort: { name: 1 } });
   return data.map(formatDish);
 };
 
 const getDish = async (id, user = {}) => {
   assertValidObjectId(id, 'dishId');
-  const dish = await Dish.findById(id).lean();
+  const dish = await dishRepo.findByIdLean(id);
   if (!dish) throw apiErr(CODES.DISH_NOT_FOUND, { statusCode: 404 });
   if (user.role === 'nurse' && !dish.isActive) {
     throw apiErr(CODES.DISH_INACTIVE, { statusCode: 404 });
@@ -74,7 +74,7 @@ const createDish = async (body = {}, actor) => {
   if (duplicate) {
     const inUse = await isDishInMealPlan(duplicate._id);
     if (!duplicate.isActive && !inUse) {
-      const revived = await Dish.findByIdAndUpdate(
+      const revived = await dishRepo.findByIdAndUpdate(
         duplicate._id,
         {
           name,
@@ -90,7 +90,7 @@ const createDish = async (body = {}, actor) => {
     throw apiErr(CODES.DISH_NAME_DUPLICATE, { statusCode: 409, params: { name: duplicate.name } });
   }
 
-  const dish = await Dish.create({
+  const dish = await dishRepo.create({
     name,
     calories,
     ingredients,
@@ -103,7 +103,7 @@ const createDish = async (body = {}, actor) => {
 
 const updateDish = async (id, body = {}, actor) => {
   assertValidObjectId(id, 'dishId');
-  const dish = await Dish.findById(id);
+  const dish = await dishRepo.findById(id);
   if (!dish) throw apiErr(CODES.DISH_NOT_FOUND, { statusCode: 404 });
 
   if (body.name !== undefined) {
@@ -132,19 +132,19 @@ const updateDish = async (id, body = {}, actor) => {
 
 const deleteDish = async (id, actor) => {
   assertValidObjectId(id, 'dishId');
-  const dish = await Dish.findById(id);
+  const dish = await dishRepo.findById(id);
   if (!dish) throw apiErr(CODES.DISH_NOT_FOUND, { statusCode: 404 });
 
   await assertDishNotInMealPlan(dish._id);
 
-  await Dish.findByIdAndDelete(id);
+  await dishRepo.findByIdAndDelete(id);
   return { ...apiSuccess(SUCCESS.DISH_DELETED), deleted: true, id: String(id) };
 };
 
 const getActiveDishMap = async (dishIds = []) => {
   const ids = [...new Set(dishIds.map((id) => String(id)).filter(Boolean))];
   if (!ids.length) return {};
-  const dishes = await Dish.find({ _id: { $in: ids } }).lean();
+  const dishes = await dishRepo.findByFilterLean({ _id: { $in: ids } });
   return Object.fromEntries(dishes.map((d) => [String(d._id), d]));
 };
 

@@ -21,7 +21,7 @@ const { protect, authorize } = require('../middleware/auth');
  *     responses:
  *       200: { description: Paginated visit list }
  */
-router.get('/', protect, authorize('nurse', 'manager', 'admin'), listVisits);
+router.get('/', protect, authorize('nurse', 'admin'), listVisits);
 
 /**
  * @swagger
@@ -41,7 +41,7 @@ router.get('/', protect, authorize('nurse', 'manager', 'admin'), listVisits);
  *       400: { description: Cannot approve (wrong status) }
  *       404: { description: Not found }
  */
-router.patch('/:visitId/approve', protect, authorize('manager', 'admin'), approveVisit);
+router.patch('/:visitId/approve', protect, authorize('admin'), approveVisit);
 
 /**
  * @swagger
@@ -70,6 +70,6 @@ router.patch('/:visitId/approve', protect, authorize('manager', 'admin'), approv
  *       400: { description: rejectionReason required, or wrong status }
  *       404: { description: Not found }
  */
-router.patch('/:visitId/reject', protect, authorize('manager', 'admin'), rejectVisit);
+router.patch('/:visitId/reject', protect, authorize('admin'), rejectVisit);
 
 module.exports = router;

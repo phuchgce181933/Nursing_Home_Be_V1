@@ -32,6 +32,26 @@ const countDocuments = async (filter) => CareAppointment.countDocuments(filter);
 const saveAppointment = async (appointment) => appointment.save();
 const deleteAppointment = async (appointment) => appointment.deleteOne();
 
+const findOneStaffConflictAtTime = async (staffProfileId, effectiveAt) =>
+  CareAppointment.findOne({
+    $or: [{ doctorStaffId: staffProfileId }, { nurseStaffId: staffProfileId }],
+    status: { $ne: 'cancelled' },
+    scheduledStartAt: { $lte: effectiveAt },
+    scheduledEndAt: { $gte: effectiveAt },
+  }).lean();
+
+const findByFilterLean = async (filter, { select } = {}) => {
+  let q = CareAppointment.find(filter);
+  if (select) q = q.select(select);
+  return q.lean();
+};
+
+const findOneByFilter = async (filter, { populate } = {}) => {
+  let q = CareAppointment.findOne(filter);
+  if (populate) q = q.populate(populate);
+  return q;
+};
+
 const findAppointmentsNeedingReminder = async (windowStart, windowEnd) =>
   CareAppointment.find({
     status: 'scheduled',
@@ -55,6 +75,9 @@ module.exports = {
   countDocuments,
   saveAppointment,
   deleteAppointment,
+  findOneStaffConflictAtTime,
+  findByFilterLean,
+  findOneByFilter,
   findAppointmentsNeedingReminder,
   markReminderSent,
 };

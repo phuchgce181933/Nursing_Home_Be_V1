@@ -1,6 +1,6 @@
 const { Expo } = require('expo-server-sdk');
 const pushTokenRepo = require('../repositories/pushTokenRepository');
-const User = require('../models/user');
+const userRepo = require('../repositories/userRepository');
 
 const expo = new Expo();
 
@@ -13,7 +13,7 @@ const sendPushToUsers = async (recipientUserIds, { title, body, data = {}, categ
     const ids = [...new Set((recipientUserIds || []).map(String))];
     if (!ids.length) return;
 
-    const users = await User.find({ _id: { $in: ids } }).select('notificationSettings');
+    const users = await userRepo.findByIdsWithSelect(ids, 'notificationSettings');
     const allowedUserIds = users
       .filter((u) => {
         const settings = u.notificationSettings || {};

@@ -1,7 +1,7 @@
 const { Types } = require('mongoose');
-const ClinicalService = require('../models/clinicalService');
-const MedicalCharge = require('../models/medicalCharge');
-const AuditLog = require('../models/auditLog');
+const clinicalServiceRepo = require('../repositories/clinicalServiceRepository');
+const medicalChargeRepo = require('../repositories/medicalChargeRepository');
+const auditLogRepo = require('../repositories/auditLogRepository');
 
 const createChargeForRecord = async (opts = {}) => {
   // opts: { originType, originId, residentId, serviceCode, serviceName, category, performedById, performedBy, performedAt, quantity, unitPrice, metadata }
@@ -15,11 +15,11 @@ const createChargeForRecord = async (opts = {}) => {
   // try to resolve clinical service by code (don't require active=true for backward compatibility)
   let svc = null;
   if (opts.serviceCode) {
-    svc = await ClinicalService.findOne({ serviceCode: opts.serviceCode }).lean();
+    svc = await clinicalServiceRepo.findOneLean({ serviceCode: opts.serviceCode });
     console.log('[chargeService] Lookup by serviceCode:', opts.serviceCode, '→ Found:', !!svc, svc ? `(id: ${svc._id})` : '');
   }
   if (!svc && opts.category) {
-    svc = await ClinicalService.findOne({ category: opts.category }).lean();
+    svc = await clinicalServiceRepo.findOneLean({ category: opts.category });
     console.log('[chargeService] Lookup by category:', opts.category, '→ Found:', !!svc);
   }
 
@@ -35,7 +35,7 @@ const createChargeForRecord = async (opts = {}) => {
         unitPrice: opts.unitPrice != null ? Number(opts.unitPrice) : 0,
         active: true,
       };
-      const created = await ClinicalService.create(svcData);
+      const created = await clinicalServiceRepo.create(svcData);
       svc = created.toObject ? created.toObject() : created;
       console.log('[chargeService] Auto-created ClinicalService id:', svc._id);
     } catch (err) {
@@ -58,25 +58,24 @@ const createChargeForRecord = async (opts = {}) => {
     serviceId: serviceId
   });
 
-  const charge = new MedicalCharge({
-    residentId: new Types.ObjectId(opts.residentId),
-    serviceId,
-    serviceCode: opts.serviceCode,
-    serviceName,
-    category: opts.category,
-    quantity,
-    unitPrice,
-    performedBy: opts.performedBy,
-    performedById: opts.performedById,
-    performedAt: opts.performedAt || new Date(),
-    billingStatus: 'PENDING',
-    originType: opts.originType,
-    originId: opts.originId,
-    metadata: opts.metadata || {},
-  });
-
+  let charge;
   try {
-    await charge.save();
+    charge = await medicalChargeRepo.create({
+      residentId: new Types.ObjectId(opts.residentId),
+      serviceId,
+      serviceCode: opts.serviceCode,
+      serviceName,
+      category: opts.category,
+      quantity,
+      unitPrice,
+      performedBy: opts.performedBy,
+      performedById: opts.performedById,
+      performedAt: opts.performedAt || new Date(),
+      billingStatus: 'PENDING',
+      originType: opts.originType,
+      originId: opts.originId,
+      metadata: opts.metadata || {},
+    });
     console.log('[chargeService] ✓ Charge saved successfully:', charge._id, '| totalPrice:', charge.totalPrice);
   } catch (err) {
     console.error('[chargeService] ✗ Failed to save charge:', err.message);
@@ -86,9 +85,8 @@ const createChargeForRecord = async (opts = {}) => {
     throw err;
   }
 
-  // write audit log
   try {
-    const audit = new AuditLog({
+    await auditLogRepo.create({
       action: 'CHARGE_GENERATED',
       displayAction: 'Charge generated',
       businessModule: 'clinical-billing',
@@ -101,7 +99,6 @@ const createChargeForRecord = async (opts = {}) => {
       description: `Charge generated for ${serviceName} (${quantity} x ${unitPrice})`,
       afterData: { chargeId: charge._id, totalPrice: charge.totalPrice },
     });
-    await audit.save();
   } catch (err) {
     console.error('Failed to write audit log for charge:', err);
     if (err && err.stack) {

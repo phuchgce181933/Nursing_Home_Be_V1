@@ -1,5 +1,5 @@
-const MealPlanDay = require('../models/mealPlanDay');
-const MealPlanEntry = require('../models/mealPlanEntry');
+const mealPlanDayRepo = require('../repositories/mealPlanDayRepository');
+const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
 
 const workDateRangeFilter = (workDateStr) => ({
   $gte: new Date(`${workDateStr}T00:00:00.000Z`),
@@ -7,21 +7,19 @@ const workDateRangeFilter = (workDateStr) => ({
 });
 
 const findPublishedDaysByWorkDate = async (workDateStr) =>
-  MealPlanDay.find({
-    status: 'published',
-    workDate: workDateRangeFilter(workDateStr),
-  })
-    .sort({ publishedAt: -1 })
-    .lean();
+  mealPlanDayRepo.findByFilterLean(
+    { status: 'published', workDate: workDateRangeFilter(workDateStr) },
+    { sort: { publishedAt: -1 } }
+  );
 
 const findPublishedMealPlanEntryForResident = async (residentId, workDateStr, mealType) => {
   const days = await findPublishedDaysByWorkDate(workDateStr);
   for (const day of days) {
-    const entry = await MealPlanEntry.findOne({
+    const entry = await mealPlanEntryRepo.findOneLean({
       mealPlanDayId: day._id,
       residentId,
       mealType,
-    }).lean();
+    });
     if (entry) {
       return { entry, day };
     }
@@ -32,10 +30,10 @@ const findPublishedMealPlanEntryForResident = async (residentId, workDateStr, me
 const findPublishedMealsForResident = async (residentId, workDateStr) => {
   const days = await findPublishedDaysByWorkDate(workDateStr);
   for (const day of days) {
-    const entries = await MealPlanEntry.find({
+    const entries = await mealPlanEntryRepo.findByFilterLean({
       mealPlanDayId: day._id,
       residentId,
-    }).lean();
+    });
     if (entries.length > 0) {
       return { entries, day };
     }
@@ -52,12 +50,10 @@ const countPublishedMealsByResidents = async (residentIds, workDateStr) => {
 
   for (const day of days) {
     if (unfound.size === 0) break;
-    const entries = await MealPlanEntry.find({
-      mealPlanDayId: day._id,
-      residentId: { $in: [...unfound] },
-    })
-      .select('residentId mealType')
-      .lean();
+    const entries = await mealPlanEntryRepo.findByFilterLean(
+      { mealPlanDayId: day._id, residentId: { $in: [...unfound] } },
+      { select: 'residentId mealType' }
+    );
 
     const foundInDay = new Set();
     for (const entry of entries) {
@@ -77,12 +73,10 @@ const countPublishedMealsByResidents = async (residentIds, workDateStr) => {
 };
 
 const hasAnyPublishedMealPlanDay = async (workDateStr) => {
-  const day = await MealPlanDay.findOne({
-    status: 'published',
-    workDate: workDateRangeFilter(workDateStr),
-  })
-    .select('_id')
-    .lean();
+  const day = await mealPlanDayRepo.findOneLean(
+    { status: 'published', workDate: workDateRangeFilter(workDateStr) },
+    { select: '_id' }
+  );
   return Boolean(day);
 };
 

@@ -1,4 +1,4 @@
-const MedicationSchedule = require('../models/MedicationSchedule');
+const medicationScheduleRepo = require('../repositories/medicationScheduleRepository');
 
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 
@@ -15,7 +15,7 @@ const toVNDateStr = (date) => {
 const generateSchedulesForItem = async (prescription, item) => {
   const now = new Date();
 
-  await MedicationSchedule.deleteMany({
+  await medicationScheduleRepo.deleteManyByFilter({
     prescriptionId: prescription._id,
     prescriptionItemId: item._id,
     status: 'PENDING',
@@ -51,7 +51,7 @@ const generateSchedulesForItem = async (prescription, item) => {
     cursor.setDate(cursor.getDate() + 1);
   }
 
-  if (schedules.length) await MedicationSchedule.insertMany(schedules);
+  if (schedules.length) await medicationScheduleRepo.insertMany(schedules);
 };
 
 /**
@@ -63,7 +63,7 @@ const generateSchedules = async (prescription) => {
   const bulk = [];
 
   for (const item of prescription.items) {
-    if (!item.isActive || !item.startDate || !item.endDate || !item.times?.length) continue;
+    if (!item.isActive || item.isPRN || !item.startDate || !item.endDate || !item.times?.length) continue;
 
     const startStr = toVNDateStr(new Date(item.startDate));
     const endStr = toVNDateStr(new Date(item.endDate));
@@ -92,7 +92,7 @@ const generateSchedules = async (prescription) => {
     }
   }
 
-  if (bulk.length) await MedicationSchedule.insertMany(bulk);
+  if (bulk.length) await medicationScheduleRepo.insertMany(bulk);
 };
 
 module.exports = { generateSchedules, generateSchedulesForItem };

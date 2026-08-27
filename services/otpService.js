@@ -1,4 +1,4 @@
-const Otp = require('../models/otp');
+const otpRepo = require('../repositories/otpRepository');
 const mailService = require('./mailService');
 const ServiceError = require('./serviceError');
 
@@ -11,7 +11,7 @@ function generateCode() {
 
 const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {}, expiresMinutes = DEFAULT_EXPIRY_MINUTES }) => {
   const now = new Date();
-  const existingPendingOtps = await Otp.find({
+  const existingPendingOtps = await otpRepo.findByFilter({
     userId,
     purpose,
     used: false,
@@ -25,7 +25,7 @@ const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {},
   const code = generateCode();
   const expiresAt = new Date(Date.now() + expiresMinutes * 60 * 1000);
   
-  const otp = await Otp.create({ userId, phone, code, purpose, meta, expiresAt });
+  const otp = await otpRepo.create({ userId, phone, code, purpose, meta, expiresAt });
   
   try {
     if (phone.includes('@')) {
@@ -54,7 +54,7 @@ const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {},
     }
   } catch (err) {
     // If SMS fails, remove OTP
-    await Otp.deleteOne({ _id: otp._id }).catch(() => {});
+    await otpRepo.deleteById(otp._id).catch(() => {});
     console.error('otpService.createOtp send error:', err);
     const msg = err?.message || 'Gửi SMS mã OTP thất bại';
     throw new ServiceError(msg, 500);
@@ -62,7 +62,7 @@ const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {},
 };
 
 const verifyOtp = async ({ userId, otpId, code, purpose = 'wallet_payment' }) => {
-  const otp = await Otp.findById(otpId);
+  const otp = await otpRepo.findById(otpId);
   if (!otp) throw new ServiceError('Không tìm thấy mã OTP hoặc mã đã hết hạn', 400);
   if (userId && otp.userId && String(otp.userId) !== String(userId)) throw new ServiceError('Mã OTP không thuộc về người dùng này', 403);
   if (otp.purpose !== purpose) throw new ServiceError('Mục đích OTP không khớp', 400);

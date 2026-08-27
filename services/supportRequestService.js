@@ -25,7 +25,7 @@ const submitSupportRequest = async (user, payload /*, req */) => {
   return doc;
 };
 
-const isStaffRole = (role) => role === 'admin' || role === 'manager';
+const isStaffRole = (role) => role === 'admin';
 
 const listSupportRequests = async (user, query) => {
   const page = Number(query.page) || 1;

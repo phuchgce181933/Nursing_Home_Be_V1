@@ -39,6 +39,19 @@ const updateProfile = async (userId, data) => {
 const findOne = (filter) => {
   return User.findOne(filter);
 };
+
+const findByIdsWithSelect = async (ids, select) =>
+  User.find({ _id: { $in: ids } }).select(select);
+
+const findByFilterLean = async (filter, { select, sort } = {}) => {
+  let q = User.find(filter);
+  if (select) q = q.select(select);
+  if (sort) q = q.sort(sort);
+  return q.lean();
+};
+
+const updateSettingsById = async (userId, setFields) =>
+  User.findByIdAndUpdate(userId, { $set: setFields }, { new: true }).select('notificationSettings');
 module.exports = {
   findByEmail,
   findById,
@@ -48,5 +61,8 @@ module.exports = {
   findStaffUsers,
   countStaffUsers,
   updateProfile,
-  findOne
+  findOne,
+  findByIdsWithSelect,
+  findByFilterLean,
+  updateSettingsById,
 };

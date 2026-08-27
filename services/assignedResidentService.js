@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
-const Resident = require('../models/resident');
+const residentRepo = require('../repositories/residentRepository');
 const activityService = require('./activityService');
 
 const MINIMAL_SELECT = '_id fullName residentCode';
@@ -133,14 +133,11 @@ const listAssignedResidentsForUser = async (userId, options = {}) => {
   }
 
   const minimal = fields === 'minimal';
-  let query = Resident.find(filter);
-  if (minimal) {
-    query = query.select(MINIMAL_SELECT);
-  } else {
-    query = query.select(FULL_SELECT).populate(POPULATE);
-  }
-
-  const rows = await query.sort({ fullName: 1 }).lean();
+  const rows = await residentRepo.findByFilterLean(filter, {
+    select: minimal ? MINIMAL_SELECT : FULL_SELECT,
+    populate: minimal ? undefined : POPULATE,
+    sort: { fullName: 1 },
+  });
   const data = rows.map((r) => formatResident(r, minimal));
   const result = { data, total: data.length };
   if (!data.length) {
@@ -174,10 +171,10 @@ const listAssignedAdmittedResidentsForUser = async (userId, options = {}) => {
     return { data: [], total: 0 };
   }
 
-  const rows = await Resident.find(buildAdmittedAssignedFilter(ids, search))
-    .select(select)
-    .sort({ fullName: 1 })
-    .lean();
+  const rows = await residentRepo.findByFilterLean(buildAdmittedAssignedFilter(ids, search), {
+    select,
+    sort: { fullName: 1 },
+  });
 
   return { data: rows, total: rows.length };
 };
@@ -219,10 +216,10 @@ const listAssignedAdmittedResidentsForStaffProfile = async (staffProfileId, opti
   }
 
   const { search, select = MINIMAL_SELECT } = options;
-  const rows = await Resident.find(buildAdmittedAssignedFilter(ids, search))
-    .select(select)
-    .sort({ fullName: 1 })
-    .lean();
+  const rows = await residentRepo.findByFilterLean(buildAdmittedAssignedFilter(ids, search), {
+    select,
+    sort: { fullName: 1 },
+  });
 
   return { data: rows, total: rows.length };
 };
@@ -266,10 +263,10 @@ const getAssignedResidentById = async (userId, residentId) => {
     throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
   }
 
-  const resident = await Resident.findOne({ _id: residentId, residencyStatus: 'admitted' })
-    .select(FULL_SELECT)
-    .populate(POPULATE)
-    .lean();
+  const resident = await residentRepo.findOneByFilterLean(
+    { _id: residentId, residencyStatus: 'admitted' },
+    { select: FULL_SELECT, populate: POPULATE }
+  );
 
   if (!resident) {
     throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ADMITTED, { statusCode: 404 });

@@ -8,7 +8,7 @@ const otpService = require('./otpService');
 const { validatePhone, validateUsername, validateStaffDateOfBirth, validateStaffCertifications, validateFullName, validateEmail, validatePassword, collectErrors } = require('../utils/validators');
 const STAFF_ROLES = ['doctor', 'nurse', 'pharmacist', 'caregiver', 'family'];
 const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', pharmacist: 'PHA', caregiver: 'CAR', admin: 'ADM', family: 'FAM' };
-const VALID_ROLES = [...STAFF_ROLES, 'admin', 'system'];
+const VALID_ROLES = [...STAFF_ROLES, 'admin'];
 const crypto = require('crypto');
 const generateStaffCode = (role) => {
   const prefix = STAFF_CODE_PREFIXES[role] || 'STF';
@@ -273,102 +273,6 @@ const createStaffAccount = async ({
           specialty: staffProfile.specialty,
         }
       : null,
-  };
-};
-
-const requestRegisterOtp = async ({ fullName, email, phone, password }) => {
-  const hasEmail = !!email?.trim();
-  const hasPhone = !!phone?.trim();
-  if (hasEmail === hasPhone) {
-    // both provided or neither provided
-    throw apiErr(CODES.AUTH_REGISTER_CONTACT_REQUIRED, { statusCode: 400 });
-  }
-
-  const fieldErrors = collectErrors([
-    () => validateFullName(fullName),
-    () => validatePassword(password),
-    () => (hasEmail ? validateEmail(email) : null),
-    () => (hasPhone ? validatePhone(phone) : null),
-  ]);
-  if (fieldErrors) throw apiErr(CODES.AUTH_VALIDATION_FAILED, { statusCode: 400, params: { detail: fieldErrors } });
-
-  let normalizedEmail;
-  if (hasEmail) {
-    normalizedEmail = email.toLowerCase().trim();
-    const existing = await userRepo.findByEmail(normalizedEmail);
-    if (existing) throw apiErr(CODES.AUTH_EMAIL_IN_USE, { statusCode: 409 });
-  }
-
-  let normalizedPhone;
-  if (hasPhone) {
-    normalizedPhone = phone.trim();
-    const phoneConflict = await userRepo.findOne({ phone: normalizedPhone });
-    if (phoneConflict) throw apiErr(CODES.AUTH_PHONE_IN_USE, { statusCode: 409 });
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  const recipient = normalizedEmail || normalizedPhone;
-
-  const { otpId, maskedRecipient } = await otpService.createOtp({
-    userId: undefined,
-    phone: recipient,
-    purpose: 'register_family',
-    meta: {
-      fullName: fullName.trim(),
-      email: normalizedEmail,
-      phone: normalizedPhone,
-      passwordHash,
-    },
-  });
-
-  return { otpId, maskedRecipient };
-};
-
-const verifyRegisterOtp = async ({ otpId, code }) => {
-  if (!otpId || !code) {
-    throw apiErr(CODES.AUTH_OTP_REQUIRED, { statusCode: 400 });
-  }
-
-  const { meta } = await otpService.verifyOtp({
-    userId: undefined,
-    otpId,
-    code,
-    purpose: 'register_family',
-  });
-
-  if (!meta?.fullName || !meta?.passwordHash) {
-    throw apiErr(CODES.AUTH_OTP_METADATA_INVALID, { statusCode: 400 });
-  }
-
-  if (meta.email) {
-    const existing = await userRepo.findByEmail(meta.email);
-    if (existing) throw apiErr(CODES.AUTH_EMAIL_IN_USE, { statusCode: 409 });
-  }
-  if (meta.phone) {
-    const phoneConflict = await userRepo.findOne({ phone: meta.phone });
-    if (phoneConflict) throw apiErr(CODES.AUTH_PHONE_IN_USE, { statusCode: 409 });
-  }
-
-  const user = await userRepo.createUser({
-    fullName: meta.fullName,
-    email: meta.email || undefined,
-    phone: meta.phone || undefined,
-    passwordHash: meta.passwordHash,
-    role: 'family',
-    isActive: true,
-  });
-
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-
-  return {
-    token,
-    user: {
-      _id: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      role: user.role,
-      avatarUrl: user.avatarUrl,
-    },
   };
 };
 
@@ -689,7 +593,7 @@ const createFirebaseCustomToken = async (user) => {
   return { firebaseToken: token };
 };
 
-module.exports = { login, getMe, listStaffAccounts, searchFamilyAccounts, createStaffAccount, requestRegisterOtp, verifyRegisterOtp,
+module.exports = { login, getMe, listStaffAccounts, searchFamilyAccounts, createStaffAccount,
   toggleStaffActive,
   requestEmailChangeOtp,
   requestPhoneChangeOtp,

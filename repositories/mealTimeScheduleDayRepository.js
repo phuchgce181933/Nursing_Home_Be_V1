@@ -32,6 +32,13 @@ const findPublishedByWorkDate = async (workDate) => {
   }).sort({ publishedAt: -1 });
 };
 
+const findByFilterLean = async (filter, { populate, sort } = {}) => {
+  let q = MealTimeScheduleDay.find(filter);
+  if (populate) q = q.populate(populate);
+  if (sort) q = q.sort(sort);
+  return q.lean();
+};
+
 module.exports = {
   create,
   findById,
@@ -40,4 +47,5 @@ module.exports = {
   updateById,
   deleteById,
   findPublishedByWorkDate,
+  findByFilterLean,
 };

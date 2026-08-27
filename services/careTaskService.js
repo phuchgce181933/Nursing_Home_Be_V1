@@ -12,8 +12,9 @@ const {
   assertActorOwnsCareTask,
   residentCoversStaffArea,
 } = require('../utils/staffAssignment');
-const Resident = require('../models/resident');
-const StaffProfile = require('../models/staffProfile');
+const residentRepo = require('../repositories/residentRepository');
+const careAppointmentRepo = require('../repositories/careAppointmentRepository');
+
 const {
   parseWorkDate,
   toMinutes,
@@ -323,17 +324,15 @@ const assignCareTask = async (body, actorUserId) => {
     throw apiErr(CODES.CARE_TASK_SHIFT_ENDED, { statusCode: 400 });
   }
 
-  // Kiểm tra trùng lịch với Cuộc hẹn khám (CareAppointment) cùng ngày
-  const CareAppointment = require('../models/careAppointment');
   const taskStart = new Date(`${workDateStr}T${scheduledTimeTrimmed}:00+07:00`);
   const taskEnd = new Date(taskStart.getTime() + 15 * 60 * 1000);
 
-  const apptConflict = await CareAppointment.findOne({
+  const apptConflict = await careAppointmentRepo.findOneByFilter({
     $or: [{ doctorStaffId: staffProfileId }, { nurseStaffId: staffProfileId }],
     status: { $ne: 'cancelled' },
     scheduledStartAt: { $lt: taskEnd },
     scheduledEndAt: { $gt: taskStart },
-  }).populate('residentId', 'fullName');
+  }, { populate: { path: 'residentId', select: 'fullName' } });
 
   if (apptConflict) {
     const residentName = apptConflict.residentId?.fullName || 'cư dân';
@@ -345,14 +344,12 @@ const assignCareTask = async (body, actorUserId) => {
     });
   }
 
-  // Kiểm tra trùng lịch với Nhiệm vụ chăm sóc khác cùng thời gian
-  const CareTask = require('../models/careTask');
-  const existingTask = await CareTask.findOne({
+  const existingTask = await careTaskRepo.findOneByFilter({
     staffProfileId,
     workDate: { $gte: new Date(workDateStr + 'T00:00:00+07:00'), $lte: new Date(workDateStr + 'T23:59:59+07:00') },
     scheduledTime: scheduledTimeTrimmed,
     status: { $in: ['pending', 'in_progress'] },
-  }).populate('residentId', 'fullName');
+  }, { populate: { path: 'residentId', select: 'fullName' } });
 
   if (existingTask) {
     const residentName = existingTask.residentId?.fullName || 'cư dân khác';
@@ -380,15 +377,10 @@ const assignCareTask = async (body, actorUserId) => {
 
   const resolvedShiftId = shiftMatch._id;
 
-  const resident = await Resident.findById(residentId).populate({
-    path: 'roomId',
-    select: 'roomNumber floorId',
-  });
+  const resident = await residentRepo.findByIdWithRoom(residentId);
   if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
 
-  const profileWithAreas = await StaffProfile.findById(staffProfileId)
-    .populate('responsibleAreaIds')
-    .populate('responsibleRoomIds');
+  const profileWithAreas = await staffProfileRepo.findByIdWithAreas(staffProfileId);
 
   const assignedIds = (profileWithAreas?.assignedResidentIds || []).map((r) => String(r._id || r));
   if (!assignedIds.includes(String(residentId))) {

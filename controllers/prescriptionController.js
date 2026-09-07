@@ -8,6 +8,15 @@ const createPrescription = async (req, res) => {
       req,
     });
     if (result.blocked) {
+      console.error('[PRESCRIPTION_DEBUG] create blocked', {
+        statusCode: result.statusCode,
+        errorCode: result.payload?.errorCode,
+        requiresAcknowledgment: result.payload?.requiresAcknowledgment,
+        warningCount: result.payload?.warnings?.length || 0,
+        warnings: result.payload?.warnings,
+        duplicates: result.payload?.duplicates,
+        detail: result.payload?.detail,
+      });
       return res.status(result.statusCode).json(result.payload);
     }
     return res.status(201).json({
@@ -16,6 +25,11 @@ const createPrescription = async (req, res) => {
       warnings: result.warnings,
     });
   } catch (err) {
+    console.error('[PRESCRIPTION_DEBUG] create exception', {
+      statusCode: err.statusCode || 500,
+      message: err.message,
+      stack: err.stack,
+    });
     return res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };

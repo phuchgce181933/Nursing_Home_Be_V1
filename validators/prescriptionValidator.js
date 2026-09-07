@@ -272,6 +272,27 @@ const editPrescriptionRules = [
 const validate = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    console.error('[PRESCRIPTION_DEBUG] validation failed', {
+      method: req.method,
+      path: req.originalUrl,
+      errors: errors.array().map((error) => ({ field: error.path, message: error.msg })),
+      body: {
+        residentId: req.body?.residentId,
+        validUntil: req.body?.validUntil,
+        itemCount: Array.isArray(req.body?.items) ? req.body.items.length : undefined,
+        items: Array.isArray(req.body?.items)
+          ? req.body.items.map((item) => ({
+            medicationId: item.medicationId,
+            dosage: item.dosage,
+            frequency: item.frequency,
+            timesCount: Array.isArray(item.times) ? item.times.length : undefined,
+            isPRN: item.isPRN,
+            duration: item.duration,
+            startDate: item.startDate,
+          }))
+          : undefined,
+      },
+    });
     return res.status(400).json({
       success: false,
       errorCode: 'VALIDATION_ERROR',

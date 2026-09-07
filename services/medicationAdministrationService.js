@@ -33,6 +33,17 @@ const getTodayVN = () => {
   return new Date(vnMs).toISOString().slice(0, 10);
 };
 
+const getScheduleDateVN = (scheduledTime) => {
+  const vnMs = new Date(scheduledTime).getTime() + 7 * 60 * 60 * 1000;
+  return new Date(vnMs).toISOString().slice(0, 10);
+};
+
+const ensureScheduleIsToday = (schedule) => {
+  if (getScheduleDateVN(schedule.scheduledTime) !== getTodayVN()) {
+    throw new ServiceError('Chỉ được thao tác với lịch thuốc trong ngày hiện tại', 400);
+  }
+};
+
 const isoWeekKey = (utcDate) => {
   const vn = new Date(utcDate.getTime() + 7 * 60 * 60 * 1000);
   const d = new Date(Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate()));
@@ -433,6 +444,7 @@ const markTaken = async ({ id, body, user }) => {
 
   const schedule = await medicationScheduleRepo.findById(id);
   if (!schedule) throw new ServiceError('Không tìm thấy lịch', 404);
+  ensureScheduleIsToday(schedule);
 
   const scope = await getResidentScope(user._id, user.role);
   if (!isInScope(schedule.residentId, scope)) throw new ServiceError('Cư dân không được phân công cho bạn', 403);
@@ -486,6 +498,7 @@ const markMissed = async ({ id, body, user }) => {
 
   const schedule = await medicationScheduleRepo.findById(id);
   if (!schedule) throw new ServiceError('Không tìm thấy lịch', 404);
+  ensureScheduleIsToday(schedule);
 
   const scope = await getResidentScope(user._id, user.role);
   if (!isInScope(schedule.residentId, scope)) throw new ServiceError('Cư dân không được phân công cho bạn', 403);
@@ -522,6 +535,7 @@ const markRefused = async ({ id, body, user }) => {
 
   const schedule = await medicationScheduleRepo.findById(id);
   if (!schedule) throw new ServiceError('Không tìm thấy lịch', 404);
+  ensureScheduleIsToday(schedule);
 
   const scope = await getResidentScope(user._id, user.role);
   if (!isInScope(schedule.residentId, scope)) throw new ServiceError('Cư dân không được phân công cho bạn', 403);
@@ -557,6 +571,7 @@ const markHeld = async ({ id, body, user }) => {
 
   const schedule = await medicationScheduleRepo.findById(id);
   if (!schedule) throw new ServiceError('Không tìm thấy lịch', 404);
+  ensureScheduleIsToday(schedule);
 
   const scope = await getResidentScope(user._id, user.role);
   if (!isInScope(schedule.residentId, scope)) throw new ServiceError('Cư dân không được phân công cho bạn', 403);
@@ -591,6 +606,7 @@ const markNotAvailable = async ({ id, body, user }) => {
 
   const schedule = await medicationScheduleRepo.findById(id);
   if (!schedule) throw new ServiceError('Không tìm thấy lịch', 404);
+  ensureScheduleIsToday(schedule);
 
   const scope = await getResidentScope(user._id, user.role);
   if (!isInScope(schedule.residentId, scope)) throw new ServiceError('Cư dân không được phân công cho bạn', 403);

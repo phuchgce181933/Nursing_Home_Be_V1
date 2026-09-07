@@ -1,8 +1,10 @@
-const { isValidObjectId } = require('mongoose');
+const { isValidObjectId, Types } = require('mongoose');
 const ServiceError = require('./serviceError');
 const prescriptionRepo = require('../repositories/prescriptionRepository');
 const medicationScheduleRepo = require('../repositories/medicationScheduleRepository');
 const medicationRepo = require('../repositories/medicationRepository');
+const medicationStockRepo = require('../repositories/medicationStockRepository');
+const medicationDispenseRepo = require('../repositories/medicationDispenseRepository');
 const { getResidentScope, isInScope } = require('./residentScopeHelper');
 const {
   checkAllergies,
@@ -57,10 +59,61 @@ const resolveMedicationsFromDB = async (items) => {
   return new Map(activeMeds.map((m) => [m._id.toString(), m]));
 };
 
+const findOutOfStockMedications = async (items) => {
+  const medicationIds = [...new Set(items.map((item) => String(item.medicationId)))];
+  const medicationObjectIds = medicationIds.map((id) => new Types.ObjectId(id));
+  const [stockTotals, dispenseTotals] = await Promise.all([
+    medicationStockRepo.sumQuantitiesByMedicationIds(medicationObjectIds),
+    medicationDispenseRepo.sumQuantitiesByMedicationIds(medicationObjectIds),
+  ]);
+  const stockMap = new Map(stockTotals.map((row) => [String(row._id), row.total || 0]));
+  const dispenseMap = new Map(dispenseTotals.map((row) => [String(row._id), row.total || 0]));
+
+  const availability = medicationIds
+    .map((id) => ({
+      id,
+      stockTotal: stockMap.get(id) || 0,
+      dispensedTotal: dispenseMap.get(id) || 0,
+    }))
+    .map((entry) => ({
+      ...entry,
+      available: entry.stockTotal - entry.dispensedTotal,
+    }))
+    .filter((entry) => entry.available <= 0);
+
+  console.log('[PRESCRIPTION_DEBUG] stock availability', {
+    requestedMedicationIds: medicationIds,
+    stockTotals: Object.fromEntries(stockMap),
+    dispensedTotals: Object.fromEntries(dispenseMap),
+    availability,
+  });
+
+  return availability;
+};
+
 // ── createPrescription ───────────────────────────────────────────────────────
 
 const createPrescription = async ({ body, user, req }) => {
   const { residentId, diagnosisNote, validUntil, items, acknowledgeWarnings, saveAsDraft, acknowledgeDuplicates } = body;
+
+  console.log('[PRESCRIPTION_DEBUG] create request', {
+    userId: user?._id,
+    role: user?.role,
+    residentId,
+    validUntil,
+    itemCount: Array.isArray(items) ? items.length : undefined,
+    items: Array.isArray(items)
+      ? items.map((item) => ({
+        medicationId: item.medicationId,
+        dosage: item.dosage,
+        frequency: item.frequency,
+        timesCount: Array.isArray(item.times) ? item.times.length : undefined,
+        isPRN: item.isPRN,
+        duration: item.duration,
+        startDate: item.startDate,
+      }))
+      : undefined,
+  });
 
   const scope = await getResidentScope(user._id, user.role);
   if (!isInScope(residentId, scope)) {
@@ -76,6 +129,13 @@ const createPrescription = async ({ body, user, req }) => {
   }
 
   const medMap = await resolveMedicationsFromDB(items);
+  const outOfStockMedications = await findOutOfStockMedications(items);
+  if (outOfStockMedications.length) {
+    const details = outOfStockMedications
+      .map((entry) => `${medMap.get(entry.id)?.name || entry.id} (nhập ${entry.stockTotal}, đã cấp ${entry.dispensedTotal}, còn ${Math.max(0, entry.available)})`)
+      .join('; ');
+    throw new ServiceError(`Không thể kê đơn vì thuốc đã hết tồn kho: ${details}`, 400);
+  }
   const drugNames = items.map((i) => medMap.get(String(i.medicationId)).name);
 
   const { allergies: allergyHits } = await checkAllergies(residentId, drugNames);

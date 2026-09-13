@@ -3,7 +3,12 @@ const { Schema, Types } = mongoose;
 
 const invoiceSchema = new Schema(
   {
+    // References
     residentId: { type: Types.ObjectId, ref: 'Resident', required: true, index: true },
+    contractId: { type: Types.ObjectId, ref: 'Contract', index: true },
+    admissionId: { type: Types.ObjectId, ref: 'Admission', index: true },
+    familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
+    
     invoiceNumber: { type: String, trim: true, index: true },
     periodStart: { type: Date },
     periodEnd: { type: Date },
@@ -26,6 +31,13 @@ const invoiceSchema = new Schema(
     familyAccountId: { type: Types.ObjectId, ref: 'User', index: true },
     status: { type: String, enum: ['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'CANCELLED'], default: 'DRAFT', index: true },
     cancellationReason: { type: String, trim: true },
+
+    // Soft-delete (admin-only "Dừng" cho hóa đơn DRAFT trước khi xuất).
+    // Hóa đơn đã soft-delete không hiển thị trong danh sách mặc định nhưng
+    // vẫn còn trong DB để tra cứu lịch sử.
+    deletedAt: { type: Date, default: null, index: true },
+    deletedBy: { type: Types.ObjectId, ref: 'User', default: null },
+
     createdBy: { type: String },
     
     // Service fee components
@@ -36,7 +48,7 @@ const invoiceSchema = new Schema(
     
     // Invoice metadata
     type: { type: String, enum: ['SERVICE', 'MEDICATION', 'OTHER', 'COMBINED'], default: 'COMBINED' },
-    paymentPlan: { type: String, enum: ['FULL', 'HALF_NOW'], default: 'FULL' },
+    paymentPlan: { type: String, enum: ['FULL', 'HALF_NOW', 'MONTHLY'], default: 'MONTHLY' },
     prescriptionId: { type: Types.ObjectId, ref: 'Prescription' },
     dueDate: { type: Date },
 

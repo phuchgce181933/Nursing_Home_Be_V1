@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const buildingRepo = require('../repositories/buildingRepository');
 const floorRepo = require('../repositories/floorRepository');
 const roomRepo = require('../repositories/roomRepository');
@@ -19,7 +20,7 @@ const listBuildings = async ({ activeOnly = true } = {}) => {
 const listFloors = async ({ buildingId, activeOnly = true } = {}) => {
   const filter = {};
   if (activeOnly) filter.isActive = { $ne: false };
-  if (buildingId) filter.buildingId = buildingId;
+  if (buildingId) filter.buildingId = new mongoose.Types.ObjectId(buildingId);
 
   const floors = await floorRepo.findAll(filter);
 
@@ -55,9 +56,19 @@ const listRoomsByFloor = async (floorId) => {
   if (!floor) throw Object.assign(new Error('Floor not found'), { status: 404 });
 
   const rooms = await roomRepo.findByFloorId(floorId);
+  
+  // Get bed counts for each room
+  const bedCounts = {};
+  const allBeds = await bedRepo.findByFilterLean({ roomId: { $in: rooms.map(r => r._id) } });
+  allBeds.forEach(bed => {
+    const rid = bed.roomId.toString();
+    bedCounts[rid] = (bedCounts[rid] || 0) + 1;
+  });
+
   return rooms.map((room) => ({
     ...room,
     label: `Phòng ${room.roomNumber}`,
+    bedCount: bedCounts[room._id.toString()] || 0,
   }));
 };
 
@@ -82,7 +93,7 @@ const getStats = async () => {
 };
 
 const listAvailableBedsByRoom = async (roomId, { all = false } = {}) => {
-  const filter = { roomId };
+  const filter = { roomId: new mongoose.Types.ObjectId(roomId) };
   if (!all) {
     filter.status = 'available';
   }

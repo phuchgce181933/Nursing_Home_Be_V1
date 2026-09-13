@@ -15,6 +15,9 @@ const bedRepo = require('../repositories/bedRepository');
 const roomRepo = require('../repositories/roomRepository');
 const walletService = require('./walletService');
 const paymentRepo = require('../repositories/paymentRepository');
+const contractService = require('./contractService');
+const contractInvoiceService = require('./contractInvoiceService');
+const contractRepo = require('../repositories/contractRepository');
 
 const MAX_TEXT_LENGTH = 500;
 const CITIZEN_ID_REGEX = /^(\d{12}|[A-Za-z0-9]{8,12})$/;
@@ -1498,12 +1501,32 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   assertMaxLength(body?.contractTerms?.trim(), 'contractTerms');
   assertMaxLength(body?.notes?.trim(), 'notes');
 
+  // ── Gộp gói dịch vụ cùng lúc tạo hợp đồng ─────────────────────────────────
+  let servicePackageIdForUpdate = null;
+  if (body?.servicePackageId) {
+    // Chỉ gán khi chưa có package nào
+    if (!admission.servicePackageId) {
+      const pkg = await servicePackageRepo.findById(body.servicePackageId);
+      if (!pkg) {
+        throw new ServiceError('Không tìm thấy gói dịch vụ', 404);
+      }
+      if (!pkg.isActive) {
+        throw new ServiceError('Gói dịch vụ đã ngừng hoạt động', 400);
+      }
+      servicePackageIdForUpdate = pkg._id;
+    }
+    // Nếu đã có package rồi thì bỏ qua (không override)
+  }
+
   const updateData = {
     contractNumber,
     contractStatus: 'active',
     contractSignedAt: new Date(),
     status: 'contracting',
   };
+  if (servicePackageIdForUpdate) {
+    updateData.servicePackageId = servicePackageIdForUpdate;
+  }
   if (contractStartDate) updateData.contractStartDate = contractStartDate;
   if (contractEndDate) updateData.contractEndDate = contractEndDate;
   if (contractDurationMonths !== undefined) updateData.contractDurationMonths = Math.floor(contractDurationMonths);
@@ -1523,6 +1546,7 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
     beforeData: {
       requestCode: admission.requestCode,
       status: admission.status,
+      servicePackageId: admission.servicePackageId,
       contractDurationMonths: admission.contractDurationMonths,
       contractDiscountPercent: admission.contractDiscountPercent,
     },
@@ -1530,6 +1554,7 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
       requestCode: updated.requestCode,
       status: updated.status,
       contractNumber,
+      servicePackageId: updated.servicePackageId,
       contractDurationMonths: updated.contractDurationMonths,
       contractDiscountPercent: updated.contractDiscountPercent,
     },
@@ -1542,7 +1567,6 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   };
 };
 
-// ── UC-6.26: Check-in Resident ──────────────────────────────────────────────────
 const generateResidentCode = async () => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = `RES${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;

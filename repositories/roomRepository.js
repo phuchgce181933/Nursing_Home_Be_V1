@@ -1,7 +1,8 @@
+const mongoose = require('mongoose');
 const Room = require('../models/room');
 
 const findByFloorId = async (floorId, { activeOnly = true } = {}) => {
-  const filter = { floorId };
+  const filter = { floorId: new mongoose.Types.ObjectId(floorId) };
   if (activeOnly) filter.status = { $nin: ['closed'] };
   return Room.find(filter)
     .select('roomNumber roomType capacity occupiedCount status floorId buildingId')

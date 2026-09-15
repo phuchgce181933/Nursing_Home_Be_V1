@@ -86,6 +86,7 @@ const formatMedication = (doc, availableQuantity = 0) => {
 		manufacturer: medication.manufacturer,
 		description: medication.description,
 		minStockLevel: medication.minStockLevel,
+		price: medication.price,
 		isActive: medication.isActive,
 		availableQuantity,
 		createdAt: medication.createdAt,
@@ -120,8 +121,8 @@ const createMedication = async (user, body, req) => {
 	if (!/^[A-Za-z]/.test(name)) throw new ServiceError('name phải bắt đầu bằng một chữ cái', 400);
 
 	const minStockLevel = Number(body.minStockLevel);
-	if (body.minStockLevel == null || Number.isNaN(minStockLevel) || minStockLevel <= 1000) {
-		throw new ServiceError('minStockLevel phải lớn hơn 1000', 400);
+	if (body.minStockLevel == null || Number.isNaN(minStockLevel) || minStockLevel <= 1) {
+		throw new ServiceError('minStockLevel phải lớn hơn 1', 400);
 	}
 
 	const medicationCode = body.medicationCode ? String(body.medicationCode).trim() : await generateMedicationCode();
@@ -138,6 +139,7 @@ const createMedication = async (user, body, req) => {
 		manufacturer: body.manufacturer ? String(body.manufacturer).trim() : undefined,
 		description: body.description ? String(body.description).trim() : undefined,
 		minStockLevel: body.minStockLevel ?? 0,
+		price: body.price != null && body.price !== '' ? Number(body.price) : undefined,
 		createdBy: user._id,
 		updatedBy: user._id,
 	});
@@ -160,8 +162,8 @@ const updateMedication = async (user, medicationId, body, req) => {
 	const medication = await medicationRepo.findById(medicationId);
 	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
 
-	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel <= 1000)) {
-		throw new ServiceError('minStockLevel phải lớn hơn 1000', 400);
+	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel <= 1)) {
+		throw new ServiceError('minStockLevel phải lớn hơn 1', 400);
 	}
 
 	const updateData = { updatedBy: user._id };
@@ -173,6 +175,7 @@ const updateMedication = async (user, medicationId, body, req) => {
 	if (body.description !== undefined) updateData.description = String(body.description || '').trim();
 	if (body.minStockLevel != null) updateData.minStockLevel = body.minStockLevel;
 	if (body.isActive !== undefined) updateData.isActive = Boolean(body.isActive);
+	if (body.price != null && body.price !== '') updateData.price = Number(body.price);
 
 	const updated = await medicationRepo.updateById(medicationId, updateData);
 
@@ -190,6 +193,37 @@ const updateMedication = async (user, medicationId, body, req) => {
 
 	const available = await getAvailableQuantity(updated._id);
 	return { message: 'Đã cập nhật thuốc thành công', medication: formatMedication(updated, available) };
+};
+
+const updateSellingPrice = async (user, medicationId, body, req) => {
+	const medication = await medicationRepo.findById(medicationId);
+	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
+
+	const { sellingPrice } = body;
+	if (sellingPrice == null || sellingPrice === '' || isNaN(Number(sellingPrice)) || Number(sellingPrice) < 0) {
+		throw new ServiceError('Đơn giá bán phải là số không âm', 400);
+	}
+
+	const updateData = {
+		price: Number(sellingPrice),
+		updatedBy: user._id,
+	};
+
+	const updated = await medicationRepo.updateById(medicationId, updateData);
+
+	await createAuditLog({
+		actorUserId: user._id,
+		actorRole: user.role,
+		action: 'UPDATE_SELLING_PRICE',
+		module: 'pharmacy',
+		targetEntityType: 'Medication',
+		targetEntityId: medication._id,
+		beforeData: { price: medication.price },
+		afterData: { price: updated.price },
+		req,
+	});
+
+	return { message: 'Đã cập nhật đơn giá bán thành công', medication: formatMedication(updated, null) };
 };
 
 const listMedications = async (query) => {
@@ -757,6 +791,7 @@ const getReportSummary = async (query) => {
 module.exports = {
 	createMedication,
 	updateMedication,
+	updateSellingPrice,
 	listMedications,
 	getMedication,
 	addMedicationNote,

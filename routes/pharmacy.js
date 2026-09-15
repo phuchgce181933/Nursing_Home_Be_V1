@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   createMedication,
   updateMedication,
+  updateSellingPrice,
   listMedications,
   getMedication,
   addMedicationNote,
@@ -166,6 +167,39 @@ router.get('/medications/:medicationId', getMedication);
  *         description: Not found
  */
 router.put('/medications/:medicationId', updateMedication);
+/**
+ * @swagger
+ * /api/pharmacy/medications/{medicationId}/selling-price:
+ *   patch:
+ *     summary: Update medication selling price
+ *     tags: [Pharmacy - Medications]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: medicationId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [sellingPrice]
+ *             properties:
+ *               sellingPrice:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Selling price updated
+ *       404:
+ *         description: Not found
+ *       400:
+ *         description: Validation error
+ */
+router.patch('/medications/:medicationId/selling-price', updateSellingPrice);
 
 // Medication notes
 /**

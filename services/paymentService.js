@@ -455,58 +455,74 @@ const getLatestMedicationUnitCost = async (medicationId) => {
 
 const estimateMedicationCostFromPrescription = async (prescription) => {
   if (!prescription?.items?.length) return 0;
-  const medicationIds = prescription.items
-    .map((item) => (item.medicationId?._id ? item.medicationId._id : item.medicationId))
-    .filter(Boolean);
-
-  const unitCostMap = {};
-  await Promise.all(
-    medicationIds.map(async (medicationId) => {
-      const cost = await getLatestMedicationUnitCost(medicationId);
-      if (cost != null) {
-        unitCostMap[String(medicationId)] = cost;
-      }
-    })
-  );
 
   let estimatedCost = 0;
   for (const item of prescription.items) {
     if (item.isActive === false) continue;
-    const dosageValue = Number(item.dosage);
-    const frequency = Number(item.frequency) || 0;
-    let effectiveDays = 0;
 
-    if (item.startDate) {
-      const start = new Date(item.startDate);
-      if (!Number.isNaN(start.getTime())) {
-        let end = null;
-        if (item.endDate) {
-          const itemEnd = new Date(item.endDate);
-          if (!Number.isNaN(itemEnd.getTime()) && itemEnd >= start) {
-            end = itemEnd;
+    // Ưu tiên: dùng subtotalInclTax đã lưu cứng khi tạo đơn thuốc
+    if (item.subtotalInclTax != null && item.subtotalInclTax > 0) {
+      estimatedCost += Number(item.subtotalInclTax);
+    }
+    // Fallback 1: dùng price × quantity × (1 + taxRate) từ prescription item
+    else if (item.price != null && item.quantity != null) {
+      const price = Number(item.price) || 0;
+      const quantity = Number(item.quantity) || 0;
+      const taxRate = Number(item.taxRate) || 0.05;
+      estimatedCost += price * quantity * (1 + taxRate);
+    }
+    // Fallback 2: ước lượng từ dosage × frequency × duration × đơn giá kho thuốc
+    else {
+      const medicationIds = prescription.items
+        .map((it) => (it.medicationId?._id ? it.medicationId._id : it.medicationId))
+        .filter(Boolean);
+
+      const unitCostMap = {};
+      await Promise.all(
+        medicationIds.map(async (medicationId) => {
+          const cost = await getLatestMedicationUnitCost(medicationId);
+          if (cost != null) {
+            unitCostMap[String(medicationId)] = cost;
           }
-        }
-        if (prescription.validUntil) {
-          const validUntilEnd = new Date(prescription.validUntil);
-          if (!Number.isNaN(validUntilEnd.getTime()) && validUntilEnd >= start) {
-            end = end ? (validUntilEnd > end ? validUntilEnd : end) : validUntilEnd;
+        })
+      );
+
+      const dosageValue = Number(item.dosage);
+      const frequency = Number(item.frequency) || 0;
+      let effectiveDays = 0;
+
+      if (item.startDate) {
+        const start = new Date(item.startDate);
+        if (!Number.isNaN(start.getTime())) {
+          let end = null;
+          if (item.endDate) {
+            const itemEnd = new Date(item.endDate);
+            if (!Number.isNaN(itemEnd.getTime()) && itemEnd >= start) {
+              end = itemEnd;
+            }
           }
-        }
-        if (end) {
-          effectiveDays = Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1;
+          if (prescription.validUntil) {
+            const validUntilEnd = new Date(prescription.validUntil);
+            if (!Number.isNaN(validUntilEnd.getTime()) && validUntilEnd >= start) {
+              end = end ? (validUntilEnd > end ? validUntilEnd : end) : validUntilEnd;
+            }
+          }
+          if (end) {
+            effectiveDays = Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1;
+          }
         }
       }
-    }
 
-    if (effectiveDays <= 0 && item.duration && Number(item.duration) > 0) {
-      effectiveDays = Number(item.duration);
-    }
+      if (effectiveDays <= 0 && item.duration && Number(item.duration) > 0) {
+        effectiveDays = Number(item.duration);
+      }
 
-    if (effectiveDays <= 0) effectiveDays = 1;
-    const quantity = Number.isFinite(dosageValue) ? dosageValue * frequency * effectiveDays : 0;
-    const medicationId = item.medicationId?._id ? item.medicationId._id : item.medicationId;
-    const unitCost = unitCostMap[String(medicationId)] || 0;
-    estimatedCost += quantity * unitCost;
+      if (effectiveDays <= 0) effectiveDays = 1;
+      const quantity = Number.isFinite(dosageValue) ? dosageValue * frequency * effectiveDays : 0;
+      const medicationId = item.medicationId?._id ? item.medicationId._id : item.medicationId;
+      const unitCost = unitCostMap[String(medicationId)] || 0;
+      estimatedCost += quantity * unitCost;
+    }
   }
 
   return Math.round(Math.max(0, estimatedCost));
@@ -593,9 +609,7 @@ const createInvoice = async (user, residentId, body) => {
   }
   // If caller provided explicit invoice items (service-line items), use them and ignore legacy cost fields
   if (body.items && Array.isArray(body.items) && body.items.length > 0) {
-    if (pendingServiceInvoice) {
-      throw new ServiceError('Đã có hóa đơn dịch vụ chưa thanh toán cho cư dân này.', 409);
-    }
+    // Medical charges (items) are separate from service invoices - no validation needed
     const rawSubTotal = body.items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
     const rawTax = Number(body.tax) || 0;
     const items = body.items.map((it) => ({

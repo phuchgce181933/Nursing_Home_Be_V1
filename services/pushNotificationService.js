@@ -1,8 +1,15 @@
-const { Expo } = require('expo-server-sdk');
+let Expo;
+
+const initExpo = async () => {
+  if (!Expo) {
+    const module = await import('expo-server-sdk');
+    Expo = module.Expo;
+  }
+  return Expo;
+};
+
 const pushTokenRepo = require('../repositories/pushTokenRepository');
 const userRepo = require('../repositories/userRepository');
-
-const expo = new Expo();
 
 // Sends `{title, body, data}` as a push notification to every device token registered for
 // each of `recipientUserIds`, skipping users who have doNotDisturb on or who excluded this
@@ -10,6 +17,9 @@ const expo = new Expo();
 // push delivery must never block the (already-persisted) in-app notification it accompanies.
 const sendPushToUsers = async (recipientUserIds, { title, body, data = {}, category } = {}) => {
   try {
+    const ExpoClass = await initExpo();
+    const expo = new ExpoClass();
+
     const ids = [...new Set((recipientUserIds || []).map(String))];
     if (!ids.length) return;
 
@@ -31,7 +41,7 @@ const sendPushToUsers = async (recipientUserIds, { title, body, data = {}, categ
 
     const messages = [];
     for (const doc of tokenDocs) {
-      if (!Expo.isExpoPushToken(doc.token)) continue;
+      if (!ExpoClass.isExpoPushToken(doc.token)) continue;
       messages.push({
         to: doc.token,
         sound: 'default',

@@ -18,6 +18,15 @@ const updateMedication = async (req, res) => {
   }
 };
 
+const updateSellingPrice = async (req, res) => {
+  try {
+    const result = await pharmacyService.updateSellingPrice(req.user, req.params.medicationId, req.body, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const listMedications = async (req, res) => {
   try {
     const result = await pharmacyService.listMedications(req.query);
@@ -183,6 +192,7 @@ const getReportSummary = async (req, res) => {
 module.exports = {
   createMedication,
   updateMedication,
+  updateSellingPrice,
   listMedications,
   getMedication,
   addMedicationNote,

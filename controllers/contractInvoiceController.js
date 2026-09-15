@@ -146,6 +146,8 @@ const exportInvoiceHtml = async (req, res) => {
           </table>`
       : '';
 
+const LOGO_URL = 'https://res.cloudinary.com/dhcrddnss/image/upload/c_crop,x_385,y_150,w_1250,h_1250,q_auto,f_auto/v1780035528/Logo_vi%E1%BB%87n_d%C6%B0%E1%BB%A1ng_l%C3%A3o_An_Nhi%C3%AAn_lrmocn.png';
+
     const html = `<!doctype html>
 <html lang="vi">
 <head>
@@ -160,6 +162,7 @@ const exportInvoiceHtml = async (req, res) => {
   .btn-primary { background: #2563eb; color: #fff; }
   .btn-secondary { background: #e2e8f0; color: #0f172a; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 20px; }
+  .header-logo { width: 70px; height: 70px; object-fit: contain; display: block; }
   .header h1 { margin: 0; font-size: 1.6rem; }
   .header .meta { text-align: right; font-size: 0.9rem; line-height: 1.5; }
   .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; }
@@ -192,12 +195,13 @@ const exportInvoiceHtml = async (req, res) => {
 </head>
 <body>
 <div class="actions no-print">
-  <button class="btn btn-primary" onclick="window.print()">🖨️ In / Lưu PDF</button>
+  <button class="btn btn-primary" onclick="window.print()">In / Lưu PDF</button>
   <button class="btn btn-secondary" onclick="window.close()">Đóng</button>
 </div>
 <div class="sheet">
   <div class="header">
     <div>
+      <img src="${LOGO_URL}" alt="Logo" class="header-logo" />
       <h1>HÓA ĐƠN</h1>
       <p style="margin:4px 0 0; color:#475569;">Nursing Home Management System</p>
     </div>

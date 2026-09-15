@@ -44,6 +44,15 @@ const findExpiring = (fromDate, toDate) => {
     .populate('supplierId', 'name phone email');
 };
 
+// Get the latest cost per unit for a medication
+const findLatestCostByMedicationId = (medicationId) =>
+  MedicationStock.findOne(
+    { medicationId, costPerUnit: { $exists: true, $ne: null } },
+    'costPerUnit receivedDate'
+  )
+    .sort({ receivedDate: -1 })
+    .lean();
+
 module.exports = {
   create,
   findById,
@@ -53,4 +62,5 @@ module.exports = {
   sumQuantitiesByMedicationIds,
   sumQuantityByMedicationId,
   findExpiring,
+  findLatestCostByMedicationId,
 };

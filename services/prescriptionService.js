@@ -232,12 +232,25 @@ const createPrescription = async ({ body, user, req }) => {
     activatedBy: initialStatus === 'ACTIVE' ? user._id : undefined,
     items: items.map((item) => {
       const med = medMap.get(String(item.medicationId));
+      const quantity = Number(item.quantity) || 1;
+      const price = Number(item.price) || 0;
+      const taxRate = Number(item.taxRate) || 0.05;
+      const subtotalExclTax = Number(item.subtotalExclTax) || (price * quantity);
+      const taxAmount = Number(item.taxAmount) || (subtotalExclTax * taxRate);
+      const subtotalInclTax = Number(item.subtotalInclTax) || (subtotalExclTax + taxAmount);
+
       return {
         medicationId: med._id,
         medicationName: med.name,
         genericName: item.genericName || med.genericName || null,
         dosage: String(item.dosage),
         unit: med.unit || null,
+        quantity,
+        price,
+        taxRate,
+        subtotalExclTax: Math.round(subtotalExclTax * 100) / 100,
+        taxAmount: Math.round(taxAmount * 100) / 100,
+        subtotalInclTax: Math.round(subtotalInclTax * 100) / 100,
         frequency: item.isPRN ? (item.frequency || 1) : Number(item.frequency),
         times: item.isPRN ? [] : (Array.isArray(item.times) ? item.times : []),
         route: item.route || 'oral',
@@ -585,12 +598,25 @@ const _processDoctorItems = async ({ prescription, items, acknowledgeWarnings, c
 
   for (const entry of activeEntries) {
     const med = medMap.get(String(entry.medicationId));
+    const quantity = Number(entry.quantity) || 1;
+    const price = Number(entry.price) || 0;
+    const taxRate = Number(entry.taxRate) || 0.05;
+    const subtotalExclTax = Number(entry.subtotalExclTax) || (price * quantity);
+    const taxAmount = Number(entry.taxAmount) || (subtotalExclTax * taxRate);
+    const subtotalInclTax = Number(entry.subtotalInclTax) || (subtotalExclTax + taxAmount);
+
     const built = {
       medicationId: med._id,
       medicationName: med.name,
       genericName: entry.genericName || med.genericName || null,
       dosage: String(entry.dosage),
       unit: med.unit || null,
+      quantity,
+      price,
+      taxRate,
+      subtotalExclTax: Math.round(subtotalExclTax * 100) / 100,
+      taxAmount: Math.round(taxAmount * 100) / 100,
+      subtotalInclTax: Math.round(subtotalInclTax * 100) / 100,
       frequency: Number(entry.frequency),
       times: Array.isArray(entry.times) ? entry.times : [],
       route: entry.route || 'oral',

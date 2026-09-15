@@ -6,6 +6,7 @@ const {
   getResidentBillingSummary,
   getResidentInvoices,
   getInvoicePaymentUrl,
+  getInvoiceDetail,
   getWalletBalance,
   generateWalletTopupUrl,
   confirmWalletTopup,
@@ -176,6 +177,35 @@ router.get('/residents/:residentId/invoices', getResidentInvoices);
  *         description: Invoice not found
  */
 router.get('/residents/:residentId/invoices/:invoiceId/payment-url', getInvoicePaymentUrl);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/invoices/{invoiceId}:
+ *   get:
+ *     summary: Get invoice details for preview
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: invoiceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Invoice details
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Invoice not found
+ */
+router.get('/residents/:residentId/invoices/:invoiceId', getInvoiceDetail);
 
 /**
  * @swagger

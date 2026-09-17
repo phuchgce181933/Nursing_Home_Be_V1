@@ -664,7 +664,22 @@ const listEquipment = async (filters = {}) => {
   if (filters.category) query.category = filters.category;
   if (filters.roomId) query.roomId = filters.roomId;
 
-  return equipmentRepo.findByFilterPopulated(query, { sort: { name: 1 } });
+  if (filters.search) {
+    const escaped = filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(escaped, 'i');
+    query.$or = [{ name: re }, { code: re }];
+  }
+
+  const pageNum = Math.max(1, parseInt(filters.page || 1, 10));
+  const limitNum = Math.min(100, Math.max(1, parseInt(filters.limit || 20, 10)));
+  const skip = (pageNum - 1) * limitNum;
+
+  const [data, total] = await Promise.all([
+    equipmentRepo.findByFilterPopulatedPaginated(query, { sort: { name: 1 }, skip, limit: limitNum }),
+    equipmentRepo.countByFilter(query),
+  ]);
+
+  return { data, page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum) || 1 };
 };
 
 const createEquipment = async (data, user, req) => {

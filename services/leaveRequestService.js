@@ -54,11 +54,19 @@ const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reaso
 
   if (end < start) throw apiErr(CODES.LEAVE_END_BEFORE_START, { statusCode: 400 });
 
-  // 24h advance notice (not required for emergency)
-  if (type !== 'emergency') {
-    const now = new Date();
-    const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    if (start < cutoff) {
+  // Calendar-date comparison in Vietnam timezone (UTC+7)
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const startDateStr = typeof startDate === 'string' && startDate.length === 10
+    ? startDate
+    : start.toISOString().slice(0, 10);
+
+  if (type === 'emergency') {
+    if (startDateStr < todayVN) {
+      throw apiErr(CODES.LEAVE_PAST_DATE, { statusCode: 400 });
+    }
+  } else {
+    // Non-emergency: must be at least tomorrow
+    if (startDateStr <= todayVN) {
       throw apiErr(CODES.LEAVE_PAST_DATE, { statusCode: 400 });
     }
   }

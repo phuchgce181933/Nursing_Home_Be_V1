@@ -1,12 +1,12 @@
-const Resident = require('../models/resident');
-const Prescription = require('../models/prescription');
-const ContraindicationRule = require('../models/ContraindicationRule');
-const DrugInteraction = require('../models/DrugInteraction');
-const ElderlyDosageGuideline = require('../models/ElderlyDosageGuideline');
+const residentRepo = require('../repositories/residentRepository');
+const prescriptionRepo = require('../repositories/prescriptionRepository');
+const contraindicationRuleRepo = require('../repositories/contraindicationRuleRepository');
+const drugInteractionRepo = require('../repositories/drugInteractionRepository');
+const elderlyDosageGuidelineRepo = require('../repositories/elderlyDosageGuidelineRepository');
 const ServiceError = require('./serviceError');
 
 const getResidentOrThrow = async (residentId) => {
-  const resident = await Resident.findById(residentId).select('chronicConditions allergies drugAllergies dateOfBirth');
+  const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return resident;
 };
@@ -21,7 +21,7 @@ const checkContraindications = async (residentId, drugNames) => {
 
   if (!chronicConditions.length || !drugNames.length) return { violations: [] };
 
-  const rules = await ContraindicationRule.find({
+  const rules = await contraindicationRuleRepo.findByFilter({
     condition: { $in: chronicConditions },
     forbiddenDrugs: { $in: drugNames },
   });
@@ -44,8 +44,9 @@ const checkContraindications = async (residentId, drugNames) => {
 };
 
 /**
- * Check for interactions between newDrugNames and drugs from the resident's other active prescriptions.
- * @returns {{ interactions: Array<{ drugA, drugB, severity, description }> }}
+ * Check for interactions between newDrugNames and drugs from the resident's other active prescriptions,
+ * AND intra-prescription interactions (within the new drug list itself).
+ * @returns {{ interactions: Array<{ drugA, drugB, severity, description, source }> }}
  */
 const checkDrugInteractions = async (residentId, newDrugNames, excludePrescriptionId) => {
   if (!newDrugNames.length) return { interactions: [] };
@@ -53,7 +54,7 @@ const checkDrugInteractions = async (residentId, newDrugNames, excludePrescripti
   const filter = { residentId, status: 'ACTIVE' };
   if (excludePrescriptionId) filter._id = { $ne: excludePrescriptionId };
 
-  const activePrescriptions = await Prescription.find(filter).select('items');
+  const activePrescriptions = await prescriptionRepo.findByFilter(filter, { select: 'items' });
 
   const existingDrugNames = [];
   for (const rx of activePrescriptions) {
@@ -64,23 +65,64 @@ const checkDrugInteractions = async (residentId, newDrugNames, excludePrescripti
     }
   }
 
-  if (!existingDrugNames.length) return { interactions: [] };
+  const allResults = [];
 
-  const interactions = await DrugInteraction.find({
-    $or: [
-      { drugA: { $in: newDrugNames }, drugB: { $in: existingDrugNames } },
-      { drugA: { $in: existingDrugNames }, drugB: { $in: newDrugNames } },
-    ],
-  });
+  // Cross-prescription interactions
+  if (existingDrugNames.length) {
+    const crossInteractions = await drugInteractionRepo.findByFilter({
+      $or: [
+        { drugA: { $in: newDrugNames }, drugB: { $in: existingDrugNames } },
+        { drugA: { $in: existingDrugNames }, drugB: { $in: newDrugNames } },
+      ],
+    });
+    for (const i of crossInteractions) {
+      allResults.push({ drugA: i.drugA, drugB: i.drugB, severity: i.severity, description: i.description, source: 'cross_prescription' });
+    }
+  }
 
-  return {
-    interactions: interactions.map((i) => ({
-      drugA: i.drugA,
-      drugB: i.drugB,
-      severity: i.severity,
-      description: i.description,
-    })),
-  };
+  // Intra-prescription interactions (within the same prescription)
+  if (newDrugNames.length > 1) {
+    const intraInteractions = await drugInteractionRepo.findByFilter({
+      $or: [
+        { drugA: { $in: newDrugNames }, drugB: { $in: newDrugNames } },
+      ],
+    });
+    for (const i of intraInteractions) {
+      if (newDrugNames.includes(i.drugA) && newDrugNames.includes(i.drugB)) {
+        allResults.push({ drugA: i.drugA, drugB: i.drugB, severity: i.severity, description: i.description, source: 'intra_prescription' });
+      }
+    }
+  }
+
+  return { interactions: allResults };
+};
+
+/**
+ * Check for duplicate active prescriptions with the same medications for the same resident.
+ * @returns {{ duplicates: Array<{ medicationName, existingPrescriptionId, prescriptionDate }> }}
+ */
+const checkDuplicatePrescriptions = async (residentId, drugNames, excludePrescriptionId) => {
+  if (!drugNames.length) return { duplicates: [] };
+
+  const filter = { residentId, status: { $in: ['ACTIVE', 'DRAFT'] } };
+  if (excludePrescriptionId) filter._id = { $ne: excludePrescriptionId };
+
+  const activePrescriptions = await prescriptionRepo.findByFilter(filter, { select: 'items prescriptionDate' });
+  const duplicates = [];
+
+  for (const rx of activePrescriptions) {
+    for (const item of rx.items) {
+      if (item.isActive && drugNames.includes(item.medicationName)) {
+        duplicates.push({
+          medicationName: item.medicationName,
+          existingPrescriptionId: rx._id,
+          prescriptionDate: rx.prescriptionDate,
+        });
+      }
+    }
+  }
+
+  return { duplicates };
 };
 
 /**
@@ -126,7 +168,7 @@ const checkElderlyDosage = async (residentId, items) => {
   if (ageYears < 65) return { warnings: [] };
 
   const drugNames = items.map((i) => i.medicationName);
-  const guidelines = await ElderlyDosageGuideline.find({ medicationName: { $in: drugNames } });
+  const guidelines = await elderlyDosageGuidelineRepo.findByFilter({ medicationName: { $in: drugNames } });
   const guidelineMap = Object.fromEntries(guidelines.map((g) => [g.medicationName, g]));
 
   const warnings = [];
@@ -154,4 +196,5 @@ module.exports = {
   checkDrugInteractions,
   checkAllergies,
   checkElderlyDosage,
+  checkDuplicatePrescriptions,
 };

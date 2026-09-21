@@ -8,6 +8,10 @@ const {
   getSchedules,
   markTaken,
   markMissed,
+  markRefused,
+  markHeld,
+  markNotAvailable,
+  administerPRN,
   getHistory,
 } = require('../controllers/scheduleController');
 const { protect, authorize } = require('../middleware/auth');
@@ -256,6 +260,10 @@ router.patch('/schedule/:id/taken', protect, authorize('nurse'), markTaken);
  *         description: Schedule not found
  */
 router.patch('/schedule/:id/missed', protect, authorize('nurse'), markMissed);
+router.patch('/schedule/:id/refused', protect, authorize('nurse'), markRefused);
+router.patch('/schedule/:id/held', protect, authorize('nurse'), markHeld);
+router.patch('/schedule/:id/not-available', protect, authorize('nurse'), markNotAvailable);
+router.post('/prn-administration', protect, authorize('nurse'), administerPRN);
 
 /**
  * @swagger

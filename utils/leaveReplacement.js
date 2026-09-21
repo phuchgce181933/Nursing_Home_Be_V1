@@ -2,7 +2,6 @@ const ServiceError = require('../services/serviceError');
 const shiftRepo = require('../repositories/shiftRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const userRepo = require('../repositories/userRepository');
-const StaffProfile = require('../models/staffProfile');
 const { checkConflicts } = require('../services/shiftService');
 const { assertAssignableStaffProfile, isAssignableRole } = require('./staffAssignment');
 
@@ -137,10 +136,7 @@ const listReplacementCandidates = async ({ requesterRole, requesterUserId, shift
 
   if (!userIds.length) return [];
 
-  const profiles = await StaffProfile.find({ userId: { $in: userIds } }).populate(
-    'userId',
-    'fullName role email'
-  );
+  const profiles = await staffProfileRepo.findByUserIdsWithUser(userIds);
 
   const candidates = [];
   for (const profile of profiles) {

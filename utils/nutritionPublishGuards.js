@@ -1,7 +1,7 @@
-const MealTimeScheduleDay = require('../models/mealTimeScheduleDay');
-const MealTimeScheduleEntry = require('../models/mealTimeScheduleEntry');
-const SpecialDietDay = require('../models/specialDietDay');
-const SpecialDietEntry = require('../models/specialDietEntry');
+const mealTimeScheduleDayRepo = require('../repositories/mealTimeScheduleDayRepository');
+const mealTimeScheduleEntryRepo = require('../repositories/mealTimeScheduleEntryRepository');
+const specialDietDayRepo = require('../repositories/specialDietDayRepository');
+const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
 const { apiErr, CODES } = require('./apiError');
 const { workDateRangeFilter } = require('./publishedMealPlanLookup');
 
@@ -17,19 +17,17 @@ const findPublishedScheduleConflicts = async (workDateStr, residentIds, excludeS
     dayFilter._id = { $ne: excludeScheduleDayId };
   }
 
-  const days = await MealTimeScheduleDay.find(dayFilter)
-    .populate({ path: 'publishedBy', select: 'fullName' })
-    .lean();
+  const days = await mealTimeScheduleDayRepo.findByFilterLean(dayFilter, {
+    populate: { path: 'publishedBy', select: 'fullName' },
+  });
   if (!days.length) return [];
 
   const conflicts = [];
   for (const day of days) {
-    const entries = await MealTimeScheduleEntry.find({
-      mealTimeScheduleDayId: day._id,
-      residentId: { $in: ids },
-    })
-      .populate({ path: 'residentId', select: 'fullName residentCode' })
-      .lean();
+    const entries = await mealTimeScheduleEntryRepo.findByFilterLean(
+      { mealTimeScheduleDayId: day._id, residentId: { $in: ids } },
+      { populate: { path: 'residentId', select: 'fullName residentCode' } }
+    );
 
     for (const entry of entries) {
       conflicts.push({
@@ -56,19 +54,17 @@ const findPublishedSpecialDietConflicts = async (workDateStr, residentIds, exclu
     dayFilter._id = { $ne: excludeSpecialDietDayId };
   }
 
-  const days = await SpecialDietDay.find(dayFilter)
-    .populate({ path: 'publishedBy', select: 'fullName' })
-    .lean();
+  const days = await specialDietDayRepo.findByFilterLean(dayFilter, {
+    populate: { path: 'publishedBy', select: 'fullName' },
+  });
   if (!days.length) return [];
 
   const conflicts = [];
   for (const day of days) {
-    const entries = await SpecialDietEntry.find({
-      specialDietDayId: day._id,
-      residentId: { $in: ids },
-    })
-      .populate({ path: 'residentId', select: 'fullName residentCode' })
-      .lean();
+    const entries = await specialDietEntryRepo.findByFilterLean(
+      { specialDietDayId: day._id, residentId: { $in: ids } },
+      { populate: { path: 'residentId', select: 'fullName residentCode' } }
+    );
 
     for (const entry of entries) {
       conflicts.push({

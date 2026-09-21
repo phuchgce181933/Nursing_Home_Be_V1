@@ -1,14 +1,14 @@
 const mongoose = require('mongoose');
-const Resident = require('../models/resident');
-const StaffProfile = require('../models/staffProfile');
-const User = require('../models/user');
+const residentRepo = require('../repositories/residentRepository');
+const staffProfileRepo = require('../repositories/staffProfileRepository');
+const userRepo = require('../repositories/userRepository');
 const incidentRepo = require('../repositories/incidentRepository');
+const careTaskRepo = require('../repositories/careTaskRepository');
+const careAppointmentRepo = require('../repositories/careAppointmentRepository');
 const notificationService = require('./notificationService');
 const mailService = require('./mailService');
 const ServiceError = require('./serviceError');
 const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
-const CareTask = require('../models/careTask');
-const CareAppointment = require('../models/careAppointment');
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -91,7 +91,7 @@ const isStaffRole = (role) => {
 
 const getStaffProfileIdForUser = async (currentUser) => {
   if (!currentUser?._id || !isStaffRole(currentUser.role)) return null;
-  const profile = await StaffProfile.findOne({ userId: currentUser._id }).select('_id').lean();
+  const profile = await staffProfileRepo.findOneLean({ userId: currentUser._id }, { select: '_id' });
   return profile?._id || null;
 };
 
@@ -209,9 +209,10 @@ const convertUserIdsToStaffProfileIds = async (userIds) => {
 
     const profiles = [];
     for (const id of normalizedIds) {
-      const profile = await StaffProfile.findOne({
-        $or: [{ userId: id }, { _id: id }],
-      }).select('_id userId').lean();
+      const profile = await staffProfileRepo.findOneLean(
+        { $or: [{ userId: id }, { _id: id }] },
+        { select: '_id userId' }
+      );
 
       if (profile) profiles.push(profile);
     }
@@ -267,7 +268,7 @@ const resolveStaffProfileIds = async (candidateIds = []) => {
   for (const id of normalizedIds) {
     if (!id) continue;
     if (mongoose.Types.ObjectId.isValid(id)) {
-      const profile = await StaffProfile.findOne({ $or: [{ _id: id }, { userId: id }] }).select('_id').lean();
+      const profile = await staffProfileRepo.findOneLean({ $or: [{ _id: id }, { userId: id }] }, { select: '_id' });
       if (profile) profileIds.push(String(profile._id));
     }
   }
@@ -292,11 +293,11 @@ const getAssignmentConflictsForStaff = async ({ incidentAt, residentIds = [], st
     .filter((id) => mongoose.Types.ObjectId.isValid(id))
     .map((id) => new mongoose.Types.ObjectId(String(id)));
 
-  const careTasks = await CareTask.find({
+  const careTasks = await careTaskRepo.findByFilter({
     staffProfileId: new mongoose.Types.ObjectId(String(staffProfileId)),
     workDate: { $gte: dayStart, $lte: dayEnd },
     ...(residentObjectIds.length ? { residentId: { $in: residentObjectIds } } : {}),
-  }).lean();
+  });
 
   const matchingCareTasks = careTasks.filter((task) => {
     const taskMinutes = parseTimeToMinutes(task?.scheduledTime);
@@ -305,7 +306,7 @@ const getAssignmentConflictsForStaff = async ({ incidentAt, residentIds = [], st
 
   const hasCareTask = matchingCareTasks.length > 0;
 
-  const appointments = await CareAppointment.find({
+  const appointments = await careAppointmentRepo.findByFilterLean({
     $or: [
       { doctorStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
       { nurseStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
@@ -313,21 +314,21 @@ const getAssignmentConflictsForStaff = async ({ incidentAt, residentIds = [], st
     scheduledStartAt: { $lte: incidentDate },
     scheduledEndAt: { $gte: incidentDate },
     ...(residentObjectIds.length ? { residentId: { $in: residentObjectIds } } : {}),
-  }).lean();
+  });
 
   // Only keep the staff schedule for the incident day so the reassignment UI does not show historical tasks/appointments.
-  const allCareTasks = await CareTask.find({
+  const allCareTasks = await careTaskRepo.findByFilter({
     staffProfileId: new mongoose.Types.ObjectId(String(staffProfileId)),
     workDate: { $gte: dayStart, $lte: dayEnd },
-  }).lean();
-  const allAppointments = await CareAppointment.find({
+  });
+  const allAppointments = await careAppointmentRepo.findByFilterLean({
     $or: [
       { doctorStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
       { nurseStaffId: new mongoose.Types.ObjectId(String(staffProfileId)) },
     ],
     scheduledStartAt: { $gte: dayStart, $lte: dayEnd },
     scheduledEndAt: { $gte: dayStart, $lte: dayEnd },
-  }).lean();
+  });
 
   // careTasks (above) already is limited to the same day; prepare its times
   const careTasksForDayTimes = (careTasks || []).map((t) => t?.scheduledTime).filter(Boolean);
@@ -410,9 +411,10 @@ const getResidentsForIncident = async (residentIds) => {
   });
 
   const uniqueIds = [...new Set(ids)];
-  const residents = await Resident.find({ _id: { $in: uniqueIds } })
-    .select('_id fullName familyPortalAccountIds')
-    .lean();
+  const residents = await residentRepo.findByFilterLean(
+    { _id: { $in: uniqueIds } },
+    { select: '_id fullName familyPortalAccountIds' }
+  );
 
   console.log('[DEBUG] getResidentsForIncident - found residents:', residents.length);
   console.log('[DEBUG] getResidentsForIncident - first resident _id type:', residents[0]?._id?.constructor?.name);
@@ -426,14 +428,14 @@ const getResidentsForIncident = async (residentIds) => {
 
 const getStaffProfileByUserId = async (userId, user = null) => {
   console.log('[DEBUG] getStaffProfileByUserId - Looking for userId:', userId);
-  let profile = await StaffProfile.findOne({ userId }).select('_id');
+  let profile = await staffProfileRepo.findOneLean({ userId }, { select: '_id' });
   console.log('[DEBUG] getStaffProfileByUserId - Found existing profile:', !!profile);
   
   if (!profile) {
     console.log('[DEBUG] getStaffProfileByUserId - Profile not found, attempting to auto-create...');
     console.log('[DEBUG] getStaffProfileByUserId - User object:', user ? { _id: user._id, role: user.role, email: user.email } : 'Not provided');
     
-    const userObj = user || (await User.findById(userId));
+    const userObj = user || (await userRepo.findById(userId));
     console.log('[DEBUG] getStaffProfileByUserId - User to create profile for:', { _id: userObj._id, role: userObj.role, email: userObj.email });
     
     profile = await ensureStaffProfileForUser(userObj);
@@ -552,21 +554,23 @@ const notifyIncident = async (incident, options = {}) => {
   console.log('[DEBUG] notifyIncident - extracted residentIds:', residentIds);
 
   const residentDocs = residentIds.length
-    ? await Resident.find({ _id: { $in: residentIds } }).select('familyPortalAccountIds').lean()
+    ? await residentRepo.findByFilterLean({ _id: { $in: residentIds } }, { select: 'familyPortalAccountIds' })
     : [];
 
   const familyUserIds = residentDocs.flatMap((resident) => resident.familyPortalAccountIds || []).map(String);
   const familyUsers = familyUserIds.length
-    ? await User.find({ _id: { $in: [...new Set(familyUserIds)] }, isActive: true, isBanned: false })
-        .select('fullName email phone role')
-        .lean()
+    ? await userRepo.findByFilterLean(
+        { _id: { $in: [...new Set(familyUserIds)] }, isActive: true, isBanned: false },
+        { select: 'fullName email phone role' }
+      )
     : [];
 
   const assignedUserIds = getUserIdsFromStaffProfiles(incident.assignedStaffIds || []);
   const assignedUsers = assignedUserIds.length
-    ? await User.find({ _id: { $in: assignedUserIds }, isActive: true, isBanned: false })
-        .select('fullName email phone role')
-        .lean()
+    ? await userRepo.findByFilterLean(
+        { _id: { $in: assignedUserIds }, isActive: true, isBanned: false },
+        { select: 'fullName email phone role' }
+      )
     : [];
 
   const recipients = ensureUnique([
@@ -574,16 +578,18 @@ const notifyIncident = async (incident, options = {}) => {
     ...familyUsers,
   ].map((user) => user._id.toString()));
 
-  const recipientDocs = await User.find({ _id: { $in: recipients }, isActive: true, isBanned: false })
-    .select('fullName email phone role')
-    .lean();
+  const recipientDocs = await userRepo.findByFilterLean(
+    { _id: { $in: recipients }, isActive: true, isBanned: false },
+    { select: 'fullName email phone role' }
+  );
 
   await sendNotifications(incident, recipientDocs, options);
 
   if (shouldNotifyAdmin) {
-    const adminUsers = await User.find({ role: 'admin', isActive: true, isBanned: false })
-      .select('fullName email phone role')
-      .lean();
+    const adminUsers = await userRepo.findByFilterLean(
+      { role: 'admin', isActive: true, isBanned: false },
+      { select: 'fullName email phone role' }
+    );
 
     if (adminUsers.length) {
       const adminNotificationDocs = adminUsers.map((recipient) => ({

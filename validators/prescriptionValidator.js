@@ -60,7 +60,7 @@ const createPrescriptionRules = [
 
   body('items.*.frequency')
     .notEmpty().withMessage('items[*].frequency là bắt buộc')
-    .isInt({ min: 1, max: 4 }).withMessage('items[*].frequency phải là số nguyên từ 1 đến 4'),
+    .isInt({ min: 1, max: 12 }).withMessage('items[*].frequency phải là số nguyên từ 1 đến 12'),
 
   body('items.*.times')
     .optional()
@@ -70,8 +70,20 @@ const createPrescriptionRules = [
     .optional()
     .isIn(VALID_ROUTES).withMessage(`items[*].route phải thuộc một trong: ${VALID_ROUTES.join(', ')}`),
 
+  body('items.*.isPRN')
+    .optional()
+    .isBoolean().withMessage('items[*].isPRN phải là kiểu boolean'),
+
+  body('items.*.prnReason')
+    .optional()
+    .isString().withMessage('items[*].prnReason phải là chuỗi'),
+
+  body('items.*.maxDailyDoses')
+    .optional()
+    .isInt({ min: 1, max: 12 }).withMessage('items[*].maxDailyDoses phải là số nguyên từ 1 đến 12'),
+
   body('items.*.startDate')
-    .notEmpty().withMessage('items[*].startDate là bắt buộc')
+    .optional()
     .isISO8601().withMessage('items[*].startDate phải là ngày ISO hợp lệ')
     .custom((value) => {
       if (isDateStrInPast(value)) {
@@ -84,11 +96,29 @@ const createPrescriptionRules = [
     .optional({ nullable: true })
     .isISO8601().withMessage('items[*].endDate phải là ngày ISO hợp lệ'),
 
+  body('saveAsDraft')
+    .optional()
+    .isBoolean().withMessage('saveAsDraft phải là kiểu boolean'),
+
   // Cross-field: times.length == frequency, date ordering, endDate vs duration
   body('items').custom((items, { req }) => {
     if (!Array.isArray(items)) return true;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
+
+      // PRN items don't require startDate, endDate, or times
+      if (item.isPRN) {
+        if (!item.prnReason && !item.instructions) {
+          throw new Error(`items[${i}]: thuốc PRN phải có prnReason hoặc instructions`);
+        }
+        continue;
+      }
+
+      // Non-PRN items require startDate
+      if (!item.startDate) {
+        throw new Error(`items[${i}].startDate là bắt buộc cho thuốc không phải PRN`);
+      }
+
       if (Array.isArray(item.times) && item.frequency !== undefined) {
         const freq = parseInt(item.frequency, 10);
         if (item.times.length !== freq) {
@@ -177,7 +207,7 @@ const editPrescriptionRules = [
 
   body('items.*.frequency')
     .optional()
-    .isInt({ min: 1, max: 4 }).withMessage('items[*].frequency phải là số nguyên từ 1 đến 4'),
+    .isInt({ min: 1, max: 12 }).withMessage('items[*].frequency phải là số nguyên từ 1 đến 12'),
 
   body('items.*.times')
     .optional()
@@ -242,6 +272,27 @@ const editPrescriptionRules = [
 const validate = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    console.error('[PRESCRIPTION_DEBUG] validation failed', {
+      method: req.method,
+      path: req.originalUrl,
+      errors: errors.array().map((error) => ({ field: error.path, message: error.msg })),
+      body: {
+        residentId: req.body?.residentId,
+        validUntil: req.body?.validUntil,
+        itemCount: Array.isArray(req.body?.items) ? req.body.items.length : undefined,
+        items: Array.isArray(req.body?.items)
+          ? req.body.items.map((item) => ({
+            medicationId: item.medicationId,
+            dosage: item.dosage,
+            frequency: item.frequency,
+            timesCount: Array.isArray(item.times) ? item.times.length : undefined,
+            isPRN: item.isPRN,
+            duration: item.duration,
+            startDate: item.startDate,
+          }))
+          : undefined,
+      },
+    });
     return res.status(400).json({
       success: false,
       errorCode: 'VALIDATION_ERROR',

@@ -1,6 +1,7 @@
 const Bed = require('../models/bed');
 
 const findById = async (id) => Bed.findById(id).lean();
+const findByIdDoc = async (id) => Bed.findById(id);
 
 const findAvailableByRoomIds = async (roomIds) => {
   if (!Array.isArray(roomIds) || roomIds.length === 0) return [];
@@ -13,6 +14,20 @@ const findAvailableByRoomIds = async (roomIds) => {
     .sort({ bedCode: 1 })
     .lean();
 };
+
+const findByFilterLean = async (filter, { select, sort } = {}) => {
+  let q = Bed.find(filter);
+  if (select) q = q.select(select);
+  if (sort) q = q.sort(sort);
+  return q.lean();
+};
+
+const findOne = async (filter) => Bed.findOne(filter);
+const create = async (data) => Bed.create(data);
+const updateMany = async (filter, update) => Bed.updateMany(filter, update);
+const findByIdAndDelete = async (id) => Bed.findByIdAndDelete(id);
+const countDocuments = async (filter) => Bed.countDocuments(filter);
+const aggregate = async (pipeline) => Bed.aggregate(pipeline);
 
 const releaseBed = async (bedId, releasedAt = new Date()) =>
   Bed.findByIdAndUpdate(
@@ -39,7 +54,15 @@ const occupyBed = async (bedId, residentId, assignedAt = new Date()) =>
 
 module.exports = {
   findById,
+  findByIdDoc,
   findAvailableByRoomIds,
+  findByFilterLean,
+  findOne,
+  create,
+  updateMany,
+  findByIdAndDelete,
+  countDocuments,
+  aggregate,
   releaseBed,
   occupyBed,
 };

@@ -17,6 +17,13 @@ const updateById = async (id, data, options = {}) =>
 
 const deleteById = async (id, options = {}) => SpecialDietDay.findByIdAndDelete(id, options);
 
+const findByFilterLean = async (filter, { populate, sort } = {}) => {
+  let q = SpecialDietDay.find(filter);
+  if (populate) q = q.populate(populate);
+  if (sort) q = q.sort(sort);
+  return q.lean();
+};
+
 module.exports = {
   create,
   findById,
@@ -24,4 +31,5 @@ module.exports = {
   countAll,
   updateById,
   deleteById,
+  findByFilterLean,
 };

@@ -28,7 +28,14 @@ const updateById = (id, data) =>
 const softDelete = (id, updatedBy) =>
   ServicePackage.findByIdAndUpdate(id, { isActive: false, updatedBy }, { new: true });
 
+const findByFilterLean = (filter, { select } = {}) => {
+  let q = ServicePackage.find(filter);
+  if (select) q = q.select(select);
+  return q.lean();
+};
+
 module.exports = {
+  findByFilterLean,
   create,
   findById,
   findByCode,

@@ -9,4 +9,8 @@ const create = async (data) => ShiftTemplate.create(data);
 const updateById = async (id, data) => ShiftTemplate.findByIdAndUpdate(id, data, { new: true, runValidators: true });
 const deleteById = async (id) => ShiftTemplate.findByIdAndDelete(id);
 
-module.exports = { findAll, findById, findByName, findByShiftCode, findByNameAndDepartment, create, updateById, deleteById };
+const findOneAndUpdate = async (filter, update, opts = {}) =>
+  ShiftTemplate.findOneAndUpdate(filter, update, opts);
+const updateMany = async (filter, update) => ShiftTemplate.updateMany(filter, update);
+
+module.exports = { findAll, findById, findByName, findByShiftCode, findByNameAndDepartment, create, updateById, deleteById, findOneAndUpdate, updateMany };

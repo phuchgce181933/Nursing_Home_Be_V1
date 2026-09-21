@@ -2,8 +2,8 @@ const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const activityRepo = require('../repositories/activityRepository');
 const notificationService = require('./notificationService');
-const Resident = require('../models/resident');
-const User = require('../models/user');
+const residentRepo = require('../repositories/residentRepository');
+const userRepo = require('../repositories/userRepository');
 const { ACTIVITY_STATUSES } = require('../models/enums');
 const { calculateDurationMinutes } = require('../utils/activityDuration');
 
@@ -267,10 +267,10 @@ const syncActivityStatusIfNeeded = async (activity, now = new Date()) => {
 
 const getParticipantFamilyUserIds = async (residentIds = []) => {
   if (!residentIds || residentIds.length === 0) return [];
-  const residents = await Resident.find(
+  const residents = await residentRepo.findByFilterLean(
     { _id: { $in: residentIds } },
-    'familyPortalAccountIds'
-  ).lean();
+    { select: 'familyPortalAccountIds' }
+  );
   const userIds = new Set();
   residents.forEach((resident) => {
     resident.familyPortalAccountIds?.forEach((userId) => userIds.add(userId.toString()));
@@ -279,7 +279,7 @@ const getParticipantFamilyUserIds = async (residentIds = []) => {
 };
 
 const getAdminUserIds = async () => {
-  const admins = await User.find({ role: 'admin', isActive: true, isBanned: false }).select('_id').lean();
+  const admins = await userRepo.findByFilterLean({ role: 'admin', isActive: true, isBanned: false }, { select: '_id' });
   return admins.map((user) => user._id.toString());
 };
 
@@ -474,9 +474,8 @@ const createActivity = async (body) => {
       throw new ServiceError('organizerStaffIds phải chứa các ObjectId hợp lệ', 400);
     }
 
-    const User = require('../models/user');
     for (const organizerId of organizerStaffIds) {
-      const organizer = await User.findById(organizerId);
+      const organizer = await userRepo.findById(organizerId);
       if (!organizer) {
         throw new ServiceError('Không tìm thấy nhân viên tổ chức', 404);
       }
@@ -491,9 +490,8 @@ const createActivity = async (body) => {
       throw new ServiceError('supportStaffIds phải chứa các ObjectId hợp lệ', 400);
     }
 
-    const User = require('../models/user');
     for (const supportStaffId of supportStaffIds) {
-      const supportStaff = await User.findById(supportStaffId);
+      const supportStaff = await userRepo.findById(supportStaffId);
       if (!supportStaff) {
         throw new ServiceError('Không tìm thấy nhân viên hỗ trợ', 404);
       }
@@ -640,9 +638,8 @@ const updateActivity = async (activityId, body) => {
       if (organizerStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
         throw new ServiceError('organizerStaffIds phải chứa các ObjectId hợp lệ', 400);
       }
-      const User = require('../models/user');
       for (const organizerId of organizerStaffIds) {
-        const organizer = await User.findById(organizerId);
+        const organizer = await userRepo.findById(organizerId);
         if (!organizer) {
           throw new ServiceError('Không tìm thấy nhân viên tổ chức', 404);
         }
@@ -661,9 +658,8 @@ const updateActivity = async (activityId, body) => {
       if (supportStaffIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
         throw new ServiceError('supportStaffIds phải chứa các ObjectId hợp lệ', 400);
       }
-      const User = require('../models/user');
       for (const supportStaffId of supportStaffIds) {
-        const supportStaff = await User.findById(supportStaffId);
+        const supportStaff = await userRepo.findById(supportStaffId);
         if (!supportStaff) {
           throw new ServiceError('Không tìm thấy nhân viên hỗ trợ', 404);
         }
@@ -746,7 +742,7 @@ const setParticipantList = async (activityId, participantResidentIds) => {
 
   const participants = normalizeObjectIds(participantResidentIds);
   if (participants.length) {
-    const residents = await Resident.find({ _id: { $in: participants } }, 'residencyStatus').lean();
+    const residents = await residentRepo.findByFilterLean({ _id: { $in: participants } }, { select: 'residencyStatus' });
     const foundIds = new Set(residents.map((r) => r._id.toString()));
     const missing = participants.filter((id) => !foundIds.has(id.toString()));
     if (missing.length) {
@@ -786,7 +782,7 @@ const registerResident = async (activityId, residentId, currentUser) => {
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
-  const resident = await Resident.findById(residentId);
+  const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   if (resident.residencyStatus !== 'admitted') {
     throw new ServiceError('Cư dân hiện không được tiếp nhận', 400);
@@ -825,7 +821,7 @@ const unregisterResident = async (activityId, residentId, currentUser) => {
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
-  const resident = await Resident.findById(residentId);
+  const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   if (currentUser?.role === 'family') {
     const ownedIds = (resident.familyPortalAccountIds || []).map((id) => id.toString());

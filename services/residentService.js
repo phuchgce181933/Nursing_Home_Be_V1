@@ -6,8 +6,9 @@ const bedRepo = require('../repositories/bedRepository');
 const floorRepo = require('../repositories/floorRepository');
 const { GENDERS, BLOOD_TYPES, RESIDENCY_STATUSES } = require('../models/enums');
 const { validateFullName, validatePhone } = require('../utils/validators');
-const User = require('../models/user');
-const Admission = require('../models/admission');
+const userRepo = require('../repositories/userRepository');
+const admissionRepo = require('../repositories/admissionRepository');
+const careAppointmentRepo = require('../repositories/careAppointmentRepository');
 const { createAuditLog } = require('../utils/auditLog');
 const { syncStaffAreasAfterResidentTransfer } = require('../utils/syncStaffAreasAfterResidentTransfer');
 
@@ -182,7 +183,7 @@ const normalizeFamilyAccountIds = async (value) => {
   if (uniqueIds.length === 0) return [];
   const invalidIds = uniqueIds.filter((id) => !Types.ObjectId.isValid(id));
   if (invalidIds.length) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: `familyPortalAccountIds không hợp lệ: ${invalidIds.join(', ')}` } });
-  const users = await User.find({ _id: { $in: uniqueIds }, role: 'family' }).select('_id');
+  const users = await userRepo.findByFilterLean({ _id: { $in: uniqueIds }, role: 'family' }, { select: '_id' });
   if (users.length !== uniqueIds.length) {
     throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'Một số familyPortalAccountIds không tồn tại hoặc không phải tài khoản family' } });
   }
@@ -501,12 +502,11 @@ const listResidentsForAssignment = async ({ floorId, roomId, search, status }, u
     const idsSet = new Set((profile.assignedResidentIds || []).map((id) => id.toString()));
 
     try {
-      const CareAppointment = require('../models/careAppointment');
       const roleField = user.role === 'doctor' ? 'doctorStaffId' : 'nurseStaffId';
-      const activeAppts = await CareAppointment.find({
+      const activeAppts = await careAppointmentRepo.findByFilterLean({
         [roleField]: profile._id,
         appointmentType: 'Khám lâm sàng đầu vào',
-      }).select('residentId');
+      }, { select: 'residentId' });
 
       activeAppts.forEach((appt) => {
         if (appt.residentId) {
@@ -873,16 +873,12 @@ const adminReleaseResident = async (admin, residentId, req) => {
     residencyStatus: 'pending',
   });
 
-  const linkedAdmission = await Admission.findOne({ residentId }).sort({ createdAt: -1 });
+  const linkedAdmission = await admissionRepo.findOneSorted({ residentId }, { sort: { createdAt: -1 } });
   if (linkedAdmission) {
-    await Admission.findByIdAndUpdate(
-      linkedAdmission._id,
-      {
-        servicePackageId: null,
-        assignedServicePackage: null,
-      },
-      { new: true, runValidators: true }
-    );
+    await admissionRepo.updateAdmission(linkedAdmission._id, {
+      servicePackageId: null,
+      assignedServicePackage: null,
+    });
   }
 
   if (currentRoomId) {
@@ -1282,7 +1278,7 @@ const adminGetResident = async (residentId) => {
 const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
   if (!body || typeof body !== 'object' || Object.keys(body).length === 0) throw apiErr(CODES.RESIDENT_BODY_EMPTY, { statusCode: 400 });
   const role = String(user?.role || '').toLowerCase();
-  if (body.allergies !== undefined && (role === 'admin' || role === 'manager')) {
+  if (body.allergies !== undefined && role === 'admin') {
     throw apiErr(CODES.RESIDENT_DRUG_ALLERGIES_FORBIDDEN, { statusCode: 403 });
   }
   const update = {};

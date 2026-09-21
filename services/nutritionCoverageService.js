@@ -1,8 +1,9 @@
 const mongoose = require('mongoose');
 const { apiErr, CODES } = require('../utils/apiError');
-const MealTimeScheduleDay = require('../models/mealTimeScheduleDay');
-const SpecialDietDay = require('../models/specialDietDay');
-const SpecialDietEntry = require('../models/specialDietEntry');
+const mealTimeScheduleDayRepo = require('../repositories/mealTimeScheduleDayRepository');
+const specialDietDayRepo = require('../repositories/specialDietDayRepository');
+const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
+const mealPlanDayRepo = require('../repositories/mealPlanDayRepository');
 const mealTimeScheduleEntryRepo = require('../repositories/mealTimeScheduleEntryRepository');
 const { parseWorkDate } = require('../utils/shiftTime');
 const {
@@ -42,9 +43,10 @@ const buildMealTimeCoverageForResidents = async (workDate, residentIds) => {
   if (!entries.length) return coverage;
 
   const dayIds = [...new Set(entries.map((e) => String(e.mealTimeScheduleDayId)))];
-  const days = await MealTimeScheduleDay.find({ _id: { $in: dayIds } })
-    .populate({ path: 'publishedBy', select: 'fullName' })
-    .lean();
+  const days = await mealTimeScheduleDayRepo.findByFilterLean(
+    { _id: { $in: dayIds } },
+    { populate: { path: 'publishedBy', select: 'fullName' } }
+  );
   const dayMap = Object.fromEntries(days.map((d) => [String(d._id), d]));
 
   for (const entry of entries) {
@@ -70,10 +72,9 @@ const buildMealPlanCoverageForResident = async (workDate, residentId) => {
     return { published: false };
   }
 
-  const populatedDay = await require('../models/mealPlanDay')
-    .findById(day._id)
-    .populate({ path: 'publishedBy', select: 'fullName' })
-    .lean();
+  const populatedDay = await mealPlanDayRepo.findByIdLean(day._id, {
+    populate: { path: 'publishedBy', select: 'fullName' },
+  });
 
   return {
     published: true,
@@ -84,19 +85,16 @@ const buildMealPlanCoverageForResident = async (workDate, residentId) => {
 };
 
 const buildSpecialDietCoverageForResident = async (workDate, residentId) => {
-  const days = await SpecialDietDay.find({
-    status: 'published',
-    workDate: workDateRangeFilter(workDate),
-  })
-    .sort({ publishedAt: -1 })
-    .populate({ path: 'publishedBy', select: 'fullName' })
-    .lean();
+  const days = await specialDietDayRepo.findByFilterLean(
+    { status: 'published', workDate: workDateRangeFilter(workDate) },
+    { sort: { publishedAt: -1 }, populate: { path: 'publishedBy', select: 'fullName' } }
+  );
 
   for (const day of days) {
-    const entries = await SpecialDietEntry.find({
+    const entries = await specialDietEntryRepo.findByFilterLean({
       specialDietDayId: day._id,
       residentId,
-    }).lean();
+    });
     if (!entries.length) continue;
 
     return {

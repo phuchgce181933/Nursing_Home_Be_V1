@@ -1,5 +1,5 @@
 // Ghi lịch sử hoạt động hệ thống (Audit Log)
-const AuditLog = require('../models/auditLog');
+const auditLogRepo = require('../repositories/auditLogRepository');
 
 const humanizeAction = (value) => {
   if (!value) return undefined;
@@ -72,7 +72,7 @@ const createAuditLog = async ({
   }
 
   try {
-    await AuditLog.create({
+    await auditLogRepo.create({
       actorUserId,
       actorRole,
       action,

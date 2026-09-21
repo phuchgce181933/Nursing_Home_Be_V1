@@ -13,6 +13,8 @@ const medicationSchema = new Schema(
     description: { type: String, trim: true },
     minStockLevel: { type: Number, default: 0, min: 0 },
     isActive: { type: Boolean, default: true, index: true },
+    // Selling price set per medication — used for billing when doctor prescribes
+    price: { type: Number, min: 0 },
     createdBy: { type: Types.ObjectId, ref: 'User' },
     updatedBy: { type: Types.ObjectId, ref: 'User' },
   },

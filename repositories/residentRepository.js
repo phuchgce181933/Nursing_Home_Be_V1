@@ -119,6 +119,9 @@ const findByIdWithFamily = async (residentId) =>
 
 const findById = async (id) => Resident.findById(id);
 
+const findByIdWithRoom = async (id) =>
+  Resident.findById(id).populate({ path: 'roomId', select: 'roomNumber floorId' });
+
 const findByResidentCode = async (residentCode) =>
   Resident.findOne({ residentCode: residentCode.toUpperCase().trim() });
 
@@ -664,7 +667,35 @@ const countAdmittedByRoomIds = async (roomIds) => {
   return new Map(rows.map((row) => [String(row._id), row.count]));
 };
 
+const findByFilterLean = async (filter, { select, populate, sort, limit } = {}) => {
+  let q = Resident.find(filter);
+  if (select) q = q.select(select);
+  if (populate) {
+    for (const p of Array.isArray(populate) ? populate : [populate]) {
+      q = q.populate(p);
+    }
+  }
+  if (sort) q = q.sort(sort);
+  if (limit) q = q.limit(limit);
+  return q.lean();
+};
+
+const findOneByFilterLean = async (filter, { select, populate } = {}) => {
+  let q = Resident.findOne(filter);
+  if (select) q = q.select(select);
+  if (populate) {
+    for (const p of Array.isArray(populate) ? populate : [populate]) {
+      q = q.populate(p);
+    }
+  }
+  return q.lean();
+};
+
+const distinct = async (field, filter) => Resident.distinct(field, filter);
+
 module.exports = {
+  distinct,
+  findByIdWithRoom,
   findForAssignment,
   findForFamilyManagement,
   findByIdWithFamily,
@@ -697,4 +728,6 @@ module.exports = {
   updatePreExistingConditions,
   findDrugAllergiesByResidentId,
   updateDrugAllergies,
+  findByFilterLean,
+  findOneByFilterLean,
 };

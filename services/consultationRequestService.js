@@ -1,6 +1,6 @@
 const consultationRequestRepo = require('../repositories/consultationRequestRepository');
 const notificationRepo = require('../repositories/notificationRepository');
-const User = require('../models/user');
+const userRepo = require('../repositories/userRepository');
 const ServiceError = require('./serviceError');
 const { CONSULTATION_REQUEST_STATUSES } = require('../models/enums');
 const mongoose = require('mongoose');
@@ -36,7 +36,7 @@ const isValidStatusTransition = (currentStatus, nextStatus) => {
 };
 
 const notifyAdminsOfNewConsultationRequest = async (request) => {
-  const adminUsers = await User.find({ role: 'admin', isActive: true, isBanned: false }).select('_id').lean();
+  const adminUsers = await userRepo.findByFilterLean({ role: 'admin', isActive: true, isBanned: false }, { select: '_id' });
   if (!adminUsers.length) return;
 
   const notifications = adminUsers.map((recipient) => ({

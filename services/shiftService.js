@@ -2,8 +2,6 @@ const shiftRepo = require('../repositories/shiftRepository');
 const shiftTemplateRepo = require('../repositories/shiftTemplateRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const leaveRequestRepo = require('../repositories/leaveRequestRepository');
-const LeaveRequest = require('../models/leaveRequest');
-const StaffProfile = require('../models/staffProfile');
 const { triggerReadinessSyncForWorkDate } = require('./readinessSyncService');
 const {
   ALLOWED_ROLES_BY_SHIFT_TYPE,
@@ -216,7 +214,7 @@ const resolveStaffProfileId = async (id) => {
 };
 
 const assertNoApprovedLeaveOnDate = async (staffProfileId, workDate) => {
-  const profile = await StaffProfile.findById(staffProfileId).select('userId');
+  const profile = await staffProfileRepo.findById(staffProfileId);
   if (!profile?.userId) return;
 
   const day = new Date(workDate);
@@ -291,10 +289,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     return conflicts;
   }
 
-  const staffProfile = await StaffProfile.findById(assignedStaffId).populate(
-    'userId',
-    'role fullName isActive isBanned'
-  );
+  const staffProfile = await staffProfileRepo.findByIdWithUser(assignedStaffId);
   if (!staffProfile) {
     conflicts.push({
       type: 'ROLE_MISMATCH',
@@ -330,7 +325,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
     conflicts.push({
       type: 'STAFF_NOT_ASSIGNABLE',
       severity: 'ERROR',
-      message: 'Không thể phân ca cho tài khoản admin hoặc manager.',
+      message: 'Không thể phân ca cho tài khoản admin.',
       details: { staffRole },
     });
     return conflicts;
@@ -397,7 +392,7 @@ const checkConflicts = async ({ assignedStaffId, workDate, startTime, endTime, e
   }
 
   // 3. LEAVE_CONFLICT (ERROR) — approved leave on workDate
-  const leave = await LeaveRequest.findOne({
+  const leave = await leaveRequestRepo.findOne({
     staffId: staffProfile.userId._id || staffProfile.userId,
     status: 'approved',
     startDate: { $lte: workDate },

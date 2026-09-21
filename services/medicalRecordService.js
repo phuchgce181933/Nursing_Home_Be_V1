@@ -4,7 +4,7 @@ const residentRepo = require('../repositories/residentRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const paymentService = require('./paymentService');
 const chargeService = require('./chargeService');
-const ClinicalService = require('../models/clinicalService');
+const clinicalServiceRepo = require('../repositories/clinicalServiceRepository');
 const { createAuditLog } = require('../utils/auditLog');
 const { assertResidentsAssignedToUser } = require('./assignedResidentService');
 const notificationService = require('./notificationService');
@@ -395,7 +395,7 @@ const checkAbnormalSelectedServiceFields = async (selectedServices = [], gender)
 
   if (!serviceIds.length) return false;
 
-  const services = await ClinicalService.find({ _id: { $in: serviceIds } }).lean();
+  const services = await clinicalServiceRepo.findAll({ _id: { $in: serviceIds } });
   const serviceMap = new Map(services.map((svc) => [String(svc._id), svc]));
 
   for (const selectedService of selectedServices) {

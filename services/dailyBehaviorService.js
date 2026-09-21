@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const dailyBehaviorRepo = require('../repositories/dailyBehaviorRecordRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
-const Resident = require('../models/resident');
+const residentRepo = require('../repositories/residentRepository');
 const assignedResidentService = require('./assignedResidentService');
 const {
   OBSERVATION_CATEGORIES,
@@ -47,7 +47,7 @@ const assertResidentAssigned = async (profile, residentId) => {
   if (!assigned.includes(String(residentId))) {
     throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ASSIGNED, { statusCode: 403 });
   }
-  const resident = await Resident.findById(residentId).select('_id residencyStatus fullName residentCode');
+  const resident = await residentRepo.findById(residentId);
   if (!resident || resident.residencyStatus !== 'admitted') {
     throw apiErr(CODES.CAREGIVER_RESIDENT_NOT_ADMITTED, { statusCode: 400 });
   }

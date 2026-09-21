@@ -1,11 +1,11 @@
 const mongoose = require('mongoose');
-const Resident = require('../models/resident');
-const MealPlanDay = require('../models/mealPlanDay');
-const MealPlanEntry = require('../models/mealPlanEntry');
-const SpecialDietDay = require('../models/specialDietDay');
-const SpecialDietEntry = require('../models/specialDietEntry');
-const MealTimeScheduleDay = require('../models/mealTimeScheduleDay');
-const MealTimeScheduleEntry = require('../models/mealTimeScheduleEntry');
+const residentRepo = require('../repositories/residentRepository');
+const mealPlanDayRepo = require('../repositories/mealPlanDayRepository');
+const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
+const specialDietDayRepo = require('../repositories/specialDietDayRepository');
+const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
+const mealTimeScheduleDayRepo = require('../repositories/mealTimeScheduleDayRepository');
+const mealTimeScheduleEntryRepo = require('../repositories/mealTimeScheduleEntryRepository');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const mealIntakeNoteRepo = require('../repositories/mealIntakeNoteRepository');
 const { getAssignedResidentIdSetForUser } = require('./assignedResidentService');
@@ -57,13 +57,11 @@ const parsePeriod = (query = {}) => {
 
 const idOf = (value) => String(value?._id || value || '');
 
-const findPublishedDaysInRange = (Model, from, to) =>
-  Model.find({
-    status: 'published',
-    workDate: workDateRangeFilter(from, to),
-  })
-    .sort({ workDate: 1, publishedAt: -1 })
-    .lean();
+const findPublishedDaysInRange = (repo, from, to) =>
+  repo.findByFilterLean(
+    { status: 'published', workDate: workDateRangeFilter(from, to) },
+    { sort: { workDate: 1, publishedAt: -1 } }
+  );
 
 const groupEntriesByResidentAndDate = (days, entries, dayIdField, entryMapper) => {
   const dayById = new Map(days.map((d) => [String(d._id), d]));
@@ -98,13 +96,13 @@ const loadNutritionContext = async (from, to, actorUser) => {
 
   const [residents, mealPlanDays, specialDietDays, mealTimeDays, mealNotes, mealIntakeRows] =
     await Promise.all([
-      Resident.find(residentFilter)
-        .select('_id fullName residentCode allergies chronicConditions')
-        .sort({ fullName: 1 })
-        .lean(),
-      findPublishedDaysInRange(MealPlanDay, from, to),
-      findPublishedDaysInRange(SpecialDietDay, from, to),
-      findPublishedDaysInRange(MealTimeScheduleDay, from, to),
+      residentRepo.findByFilterLean(residentFilter, {
+        select: '_id fullName residentCode allergies chronicConditions',
+        sort: { fullName: 1 },
+      }),
+      findPublishedDaysInRange(mealPlanDayRepo, from, to),
+      findPublishedDaysInRange(specialDietDayRepo, from, to),
+      findPublishedDaysInRange(mealTimeScheduleDayRepo, from, to),
       careNoteRepo.findNotesWithPopulate(
         { noteType: 'meal', noteAt: noteAtRangeFilter(from, to) },
         { sort: { noteAt: -1 }, skip: 0, limit: 5000 }
@@ -118,13 +116,13 @@ const loadNutritionContext = async (from, to, actorUser) => {
 
   const [mealPlanEntries, specialDietEntries, mealTimeEntries] = await Promise.all([
     mealPlanDayIds.length
-      ? MealPlanEntry.find({ mealPlanDayId: { $in: mealPlanDayIds } }).lean()
+      ? mealPlanEntryRepo.findByFilterLean({ mealPlanDayId: { $in: mealPlanDayIds } })
       : [],
     specialDietDayIds.length
-      ? SpecialDietEntry.find({ specialDietDayId: { $in: specialDietDayIds } }).lean()
+      ? specialDietEntryRepo.findByFilterLean({ specialDietDayId: { $in: specialDietDayIds } })
       : [],
     mealTimeDayIds.length
-      ? MealTimeScheduleEntry.find({ mealTimeScheduleDayId: { $in: mealTimeDayIds } }).lean()
+      ? mealTimeScheduleEntryRepo.findByFilterLean({ mealTimeScheduleDayId: { $in: mealTimeDayIds } })
       : [],
   ]);
 

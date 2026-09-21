@@ -408,7 +408,17 @@ router.get(
 router.get(
   '/:id/residents/assigned',
   protect,
-  authorize('admin'),
+  async (req, res, next) => {
+    // Allow admin to view any staff, or doctor/nurse to view their own assigned residents
+    const isAdmin = req.user.role === 'admin';
+    const isSelf = req.params.id === req.user._id.toString();
+    const isDoctorOrNurse = ['doctor', 'nurse'].includes(req.user.role);
+    
+    if (isAdmin || (isDoctorOrNurse && isSelf)) {
+      return next();
+    }
+    return res.status(403).json({ message: 'Bạn không có quyền xem danh sách cư dân của nhân viên này' });
+  },
   listAssignedResidents
 );
 

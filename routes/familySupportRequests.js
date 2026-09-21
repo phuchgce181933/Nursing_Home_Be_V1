@@ -63,7 +63,7 @@ router.post('/', authorize('family'), submitSupportRequest);
  *         description: Paginated list
  */
 // allow family to list their own requests and staff (manager/admin) to list all
-router.get('/', authorize('family', 'manager', 'admin'), listSupportRequests);
+router.get('/', authorize('family', 'admin'), listSupportRequests);
 
 /**
  * @swagger
@@ -84,7 +84,7 @@ router.get('/', authorize('family', 'manager', 'admin'), listSupportRequests);
  *         description: Support request detail
  */
 // allow family to view their own request and staff (manager/admin) to view any
-router.get('/:requestId', authorize('family', 'manager', 'admin'), getSupportRequest);
+router.get('/:requestId', authorize('family', 'admin'), getSupportRequest);
 
 /**
  * @swagger
@@ -116,7 +116,7 @@ router.get('/:requestId', authorize('family', 'manager', 'admin'), getSupportReq
  *       403:
  *         description: Not allowed on this request
  */
-router.post('/:requestId/messages', authorize('family', 'manager', 'admin'), addMessage);
+router.post('/:requestId/messages', authorize('family', 'admin'), addMessage);
 
 /**
  * @swagger
@@ -150,6 +150,6 @@ router.post('/:requestId/messages', authorize('family', 'manager', 'admin'), add
  *         description: Invalid request
  */
 // family may close/cancel their own requests; staff (manager/admin) may close any
-router.patch('/:requestId/close', authorize('family', 'manager', 'admin'), closeSupportRequest);
+router.patch('/:requestId/close', authorize('family', 'admin'), closeSupportRequest);
 
 module.exports = router;

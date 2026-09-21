@@ -2,8 +2,8 @@ const mongoose = require('mongoose');
 const ServiceError = require('./serviceError');
 const careNoteRepo = require('../repositories/careNoteRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
-const Resident = require('../models/resident');
-const AuditLog = require('../models/auditLog');
+const residentRepo = require('../repositories/residentRepository');
+const auditLogRepo = require('../repositories/auditLogRepository');
 const { CARE_NOTE_TYPES } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
 
@@ -176,7 +176,7 @@ const createNote = async (user, body, req) => {
     throw new ServiceError('noteAt không được là ngày trong tương lai', 400);
   }
 
-  const resident = await Resident.findById(residentId).select('_id');
+  const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const resolvedType = noteType || 'general';
@@ -279,9 +279,10 @@ const getNoteAuditHistory = async (id) => {
   const note = await careNoteRepo.findById(id);
   if (!note) throw new ServiceError('Không tìm thấy ghi chú chăm sóc', 404);
 
-  const logs = await AuditLog.find({ targetEntityType: 'CareNote', targetEntityId: id })
-    .sort({ createdAt: 1 })
-    .populate('actorUserId', 'fullName role');
+  const logs = await auditLogRepo.findByFilterLean(
+    { targetEntityType: 'CareNote', targetEntityId: id },
+    { sort: { createdAt: 1 }, populate: { path: 'actorUserId', select: 'fullName role' } }
+  );
 
   return logs.map((log) => ({
     _id: log._id,

@@ -7,16 +7,17 @@ const { GENDERS, BLOOD_TYPES, ADMISSION_STATUSES, ADMISSION_ELIGIBILITY_STATUSES
 const { createAuditLog } = require('../utils/auditLog');
 const { validatePhone, validateEmail } = require('../utils/validators');
 const mailService = require('./mailService');
-const User = require('../models/user');
-const Resident = require('../models/resident');
-const Bed = require('../models/bed');
-const Room = require('../models/room');
-const CareAppointment = require('../models/careAppointment');
+const userRepo = require('../repositories/userRepository');
+const residentRepo = require('../repositories/residentRepository');
+const careAppointmentRepo = require('../repositories/careAppointmentRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 const bedRepo = require('../repositories/bedRepository');
 const roomRepo = require('../repositories/roomRepository');
 const walletService = require('./walletService');
 const paymentRepo = require('../repositories/paymentRepository');
+const contractService = require('./contractService');
+const contractInvoiceService = require('./contractInvoiceService');
+const contractRepo = require('../repositories/contractRepository');
 
 const MAX_TEXT_LENGTH = 500;
 const CITIZEN_ID_REGEX = /^(\d{12}|[A-Za-z0-9]{8,12})$/;
@@ -137,21 +138,16 @@ const formatAdmission = (admission, { includeFamily = true } = {}) => {
 
 const getCareAppointmentForResident = async (residentId, admissionId) => {
   if (!residentId) return null;
-  const CareAppointment = require('../models/careAppointment');
   try {
-    const careAppt = await CareAppointment.findOne(
+    const careAppt = await careAppointmentRepo.findOneByFilter(
       admissionId
         ? { $or: [{ admissionId }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }] }
-        : { residentId, appointmentType: 'Khám lâm sàng đầu vào' }
-    )
-      .populate({
-        path: 'doctorStaffId',
-        populate: { path: 'userId', select: 'fullName email' }
-      })
-      .populate({
-        path: 'nurseStaffId',
-        populate: { path: 'userId', select: 'fullName email' }
-      });
+        : { residentId, appointmentType: 'Khám lâm sàng đầu vào' },
+      { populate: [
+        { path: 'doctorStaffId', populate: { path: 'userId', select: 'fullName email' } },
+        { path: 'nurseStaffId', populate: { path: 'userId', select: 'fullName email' } },
+      ] }
+    );
 
     if (careAppt) {
       return {
@@ -568,8 +564,8 @@ const submitGuestAdmissionRequest = async (body, req) => {
   }
 
   const existing = contactEmail
-    ? await User.findOne({ email: contactEmail })
-    : await User.findOne({ phone: contactPhone });
+    ? await userRepo.findOne({ email: contactEmail })
+    : await userRepo.findOne({ phone: contactPhone });
   if (existing) {
     throw new ServiceError(
       'Email/số điện thoại này đã có tài khoản — vui lòng đăng nhập để gửi yêu cầu nhập viện',
@@ -593,7 +589,7 @@ const submitGuestAdmissionRequest = async (body, req) => {
 
   const tempPassword = generateTempPassword();
   const passwordHash = await bcrypt.hash(tempPassword, 10);
-  const newUser = await User.create({
+  const newUser = await userRepo.createUser({
     fullName: contactName,
     email: contactEmail || undefined,
     phone: contactPhone || undefined,
@@ -748,7 +744,7 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
   // Block cancellation if the intake clinical appointment has already been completed by the doctor
   const residentId = admission.residentId?._id || admission.residentId;
   if (residentId) {
-    const completedAppt = await CareAppointment.findOne({
+    const completedAppt = await careAppointmentRepo.findOneByFilter({
       $or: [{ admissionId: admission._id }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }],
       status: 'completed',
     });
@@ -966,7 +962,7 @@ const approveAdmission = async (admin, admissionId, body, req) => {
   if (!residentId) {
     const residentCode = await generateResidentCode();
     const applicant = admission.applicant || {};
-    const resident = await Resident.create({
+    const resident = await residentRepo.createResident({
       residentCode,
       fullName: applicant.fullName || 'Unknown',
       dateOfBirth: applicant.dateOfBirth,
@@ -992,7 +988,7 @@ const approveAdmission = async (admin, admissionId, body, req) => {
 
   // Automatically create first Care Appointment at UC-12
   // Guard: only create if no intake appointment already exists for this resident
-  const existingAppt = await CareAppointment.findOne({
+  const existingAppt = await careAppointmentRepo.findOneByFilter({
     $or: [{ admissionId: admission._id }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }],
     status: { $ne: 'cancelled' },
   });
@@ -1002,7 +998,7 @@ const approveAdmission = async (admin, admissionId, body, req) => {
     start.setHours(8, 0, 0, 0);
     const end = new Date(start.getTime() + 60 * 60 * 1000); // 1 hour duration
 
-    await CareAppointment.create({
+    await careAppointmentRepo.createAppointment({
       residentId: residentId,
       admissionId: admission._id,
       scheduledStartAt: start,
@@ -1207,7 +1203,7 @@ const assignConsultant = async (admin, admissionId, body, req) => {
     throw new ServiceError('consultantId là bắt buộc', 400);
   }
 
-  const consultant = await User.findById(consultantId);
+  const consultant = await userRepo.findById(consultantId);
   if (!consultant) {
     throw new ServiceError('Không tìm thấy người dùng tư vấn viên', 404);
   }
@@ -1309,7 +1305,7 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
         await addResidentToStaff(evaluatorProfile);
 
         // 2. Doctor/Nurse assigned to the intake Care Appointment
-        const appt = await CareAppointment.findOne({
+        const appt = await careAppointmentRepo.findOneByFilter({
           $or: [{ admissionId: admission._id }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }],
         });
         if (appt) {
@@ -1505,12 +1501,32 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   assertMaxLength(body?.contractTerms?.trim(), 'contractTerms');
   assertMaxLength(body?.notes?.trim(), 'notes');
 
+  // ── Gộp gói dịch vụ cùng lúc tạo hợp đồng ─────────────────────────────────
+  let servicePackageIdForUpdate = null;
+  if (body?.servicePackageId) {
+    // Chỉ gán khi chưa có package nào
+    if (!admission.servicePackageId) {
+      const pkg = await servicePackageRepo.findById(body.servicePackageId);
+      if (!pkg) {
+        throw new ServiceError('Không tìm thấy gói dịch vụ', 404);
+      }
+      if (!pkg.isActive) {
+        throw new ServiceError('Gói dịch vụ đã ngừng hoạt động', 400);
+      }
+      servicePackageIdForUpdate = pkg._id;
+    }
+    // Nếu đã có package rồi thì bỏ qua (không override)
+  }
+
   const updateData = {
     contractNumber,
     contractStatus: 'active',
     contractSignedAt: new Date(),
     status: 'contracting',
   };
+  if (servicePackageIdForUpdate) {
+    updateData.servicePackageId = servicePackageIdForUpdate;
+  }
   if (contractStartDate) updateData.contractStartDate = contractStartDate;
   if (contractEndDate) updateData.contractEndDate = contractEndDate;
   if (contractDurationMonths !== undefined) updateData.contractDurationMonths = Math.floor(contractDurationMonths);
@@ -1530,6 +1546,7 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
     beforeData: {
       requestCode: admission.requestCode,
       status: admission.status,
+      servicePackageId: admission.servicePackageId,
       contractDurationMonths: admission.contractDurationMonths,
       contractDiscountPercent: admission.contractDiscountPercent,
     },
@@ -1537,6 +1554,7 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
       requestCode: updated.requestCode,
       status: updated.status,
       contractNumber,
+      servicePackageId: updated.servicePackageId,
       contractDurationMonths: updated.contractDurationMonths,
       contractDiscountPercent: updated.contractDiscountPercent,
     },
@@ -1549,11 +1567,10 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
   };
 };
 
-// ── UC-6.26: Check-in Resident ──────────────────────────────────────────────────
 const generateResidentCode = async () => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = `RES${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
-    const exists = await Resident.findOne({ residentCode: code });
+    const exists = await residentRepo.findByResidentCode(code);
     if (!exists) return code;
   }
   throw new ServiceError('Không thể tạo mã cư dân', 500);
@@ -1583,15 +1600,15 @@ const resolveFamilyAccountForCheckIn = async (admission, residentFullName) => {
   }
 
   const existing = email
-    ? await User.findOne({ email })
-    : await User.findOne({ phone });
+    ? await userRepo.findOne({ email })
+    : await userRepo.findOne({ phone });
   if (existing) {
     return { userId: existing._id, isNew: false };
   }
 
   const tempPassword = generateTempPassword();
   const passwordHash = await bcrypt.hash(tempPassword, 10);
-  const newUser = await User.create({
+  const newUser = await userRepo.createUser({
     fullName: admission.requestedByName || 'Người thân',
     email: email || undefined,
     phone: phone || undefined,
@@ -1645,14 +1662,14 @@ const checkInResident = async (admin, admissionId, body, req) => {
   }
 
   if (assignedBedId) {
-    const bed = await Bed.findById(assignedBedId);
+    const bed = await bedRepo.findById(assignedBedId);
     if (!bed) throw new ServiceError('Không tìm thấy giường', 404);
     if (bed.status !== 'available') throw new ServiceError('Giường không khả dụng', 400);
     assignedRoomId = assignedRoomId || bed.roomId;
   }
 
   if (assignedRoomId) {
-    const room = await Room.findById(assignedRoomId);
+    const room = await roomRepo.findById(assignedRoomId);
     if (!room) throw new ServiceError('Không tìm thấy phòng', 404);
 
     // Validate loại phòng phù hợp với Gói dịch vụ đã đăng ký
@@ -1689,7 +1706,7 @@ const checkInResident = async (admin, admissionId, body, req) => {
   // Create or update Resident
   let resident;
   if (admission.residentId) {
-    resident = await Resident.findById(admission.residentId);
+    resident = await residentRepo.findById(admission.residentId);
     if (resident) {
       resident.residencyStatus = 'admitted';
       resident.admittedAt = new Date();
@@ -1706,7 +1723,7 @@ const checkInResident = async (admin, admissionId, body, req) => {
   if (!resident) {
     const residentCode = await generateResidentCode();
     const applicant = admission.applicant || {};
-    resident = await Resident.create({
+    resident = await residentRepo.createResident({
       residentCode,
       fullName: applicant.fullName || 'Unknown',
       dateOfBirth: applicant.dateOfBirth,
@@ -1892,9 +1909,9 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
   if (!servicePackage.isActive) throw new ServiceError('Gói dịch vụ này đã ngừng hoạt động.', 400);
 
   const residentId = admission.residentId?._id || admission.residentId;
-  const resident = residentId ? await Resident.findById(residentId) : null;
+  const resident = residentId ? await residentRepo.findById(residentId) : null;
   if (resident?.roomId) {
-    const room = await Room.findById(resident.roomId);
+    const room = await roomRepo.findById(resident.roomId);
     if (room) {
       const pkgTier = servicePackage.tier || 'standard';
       const allowedTypes = servicePackage.allowedRoomTypes?.length
@@ -1965,7 +1982,7 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
   });
 
   if (admission.residentId) {
-    await Resident.findByIdAndUpdate(admission.residentId, { servicePackage: servicePackage.name });
+    await residentRepo.updateById(admission.residentId, { servicePackage: servicePackage.name });
   }
 
   await createAuditLog({
@@ -2076,13 +2093,13 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
   let targetBed = null;
   let targetRoomId = null;
   const residentId = admission.residentId?._id || admission.residentId || null;
-  const resident = residentId ? await Resident.findById(residentId) : null;
+  const resident = residentId ? await residentRepo.findById(residentId) : null;
   const currentBedId = admission.assignedBedId?._id || admission.assignedBedId || resident?.bedId || null;
   const currentRoomId = admission.assignedRoomId?._id || admission.assignedRoomId || resident?.roomId || null;
   const desiredBedId = assignedBedId || currentBedId;
 
   if (desiredBedId) {
-    targetBed = await Bed.findById(desiredBedId);
+    targetBed = await bedRepo.findById(desiredBedId);
     if (!targetBed) {
       throw { statusCode: 404, message: 'Không tìm thấy giường' };
     }
@@ -2100,7 +2117,7 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
         ? selectedPackage.allowedRoomTypes
         : (pkgTier === 'vip' ? ['icu', 'isolation'] : pkgTier === 'premium' ? ['premium'] : ['standard']);
 
-      const room = await Room.findById(targetRoomId);
+      const room = await roomRepo.findById(targetRoomId);
       if (room && !allowedTypes.includes(room.roomType)) {
         const typeNames = { standard: 'Standard', premium: 'Premium', icu: 'ICU', isolation: 'Isolation' };
         const allowedStr = allowedTypes.map((t) => typeNames[t] || t).join(' / ');
@@ -2129,7 +2146,7 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
   let residentWasCreated = false;
   let residentToReturn = resident;
   if (residentId) {
-    residentToReturn = await Resident.findById(residentId);
+    residentToReturn = await residentRepo.findById(residentId);
     if (residentToReturn) {
       residentToReturn.residencyStatus = 'admitted';
       residentToReturn.admittedAt = residentToReturn.admittedAt || new Date();
@@ -2149,7 +2166,7 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
   if (!residentToReturn) {
     const residentCode = await generateResidentCode();
     const applicant = admission.applicant || {};
-    residentToReturn = await Resident.create({
+    residentToReturn = await residentRepo.createResident({
       residentCode,
       fullName: applicant.fullName || 'Unknown',
       dateOfBirth: applicant.dateOfBirth,

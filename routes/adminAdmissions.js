@@ -140,7 +140,7 @@ const { protect, authorize } = require('../middleware/auth');
  *       400:
  *         description: Validation error
  */
-router.post('/walk-in', protect, authorize('admin', 'manager'), createWalkInAdmission);
+router.post('/walk-in', protect, authorize('admin'), createWalkInAdmission);
 
 router.get('/', protect, authorize('admin', 'doctor', 'nurse'), adminListAdmissions);
 
@@ -428,6 +428,6 @@ router.patch('/:admissionId/check-in', protect, authorize('admin'), checkInResid
  *       404:
  *         description: Admission not found
  */
-router.patch('/:admissionId/extend-contract', protect, authorize('admin', 'manager'), extendAdmissionContract);
+router.patch('/:admissionId/extend-contract', protect, authorize('admin'), extendAdmissionContract);
 
 module.exports = router;

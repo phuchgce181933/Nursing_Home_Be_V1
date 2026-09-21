@@ -3,8 +3,7 @@ const leaveRequestRepo = require('../repositories/leaveRequestRepository');
 const shiftRepo = require('../repositories/shiftRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const careTaskRepo = require('../repositories/careTaskRepository');
-const Resident = require('../models/resident');
-const StaffProfile = require('../models/staffProfile');
+const residentRepo = require('../repositories/residentRepository');
 const { LEAVE_REQUEST_TYPES, LEAVE_REQUEST_STATUSES } = require('../models/enums');
 const { residentCoversStaffArea } = require('../utils/staffAssignment');
 const {
@@ -55,11 +54,19 @@ const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reaso
 
   if (end < start) throw apiErr(CODES.LEAVE_END_BEFORE_START, { statusCode: 400 });
 
-  // 24h advance notice (not required for emergency)
-  if (type !== 'emergency') {
-    const now = new Date();
-    const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    if (start < cutoff) {
+  // Calendar-date comparison in Vietnam timezone (UTC+7)
+  const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const startDateStr = typeof startDate === 'string' && startDate.length === 10
+    ? startDate
+    : start.toISOString().slice(0, 10);
+
+  if (type === 'emergency') {
+    if (startDateStr < todayVN) {
+      throw apiErr(CODES.LEAVE_PAST_DATE, { statusCode: 400 });
+    }
+  } else {
+    // Non-emergency: must be at least tomorrow
+    if (startDateStr <= todayVN) {
       throw apiErr(CODES.LEAVE_PAST_DATE, { statusCode: 400 });
     }
   }
@@ -183,9 +190,7 @@ const validateCareTasksForReassignment = async (
   requesterProfileId,
   replacementProfileId
 ) => {
-  const replacementProfile = await StaffProfile.findById(replacementProfileId)
-    .populate('responsibleAreaIds')
-    .populate('responsibleRoomIds');
+  const replacementProfile = await staffProfileRepo.findById(replacementProfileId);
 
   const blockingTasks = [];
   const tasksToReassign = [];
@@ -203,10 +208,7 @@ const validateCareTasksForReassignment = async (
         room &&
         (room.floorId?._id || room.floorId);
       if (!resident || !hasFloor) {
-        resident = await Resident.findById(residentId).populate({
-          path: 'roomId',
-          select: 'roomNumber floorId',
-        });
+        resident = await residentRepo.findByIdWithFamily(residentId);
       }
 
       if (!resident || !residentCoversStaffArea(resident, replacementProfile)) {

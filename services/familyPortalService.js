@@ -92,6 +92,117 @@ const getInvoicePaymentUrl = async (user, residentId, invoiceId, req) => {
   return { paymentUrl };
 };
 
+const getInvoiceDetail = async (user, residentId, invoiceId) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
+  }
+
+  const invoice = await familyPortalRepo.findInvoiceByIdAndResident(invoiceId, residentId);
+  if (!invoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
+
+  // Convert to plain object first so we can safely add computed fields without Mongoose change-tracking issues
+  const plainInvoice = invoice.toObject ? invoice.toObject() : invoice;
+
+  // If this is a medication invoice, enrich prescription items with amount from stock cost
+  const invoiceType = String(plainInvoice.type || '').toUpperCase();
+  if ((invoiceType === 'MEDICATION' || invoiceType === 'COMBINED') && plainInvoice.prescriptionId) {
+    const prescription = plainInvoice.prescriptionId;
+    if (prescription && Array.isArray(prescription.items) && prescription.items.length > 0) {
+      const medicationStockRepo = require('../repositories/medicationStockRepository');
+
+      // Get unique medication IDs
+      const medIds = prescription.items
+        .map((item) => {
+          const id = item.medicationId?._id || item.medicationId;
+          return id ? id.toString() : null;
+        })
+        .filter(Boolean);
+
+      console.log('[DEBUG getInvoiceDetail] medIds from prescription items:', medIds);
+
+      // Look up latest unit costs for all medications (prefer MedicationStock, fallback to Medication.price)
+      // Medication model is already populated in the invoice query, so check it first
+      const costMap = {};
+
+      // Get latest stock costs (overrides Medication.price if available)
+      await Promise.all(
+        medIds.map(async (medId) => {
+          const stock = await medicationStockRepo.findLatestCostByMedicationId(medId);
+          console.log('[DEBUG getInvoiceDetail] stock lookup for medId:', medId, '-> result:', stock);
+          if (stock && stock.costPerUnit != null) {
+            costMap[medId] = Number(stock.costPerUnit);
+          }
+        })
+      );
+
+      // Fallback: if stock lookup returned nothing, try to find cost by medication name
+      // This handles cases where medicationId in prescription items differs from MedicationStock lookup
+      if (Object.keys(costMap).length === 0) {
+        console.log('[DEBUG getInvoiceDetail] costMap empty, trying name-based fallback...');
+        const Medication = require('../models/medication');
+        const MedicationStock = require('../models/medicationStock');
+
+        await Promise.all(
+          prescription.items
+            .filter(it => it.isActive !== false && it.medicationName)
+            .map(async (item) => {
+              // Try to find medication by name
+              const med = await Medication.findOne({ name: item.medicationName }).lean();
+              if (med) {
+                const stock = await MedicationStock.findOne(
+                  { medicationId: med._id, costPerUnit: { $exists: true, $ne: null } },
+                  'costPerUnit receivedDate'
+                )
+                  .sort({ receivedDate: -1 })
+                  .lean();
+                if (stock && stock.costPerUnit != null) {
+                  const medId = item.medicationId?._id ? item.medicationId._id.toString() : String(item.medicationId || '');
+                  costMap[medId] = Number(stock.costPerUnit);
+                  console.log('[DEBUG getInvoiceDetail] name-based fallback found cost for', item.medicationName, ':', stock.costPerUnit);
+                }
+              }
+            })
+        );
+      }
+
+      console.log('[DEBUG getInvoiceDetail] final costMap:', costMap);
+
+      // Enrich each prescription item with amount, unitPrice, quantity, and effectiveDays
+      prescription.items.forEach((item) => {
+        if (item.isActive === false) return;
+        const medId = item.medicationId?._id ? item.medicationId._id.toString() : String(item.medicationId || '');
+        // Priority: Medication.price (doctor's prescription price) > stock cost (from MedicationStock) > 0
+        const medPrice = item.medicationId?.price != null && item.medicationId.price > 0 ? Number(item.medicationId.price) : 0;
+        const stockCost = costMap[medId] || 0;
+        const unitCost = medPrice > 0 ? medPrice : stockCost;
+        const dosageValue = Number(item.dosage) || 1;
+        const frequency = Number(item.frequency) || 1;
+        const duration = Number(item.duration) || 1;
+
+        let effectiveDays = duration;
+        if (item.startDate && item.endDate) {
+          const days = Math.floor((new Date(item.endDate) - new Date(item.startDate)) / (24 * 60 * 60 * 1000)) + 1;
+          if (days > 0) effectiveDays = days;
+        }
+
+        const quantity = Math.max(1, Math.round(dosageValue * frequency * effectiveDays));
+        const amount = Math.round(quantity * unitCost);
+
+        // Attach computed fields to the item (doesn't persist to DB, just enriches the response)
+        item._computedAmount = amount;
+        item._computedUnitCost = unitCost;
+        item._computedQuantity = quantity;
+        item._computedEffectiveDays = effectiveDays;
+        console.log('[DEBUG getInvoiceDetail] enriched item:', item.medicationName, 'medId:', medId, 'medPrice:', medPrice, 'stockCost:', stockCost, 'unitCost:', unitCost, '_computedUnitCost:', item._computedUnitCost);
+      });
+
+      console.log('[DEBUG getInvoiceDetail] prescription after enrichment:', prescription.items.map(i => ({ name: i.medicationName, _computedUnitCost: i._computedUnitCost })));
+    }
+  }
+
+  return plainInvoice;
+};
+
 const getVitals = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
@@ -660,6 +771,7 @@ module.exports = {
   getResidentBillingSummary,
   getResidentInvoices,
   getInvoicePaymentUrl,
+  getInvoiceDetail,
   getVitals,
   getHealthHistory,
   getHealthChart,

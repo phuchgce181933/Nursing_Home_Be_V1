@@ -1,5 +1,5 @@
 const ServiceError = require('./serviceError');
-const Resident = require('../models/resident');
+const residentRepo = require('../repositories/residentRepository');
 const { assertResidentAccess } = require('./familyPortalService');
 const { assertResidentsAssignedToUser } = require('./assignedResidentService');
 const { deleteAsset } = require('../utils/cloudinaryUpload');
@@ -19,7 +19,7 @@ const addPhotos = async (userId, residentId, uploadedPhotos, caption) => {
     throw new ServiceError('Phải cung cấp ít nhất một ảnh', 400);
   }
 
-  const resident = await Resident.findById(residentId);
+  const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const entries = uploadedPhotos.map((p) => ({
@@ -39,7 +39,7 @@ const addPhotos = async (userId, residentId, uploadedPhotos, caption) => {
 // ── Caregiver: list photos for a resident they're assigned to ──────────────────
 const listPhotosForCaregiver = async (userId, residentId) => {
   await assertResidentsAssignedToUser(userId, [residentId]);
-  const resident = await Resident.findById(residentId).select('photos');
+  const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return resident.photos.slice().reverse().map(formatPhoto);
 };
@@ -48,7 +48,7 @@ const listPhotosForCaregiver = async (userId, residentId) => {
 const deletePhoto = async (userId, residentId, photoId) => {
   await assertResidentsAssignedToUser(userId, [residentId]);
 
-  const resident = await Resident.findById(residentId);
+  const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
   const target = resident.photos.find((p) => String(p._id) === String(photoId));
@@ -69,7 +69,7 @@ const listPhotosForFamily = async (user, residentId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Từ chối truy cập: không phải người thân của bạn', 403);
   }
-  const resident = await Resident.findById(residentId).select('photos');
+  const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
   return resident.photos.slice().reverse().map(formatPhoto);
 };

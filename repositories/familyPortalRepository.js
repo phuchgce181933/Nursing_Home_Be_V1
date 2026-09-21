@@ -45,13 +45,36 @@ const findCareNotes = async (filter, { sort = { noteAt: -1 }, skip = 0, limit = 
 const countCareNotes = async (filter) => CareNote.countDocuments(filter);
 
 const findInvoicesByResidentId = async (residentId, { sort = { issuedAt: -1 }, skip = 0, limit = 20 } = {}) =>
-  Invoice.find({ residentId }).sort(sort).skip(skip).limit(limit);
+  // Filter out DRAFT invoices — they are admin-only (chưa xuất hóa đơn) until the
+  // admin explicitly issues them. Family members should not see them.
+  Invoice.find({ residentId, status: { $ne: 'DRAFT' } })
+    .populate('prescriptionId', 'diagnosisNote prescriptionDate validUntil status items medicationId')
+    .sort(sort)
+    .skip(skip)
+    .limit(limit);
 
 const findLatestInvoiceByResidentId = async (residentId) =>
-  Invoice.findOne({ residentId }).sort({ issuedAt: -1 });
+  Invoice.findOne({ residentId, status: { $ne: 'DRAFT' } })
+    .populate('prescriptionId', 'diagnosisNote prescriptionDate validUntil status items medicationId')
+    .sort({ issuedAt: -1 });
 
 const countInvoicesByResidentId = async (residentId) =>
-  Invoice.countDocuments({ residentId });
+  Invoice.countDocuments({ residentId, status: { $ne: 'DRAFT' } });
+
+const findInvoiceById = async (invoiceId) =>
+  Invoice.findById(invoiceId)
+    .populate('prescriptionId', 'diagnosisNote prescriptionDate validUntil status items medicationId');
+
+const findInvoiceByIdAndResident = async (invoiceId, residentId) =>
+  Invoice.findOne({ _id: invoiceId, residentId, status: { $ne: 'DRAFT' } })
+    .populate({
+      path: 'prescriptionId',
+      select: 'diagnosisNote prescriptionDate validUntil status items medicationId',
+      populate: {
+        path: 'items.medicationId',
+        select: 'name genericName unit price'
+      }
+    });
 
 // MedicationSchedule (replaces MedicationAdministration for the new medication management module)
 const findMedicationSchedules = async (filter, { sort = { scheduledTime: -1 }, skip = 0, limit = 20 } = {}) =>
@@ -155,4 +178,5 @@ module.exports = {
   findInvoicesByResidentId,
   findLatestInvoiceByResidentId,
   countInvoicesByResidentId,
+  findInvoiceByIdAndResident,
 };

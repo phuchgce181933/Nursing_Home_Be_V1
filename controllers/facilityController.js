@@ -57,6 +57,9 @@ const listEquipment = (req, res) =>
       status: req.query.status,
       category: req.query.category,
       roomId: req.query.roomId,
+      page: req.query.page,
+      limit: req.query.limit,
+      search: req.query.search,
     })
   );
 

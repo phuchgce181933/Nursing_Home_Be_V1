@@ -16,7 +16,7 @@ const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {},
     purpose,
     used: false,
     expiresAt: { $gt: now },
-  }).sort({ createdAt: -1 });
+  }, { sort: { createdAt: -1 } });
 
   if (existingPendingOtps.length > 1) {
     throw new ServiceError('Bạn đã gửi mã OTP quá 1 lần. Vui lòng nhập mã OTP hiện tại hoặc đợi 10 phút mã hết hạn trước khi yêu cầu lại.', 429);

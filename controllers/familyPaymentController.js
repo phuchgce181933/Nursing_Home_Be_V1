@@ -6,10 +6,10 @@ const ServiceError = require('../services/serviceError');
 // POST /api/family/wallet/payments/initiate
 const initiateWalletPayment = async (req, res, next) => {
   try {
-    const { amount, invoiceIds } = req.body;
+    const { amount, invoiceIds, residentId } = req.body;
     if (!amount || amount <= 0) throw new ServiceError('Số tiền không hợp lệ', 400);
     // store payment intent in meta so verify step can perform the payment
-    const meta = { amount, invoiceIds };
+    const meta = { amount, invoiceIds, residentId };
     const phone = req.user.phoneNumber || req.user.phone || '';
     if (!phone) throw new ServiceError('Người dùng chưa có số điện thoại', 400);
 
@@ -44,7 +44,9 @@ const verifyWalletPayment = async (req, res, next) => {
       }
 
       // multiple invoices
-      const result = await paymentService.batchPayment(req.user, null, meta.invoiceIds, { paymentMethod: 'wallet', amount }, req);
+      const residentId = meta.residentId;
+      if (!residentId) throw new ServiceError('Không tìm thấy thông tin cư dân', 400);
+      const result = await paymentService.batchPayment(req.user, residentId, meta.invoiceIds, { paymentMethod: 'wallet', amount }, req);
       return res.status(201).json({ success: true, data: result });
     }
 

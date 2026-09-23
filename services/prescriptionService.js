@@ -279,8 +279,24 @@ const createPrescription = async ({ body, user, req }) => {
     module: 'prescription',
     targetEntityType: 'Prescription',
     targetEntityId: prescription._id,
-    afterData: { status: initialStatus, itemCount: items.length, residentId },
-    description: `Created ${initialStatus} prescription with ${items.length} items`,
+    afterData: {
+      status: initialStatus,
+      diagnosisNote: prescription.diagnosisNote,
+      validUntil: prescription.validUntil,
+      residentId: String(prescription.residentId),
+      items: prescription.items.map((item) => ({
+        medicationName: item.medicationName,
+        dosage: item.dosage,
+        unit: item.unit,
+        frequency: item.frequency,
+        times: item.times,
+        route: item.route,
+        duration: item.duration,
+        instructions: item.instructions,
+        isPRN: item.isPRN,
+      })),
+    },
+    description: `Tạo đơn thuốc "${initialStatus}" cho cư dân với ${items.length} loại thuốc`,
     req,
   });
 
@@ -387,8 +403,14 @@ const editPrescription = async ({ id, body, user, req }) => {
     targetEntityType: 'Prescription',
     targetEntityId: prescription._id,
     beforeData: beforeSnapshot,
-    afterData: { changes: changeLog, version: prescription.version },
-    description: `Edited prescription v${prescription.version}: ${changeLog.join('; ')}`,
+    afterData: {
+      changes: changeLog,
+      version: prescription.version,
+      diagnosisNote: prescription.diagnosisNote,
+      validUntil: prescription.validUntil,
+      status: prescription.status,
+    },
+    description: `Chỉnh sửa đơn thuốc v${prescription.version}: ${changeLog.join('; ')}`,
     req,
   });
 
@@ -816,6 +838,7 @@ const activatePrescription = async ({ id, user, req }) => {
     targetEntityId: prescription._id,
     beforeData: { status: prevStatus },
     afterData: { status: 'ACTIVE' },
+    description: 'Kích hoạt đơn thuốc từ trạng thái DRAFT',
     req,
   });
 
@@ -871,6 +894,7 @@ const suspendPrescription = async ({ id, reason, user, req }) => {
     targetEntityType: 'Prescription',
     targetEntityId: prescription._id,
     afterData: { status: 'SUSPENDED', reason: reason.trim() },
+    description: `Tạm ngưng đơn thuốc - Lý do: ${reason.trim()}`,
     req,
   });
 
@@ -928,6 +952,7 @@ const resumePrescription = async ({ id, user, req }) => {
     targetEntityType: 'Prescription',
     targetEntityId: prescription._id,
     afterData: { status: 'ACTIVE' },
+    description: 'Tiếp tục đơn thuốc đang tạm ngưng',
     req,
   });
 

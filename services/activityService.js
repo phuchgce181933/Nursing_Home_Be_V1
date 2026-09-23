@@ -1297,29 +1297,71 @@ const recordParticipationResult = async (activityId, body, req) => {
   }
 
   const updated = await activityRepo.findByIdAndUpdate(activityId, updates);
+
+  // Resolve resident names for audit log metadata
+  const allResidentIds = [
+    ...(updated.attendanceRecords || []),
+    ...(updated.participationRecords || []),
+  ]
+    .map((r) => r.residentId?.toString())
+    .filter(Boolean);
+  const uniqueIds = [...new Set(allResidentIds)];
+  const residentNames = uniqueIds.length
+    ? await residentRepo.findByFilterLean({ _id: { $in: uniqueIds } }, { select: 'fullName' })
+        .then((residents) => residents.map((r) => ({ id: r._id.toString(), name: r.fullName })))
+        .catch(() => [])
+    : [];
+
   await sendActivityNotifications(
     updated,
     'completed',
-    `Participation results have been recorded for this activity.`,
+    `Kết quả điểm danh đã được ghi nhận cho hoạt động "${updated.title}".`,
   );
 
   await createAuditLog({
     actorUserId: req?.user?._id,
     actorRole: req?.user?.role,
     action: 'RECORD_PARTICIPATION_RESULT',
-    displayAction: 'Ghi nhận kết quả tham gia hoạt động',
+    displayAction: 'Điểm danh hoạt động',
     module: 'activity',
     businessModule: 'activity',
     targetEntityType: 'Activity',
     targetEntityId: updated._id,
     targetName: updated.title,
-    description: `Ghi nhận kết quả tham gia hoạt động "${updated.title}" (trạng thái: ${updated.status})`,
-    beforeData: { status: syncedActivity?.status },
+    description: `Điểm danh hoạt động "${updated.title}" (trạng thái: ${updated.status})`,
+    beforeData: {
+      status: syncedActivity?.status,
+      participantResultNotes: syncedActivity?.participantResultNotes,
+      attendanceRecords: (syncedActivity?.attendanceRecords || []).map((r) => ({
+        residentId: String(r.residentId),
+        status: r.status,
+        occurrenceDate: r.occurrenceDate,
+        notes: r.notes,
+      })),
+      participationRecords: (syncedActivity?.participationRecords || []).map((r) => ({
+        residentId: String(r.residentId),
+        level: r.level,
+        occurrenceDate: r.occurrenceDate,
+        notes: r.notes,
+      })),
+    },
     afterData: {
       status: updated.status,
-      attendanceCount: (updated.attendanceRecords || []).length,
-      participationCount: (updated.participationRecords || []).length,
+      participantResultNotes: updated.participantResultNotes,
+      attendanceRecords: (updated.attendanceRecords || []).map((r) => ({
+        residentId: String(r.residentId),
+        status: r.status,
+        occurrenceDate: r.occurrenceDate,
+        notes: r.notes,
+      })),
+      participationRecords: (updated.participationRecords || []).map((r) => ({
+        residentId: String(r.residentId),
+        level: r.level,
+        occurrenceDate: r.occurrenceDate,
+        notes: r.notes,
+      })),
     },
+    metadata: { residentNames },
     req,
   });
 

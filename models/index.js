@@ -52,6 +52,7 @@ const ElderlyDosageGuideline = require('./ElderlyDosageGuideline');
 const FamilyWallet = require('./familyWallet');
 const PushToken = require('./pushToken');
 const Contract = require('./contract');
+const SupportRequest = require('./supportRequest');
 
 module.exports = {
   User,
@@ -108,4 +109,5 @@ module.exports = {
   FamilyWallet,
   PushToken,
   Contract,
+  SupportRequest,
 };

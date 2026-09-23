@@ -3,6 +3,7 @@ const notificationRepo = require('../repositories/notificationRepository');
 const userRepo = require('../repositories/userRepository');
 const ServiceError = require('./serviceError');
 const { CONSULTATION_REQUEST_STATUSES } = require('../models/enums');
+const { createAuditLog } = require('../utils/auditLog');
 const mongoose = require('mongoose');
 
 const REQUEST_STATUSES = Array.isArray(CONSULTATION_REQUEST_STATUSES)
@@ -33,6 +34,26 @@ const isValidStatusTransition = (currentStatus, nextStatus) => {
   const currentIndex = statusOrder.indexOf(currentStatus);
   const nextIndex = statusOrder.indexOf(nextStatus);
   return currentIndex !== -1 && nextIndex !== -1 && nextIndex >= currentIndex;
+};
+
+const STATUS_LABELS = {
+  open: 'Mới',
+  in_progress: 'Đang xử lý',
+  resolved: 'Đã xử lý',
+  closed: 'Đã đóng',
+};
+
+const getStatusLabel = (status) => STATUS_LABELS[status] || status;
+
+const formatDateTimeVN = (date) => {
+  if (!date) return '';
+  const d = new Date(date);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${minutes}`;
 };
 
 const notifyAdminsOfNewConsultationRequest = async (request) => {
@@ -111,6 +132,35 @@ const submitConsultationRequest = async (body, req) => {
 
   await notifyAdminsOfNewConsultationRequest(request);
 
+  await createAuditLog({
+    actorUserId: null,
+    actorRole: 'guest',
+    action: 'SUBMIT_CONSULTATION_REQUEST',
+    displayAction: 'Gửi yêu cầu tư vấn',
+    module: 'consultationRequest',
+    businessModule: 'consultationRequest',
+    targetEntityType: 'ConsultationRequest',
+    targetEntityId: request._id,
+    targetName: request.fullName,
+    description: `Khách ${request.fullName} đã gửi yêu cầu tư vấn${request.serviceInterest ? ` về: ${request.serviceInterest}` : ''}`,
+    beforeData: null,
+    afterData: {
+      fullName: request.fullName,
+      age: request.age,
+      phone: request.phone,
+      email: request.email,
+      address: request.address,
+      serviceInterest: request.serviceInterest,
+      subject: request.subject,
+      message: request.message,
+      status: request.status,
+    },
+    metadata: {
+      channel: 'public-contact-form',
+    },
+    req,
+  });
+
   return { message: 'Đã gửi yêu cầu tư vấn thành công', request: formatRequest(request) };
 };
 
@@ -186,7 +236,7 @@ const getConsultationRequest = async (requestId) => {
   return formatRequest(request);
 };
 
-const updateConsultationRequest = async (requestId, body) => {
+const updateConsultationRequest = async (requestId, body, req) => {
   if (!mongoose.isValidObjectId(requestId)) {
     throw new ServiceError('ID yêu cầu không hợp lệ', 400);
   }
@@ -197,6 +247,9 @@ const updateConsultationRequest = async (requestId, body) => {
   }
 
   const update = {};
+  const beforeData = {};
+  const afterData = {};
+
   if (body.status !== undefined) {
     if (!REQUEST_STATUSES.includes(body.status)) {
       throw new ServiceError(`status phải thuộc một trong: ${REQUEST_STATUSES.join(', ')}`, 400);
@@ -205,15 +258,21 @@ const updateConsultationRequest = async (requestId, body) => {
       throw new ServiceError(`Không thể chuyển trạng thái từ ${request.status} sang ${body.status}`, 400);
     }
     update.status = body.status;
+    beforeData.statusLabel = getStatusLabel(request.status);
+    afterData.statusLabel = getStatusLabel(body.status);
     if (['resolved', 'closed'].includes(body.status)) {
       update.closedAt = new Date();
+      afterData.closedAtLabel = `Đã đóng lúc ${formatDateTimeVN(update.closedAt)}`;
     } else {
       update.closedAt = undefined;
     }
   }
 
   if (body.adminNotes !== undefined) {
-    update.adminNotes = typeof body.adminNotes === 'string' ? body.adminNotes.trim() : request.adminNotes;
+    const newNotes = typeof body.adminNotes === 'string' ? body.adminNotes.trim() : request.adminNotes;
+    update.adminNotes = newNotes;
+    beforeData.adminNotes = request.adminNotes;
+    afterData.adminNotes = newNotes;
   }
 
   if (Object.keys(update).length === 0) {
@@ -221,6 +280,28 @@ const updateConsultationRequest = async (requestId, body) => {
   }
 
   const updated = await consultationRequestRepo.updateById(requestId, update);
+
+  await createAuditLog({
+    actorUserId: req?.user?._id || null,
+    actorRole: req?.user?.role || 'admin',
+    action: 'UPDATE_CONSULTATION_REQUEST',
+    displayAction: 'Cập nhật yêu cầu tư vấn',
+    module: 'consultationRequest',
+    businessModule: 'consultationRequest',
+    targetEntityType: 'ConsultationRequest',
+    targetEntityId: updated._id,
+    targetName: updated.fullName,
+    description: body.status !== undefined
+      ? `${req?.user?.fullName || 'Quản trị viên'} đã chuyển trạng thái yêu cầu của ${updated.fullName} từ "${getStatusLabel(request.status)}" sang "${getStatusLabel(body.status)}"`
+      : `${req?.user?.fullName || 'Quản trị viên'} đã cập nhật yêu cầu tư vấn của ${updated.fullName}`,
+    beforeData,
+    afterData,
+    metadata: {
+      updatedFields: Object.keys(update),
+    },
+    req,
+  });
+
   return formatRequest(updated);
 };
 

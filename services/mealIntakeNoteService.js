@@ -8,6 +8,7 @@ const assignedResidentService = require('./assignedResidentService');
 const { findPublishedMealPlanEntryForResident } = require('../utils/publishedMealPlanLookup');
 const { parseWorkDate, todayVN, workDateToVNString } = require('../utils/shiftTime');
 const { getCaregiverRecordingWindow, assertCaregiverRecordingWindowOpen } = require('../utils/mealIntakeShiftWindow');
+const { createAuditLog } = require('../utils/auditLog');
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const INTAKE_STATUSES = ['full', 'partial', 'refused', 'assisted'];
@@ -224,7 +225,7 @@ const listIntakeNotesForAdmin = async (query) => {
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 };
 
-const createIntakeNote = async (userId, body) => {
+const createIntakeNote = async (userId, body, req = null) => {
   validateIntakePayload(body, false);
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
@@ -262,7 +263,23 @@ const createIntakeNote = async (userId, body) => {
     recordedAt: new Date(),
   });
 
-  return mealIntakeNoteRepo.findById(note._id);
+  const saved = await mealIntakeNoteRepo.findById(note._id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'CREATE',
+    displayAction: 'Tạo ghi chú bữa ăn',
+    module: 'mealIntake',
+    targetEntityType: 'MealIntakeNote',
+    targetEntityId: saved._id,
+    targetName: `Bữa ${body.mealType} - ${workDate}`,
+    description: `Tạo ghi chú bữa ăn cho cư dân ${body.residentId}, bữa: ${body.mealType}, ngày: ${workDate}`,
+    afterData: saved,
+    req,
+  });
+
+  return saved;
 };
 
 const assertAuthor = (note, profile) => {
@@ -279,7 +296,7 @@ const getIntakeNote = async (userId, id) => {
   return note;
 };
 
-const updateIntakeNote = async (userId, id, body) => {
+const updateIntakeNote = async (userId, id, body, req = null) => {
   const note = await mealIntakeNoteRepo.findById(id);
   if (!note) throw apiErr(CODES.MEAL_INTAKE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
@@ -308,17 +325,52 @@ const updateIntakeNote = async (userId, id, body) => {
     }
   }
 
-  return mealIntakeNoteRepo.updateById(id, update);
+  const beforeData = note.toObject ? note.toObject() : note;
+  const updated = await mealIntakeNoteRepo.updateById(id, update);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật ghi chú bữa ăn',
+    module: 'mealIntake',
+    targetEntityType: 'MealIntakeNote',
+    targetEntityId: id,
+    targetName: `Bữa ${note.mealType} - ${workDateToVNString(note.workDate)}`,
+    description: `Cập nhật ghi chú bữa ăn ID ${id}`,
+    beforeData,
+    afterData: updated,
+    req,
+  });
+
+  return updated;
 };
 
-const deleteIntakeNote = async (userId, id) => {
+const deleteIntakeNote = async (userId, id, req = null) => {
   const note = await mealIntakeNoteRepo.findById(id);
   if (!note) throw apiErr(CODES.MEAL_INTAKE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
   await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
   await assertRecordingWindowOpen(profile._id, workDateToVNString(note.workDate));
+
+  const beforeData = note.toObject ? note.toObject() : note;
   await mealIntakeNoteRepo.deleteById(id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'DELETE',
+    displayAction: 'Xóa ghi chú bữa ăn',
+    module: 'mealIntake',
+    targetEntityType: 'MealIntakeNote',
+    targetEntityId: id,
+    targetName: `Bữa ${note.mealType} - ${workDateToVNString(note.workDate)}`,
+    description: `Xóa ghi chú bữa ăn ID ${id}`,
+    beforeData,
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.MEAL_INTAKE_RECORD_DELETED), deleted: true, id };
 };
 

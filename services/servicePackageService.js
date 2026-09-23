@@ -3,6 +3,20 @@ const servicePackageRepo = require('../repositories/servicePackageRepository');
 const { SERVICE_PACKAGE_TIERS } = require('../models/enums');
 const { createAuditLog } = require('../utils/auditLog');
 
+const TIER_LABELS = {
+  basic: 'Cơ bản',
+  standard: 'Tiêu chuẩn',
+  premium: 'Cao cấp',
+  vip: 'VIP',
+};
+
+const ROOM_TYPE_LABELS = {
+  standard: 'Tiêu chuẩn',
+  premium: 'Cao cấp',
+  icu: 'Chăm sóc đặc biệt (ICU)',
+  isolation: 'Cách ly',
+};
+
 const parsePagination = (query) => {
   const pageNum = Math.max(1, parseInt(query.page || 1, 10));
   const limitNum = Math.min(100, Math.max(1, parseInt(query.limit || 20, 10)));
@@ -107,10 +121,21 @@ const createServicePackage = async (admin, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'CREATE_SERVICE_PACKAGE',
+    displayAction: 'Tạo gói dịch vụ',
     module: 'servicePackage',
+    businessModule: 'servicePackage',
     targetEntityType: 'ServicePackage',
     targetEntityId: pkg._id,
-    afterData: { packageCode: pkg.packageCode, name: pkg.name, tier: pkg.tier, allowedRoomTypes },
+    targetName: pkg.name,
+    description: `${admin.fullName || 'Quản trị viên'} đã tạo gói dịch vụ "${pkg.name}" (${TIER_LABELS[pkg.tier] || pkg.tier})`,
+    beforeData: {},
+    afterData: {
+      packageCode: pkg.packageCode,
+      name: pkg.name,
+      tierLabel: TIER_LABELS[pkg.tier] || pkg.tier,
+      roomTypeLabels: (pkg.allowedRoomTypes || []).map((rt) => ROOM_TYPE_LABELS[rt] || rt),
+      monthlyPrice: pkg.monthlyPrice,
+    },
     req,
   });
 
@@ -156,18 +181,30 @@ const updateServicePackage = async (admin, packageId, body, req) => {
     updateData.services = body.services.map((s) => String(s).trim()).filter(Boolean);
   }
 
-  const beforeData = { name: pkg.name, tier: pkg.tier, monthlyPrice: pkg.monthlyPrice };
+  const beforeData = {
+    name: pkg.name,
+    tierLabel: TIER_LABELS[pkg.tier] || pkg.tier,
+    monthlyPrice: pkg.monthlyPrice,
+  };
   const updated = await servicePackageRepo.updateById(packageId, updateData);
 
   await createAuditLog({
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'UPDATE_SERVICE_PACKAGE',
+    displayAction: 'Cập nhật gói dịch vụ',
     module: 'servicePackage',
+    businessModule: 'servicePackage',
     targetEntityType: 'ServicePackage',
     targetEntityId: pkg._id,
+    targetName: updated.name,
+    description: `${admin.fullName || 'Quản trị viên'} đã cập nhật gói dịch vụ "${updated.name}"`,
     beforeData,
-    afterData: { name: updated.name, tier: updated.tier, monthlyPrice: updated.monthlyPrice },
+    afterData: {
+      name: updated.name,
+      tierLabel: TIER_LABELS[updated.tier] || updated.tier,
+      monthlyPrice: updated.monthlyPrice,
+    },
     req,
   });
 
@@ -191,11 +228,15 @@ const deleteServicePackage = async (admin, packageId, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'DELETE_SERVICE_PACKAGE',
+    displayAction: 'Xóa gói dịch vụ',
     module: 'servicePackage',
+    businessModule: 'servicePackage',
     targetEntityType: 'ServicePackage',
     targetEntityId: pkg._id,
-    beforeData: { isActive: true },
-    afterData: { isActive: false },
+    targetName: pkg.name,
+    description: `${admin.fullName || 'Quản trị viên'} đã xóa gói dịch vụ "${pkg.name}"`,
+    beforeData: { statusLabel: 'Đang hoạt động' },
+    afterData: { statusLabel: 'Đã xóa' },
     req,
   });
 

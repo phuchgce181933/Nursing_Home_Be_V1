@@ -26,7 +26,7 @@ const getService = async (req, res) => {
 
 const createService = async (req, res) => {
   try {
-    const data = await clinicalServiceService.createService(req.body);
+    const data = await clinicalServiceService.createService(req.body, req);
     return res.json({ success: true, data });
   } catch (err) {
     return sendApiError(res, err);
@@ -35,7 +35,7 @@ const createService = async (req, res) => {
 
 const updateService = async (req, res) => {
   try {
-    const data = await clinicalServiceService.updateService(req.params.id, req.body);
+    const data = await clinicalServiceService.updateService(req.params.id, req.body, req);
     return res.json({ success: true, data });
   } catch (err) {
     return sendApiError(res, err);
@@ -44,7 +44,7 @@ const updateService = async (req, res) => {
 
 const deleteService = async (req, res) => {
   try {
-    await clinicalServiceService.deleteService(req.params.id);
+    await clinicalServiceService.deleteService(req.params.id, req);
     return res.json({ success: true });
   } catch (err) {
     return sendApiError(res, err);

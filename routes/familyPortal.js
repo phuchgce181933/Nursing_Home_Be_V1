@@ -17,6 +17,8 @@ const {
   getHealthChart,
   getCareNotes,
   getMedications,
+  getMedicationHistory,
+  getDailyMedicationSchedule,
   getPrescriptions,
   getActivities,
   getCareAppointments,
@@ -26,7 +28,6 @@ const {
   downloadReport,
 } = require('../controllers/familyPortalController');
 const { initiateWalletPayment, verifyWalletPayment } = require('../controllers/familyPaymentController');
-const { listPhotosForFamily } = require('../controllers/residentPhotoController');
 const { protect, authorize } = require('../middleware/auth');
 
 // Public checkout endpoints (no auth required - use checksum verification instead)
@@ -318,28 +319,6 @@ router.get('/residents/:residentId/vitals', getVitals);
 
 /**
  * @swagger
- * /api/family/residents/{residentId}/photos:
- *   get:
- *     summary: List photos uploaded by caregivers for a resident
- *     tags: [Family Portal]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: residentId
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Photo list
- *       403:
- *         description: Access denied
- */
-router.get('/residents/:residentId/photos', listPhotosForFamily);
-
-/**
- * @swagger
  * /api/family/residents/{residentId}/health-history:
  *   get:
  *     summary: Get paginated medical record history
@@ -527,6 +506,69 @@ router.get('/residents/:residentId/care-notes', getCareNotes);
  *         description: Access denied
  */
 router.get('/residents/:residentId/medications', getMedications);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/medication-history:
+ *   get:
+ *     summary: Get medication administration history with compliance stats for a resident
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter scheduledTime >= from
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter scheduledTime <= to
+ *     responses:
+ *       200:
+ *         description: Medication history with compliance stats
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/medication-history', getMedicationHistory);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/daily-medication-schedule:
+ *   get:
+ *     summary: Get daily medication schedule for a resident (today's doses)
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *           example: "2024-06-04"
+ *         description: Single date (YYYY-MM-DD). Defaults to today.
+ *     responses:
+ *       200:
+ *         description: Daily medication schedule with doses
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/daily-medication-schedule', getDailyMedicationSchedule);
 
 /**
  * @swagger

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const dishRepo = require('../repositories/dishRepository');
 const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
+const { createAuditLog } = require('../utils/auditLog');
 const {
   validateDishName,
   validateDishCalories,
@@ -65,7 +66,7 @@ const getDish = async (id, user = {}) => {
   return formatDish(dish);
 };
 
-const createDish = async (body = {}, actor) => {
+const createDish = async (body = {}, actor, req) => {
   const name = validateDishName(body.name);
   const calories = validateDishCalories(body.calories);
   const ingredients = normalizeDishIngredients(body.ingredients);
@@ -85,6 +86,20 @@ const createDish = async (body = {}, actor) => {
         },
         { new: true }
       );
+      await createAuditLog({
+        actorUserId: actor?._id,
+        actorRole: actor?.role,
+        action: 'CREATE_DISH',
+        displayAction: 'Tạo món ăn (khôi phục)',
+        module: 'dish',
+        businessModule: 'dish',
+        targetEntityType: 'Dish',
+        targetEntityId: revived._id,
+        targetName: revived.name,
+        description: `Tạo món ăn "${revived.name}" (khôi phục từ bản ghi trùng lặp)`,
+        afterData: { name: revived.name, calories: revived.calories, isActive: revived.isActive },
+        req,
+      });
       return { ...apiSuccess(SUCCESS.DISH_CREATED), dish: formatDish(revived.toObject()) };
     }
     throw apiErr(CODES.DISH_NAME_DUPLICATE, { statusCode: 409, params: { name: duplicate.name } });
@@ -98,10 +113,26 @@ const createDish = async (body = {}, actor) => {
     createdBy: actor?._id,
     updatedBy: actor?._id,
   });
+
+  await createAuditLog({
+    actorUserId: actor?._id,
+    actorRole: actor?.role,
+    action: 'CREATE_DISH',
+    displayAction: 'Tạo món ăn',
+    module: 'dish',
+    businessModule: 'dish',
+    targetEntityType: 'Dish',
+    targetEntityId: dish._id,
+    targetName: dish.name,
+    description: `Tạo món ăn "${dish.name}" (${dish.calories} kcal)`,
+    afterData: { name: dish.name, calories: dish.calories, ingredients: dish.ingredients, isActive: dish.isActive },
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.DISH_CREATED), dish: formatDish(dish.toObject()) };
 };
 
-const updateDish = async (id, body = {}, actor) => {
+const updateDish = async (id, body = {}, actor, req) => {
   assertValidObjectId(id, 'dishId');
   const dish = await dishRepo.findById(id);
   if (!dish) throw apiErr(CODES.DISH_NOT_FOUND, { statusCode: 404 });
@@ -127,10 +158,26 @@ const updateDish = async (id, body = {}, actor) => {
   }
   dish.updatedBy = actor?._id;
   await dish.save();
+
+  await createAuditLog({
+    actorUserId: actor?._id,
+    actorRole: actor?.role,
+    action: 'UPDATE_DISH',
+    displayAction: 'Cập nhật món ăn',
+    module: 'dish',
+    businessModule: 'dish',
+    targetEntityType: 'Dish',
+    targetEntityId: dish._id,
+    targetName: dish.name,
+    description: `Cập nhật món ăn "${dish.name}"`,
+    afterData: formatDish(dish.toObject()),
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.DISH_UPDATED), dish: formatDish(dish.toObject()) };
 };
 
-const deleteDish = async (id, actor) => {
+const deleteDish = async (id, actor, req) => {
   assertValidObjectId(id, 'dishId');
   const dish = await dishRepo.findById(id);
   if (!dish) throw apiErr(CODES.DISH_NOT_FOUND, { statusCode: 404 });
@@ -138,6 +185,22 @@ const deleteDish = async (id, actor) => {
   await assertDishNotInMealPlan(dish._id);
 
   await dishRepo.findByIdAndDelete(id);
+
+  await createAuditLog({
+    actorUserId: actor?._id,
+    actorRole: actor?.role,
+    action: 'DELETE_DISH',
+    displayAction: 'Xóa món ăn',
+    module: 'dish',
+    businessModule: 'dish',
+    targetEntityType: 'Dish',
+    targetEntityId: dish._id,
+    targetName: dish.name,
+    description: `Xóa món ăn "${dish.name}"`,
+    beforeData: { name: dish.name, calories: dish.calories, isActive: dish.isActive },
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.DISH_DELETED), deleted: true, id: String(id) };
 };
 

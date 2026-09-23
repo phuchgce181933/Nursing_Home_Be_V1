@@ -33,6 +33,7 @@ const {
   assertActorMayManageUser,
   getCreatableRolesForActor,
 } = require('../utils/rolePolicy');
+const { createAuditLog } = require('../utils/auditLog');
 const { isShiftActiveNow, parseWorkDate, getLocalDateString } = require('../utils/shiftTime');
 
 const STAFF_ROLES = ['doctor', 'nurse', 'caregiver', 'pharmacist', 'admin', 'family'];
@@ -264,7 +265,7 @@ const getStaffProfile = async (id) => {
 
 // ── STT 1 – update staff basic profile (admin/manager editable fields only) ─
 
-const updateStaffProfile = async (id, body, currentUser) => {
+const updateStaffProfile = async (id, body, currentUser, req = null) => {
   const user = await userRepo.findById(id);
   if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
   assertActorMayManageUser(currentUser, user);
@@ -387,12 +388,55 @@ const updateStaffProfile = async (id, body, currentUser) => {
   delete userObj.resetPasswordTokenHash;
   delete userObj.resetPasswordExpiresAt;
 
+  const beforeData = {
+    fullName: user.fullName,
+    phone: user.phone,
+    gender: user.gender,
+    dateOfBirth: user.dateOfBirth,
+    address: user.address,
+    avatarUrl: user.avatarUrl,
+    specialty: profile?.specialty,
+    certificationCount: profile?.certifications?.length || 0,
+  };
+
+  const finalProfile = profile?._id
+    ? await staffProfileRepo.findById(profile._id).then((p) => (p?.toObject ? p.toObject() : p))
+    : profile;
+
+  const afterData = {
+    fullName: userObj.fullName,
+    phone: userObj.phone,
+    gender: userObj.gender,
+    dateOfBirth: userObj.dateOfBirth,
+    address: userObj.address,
+    avatarUrl: userObj.avatarUrl,
+    specialty: finalProfile?.specialty,
+    certificationCount: finalProfile?.certifications?.length || 0,
+  };
+
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'UPDATE_STAFF_PROFILE',
+    displayAction: 'Cập nhật hồ sơ nhân viên',
+    module: 'staff',
+    businessModule: 'staff',
+    targetEntityType: 'User',
+    targetEntityId: user._id,
+    targetName: user.fullName || user.email,
+    description: `${currentUser?.fullName || 'Quản trị viên'} đã cập nhật hồ sơ nhân viên "${user.fullName || user.email}"`,
+    beforeData,
+    afterData,
+    metadata: { updatedFields: Object.keys(profileUpdate || {}) },
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.STAFF_PROFILE_UPDATED), user: userObj, staffProfile: profile };
 };
 
 // ── STT 2 – classify staff role ─────────────────────────────────────────────
 
-const updateStaffRole = async (id, { role }, currentUser) => {
+const updateStaffRole = async (id, { role }, currentUser, req = null) => {
   if (!role) throw apiErr(CODES.STAFF_ROLE_REQUIRED, { statusCode: 400 });
 
   const user = await userRepo.findById(id);
@@ -401,6 +445,8 @@ const updateStaffRole = async (id, { role }, currentUser) => {
     throw apiErr(CODES.STAFF_CANNOT_CHANGE_OWN_ROLE, { statusCode: 400 });
   }
   assertActorMayManageUser(currentUser, user);
+
+  const previousRole = user.role;
 
   assertActorMayAssignRole(currentUser, role);
   const allowedRoles = getCreatableRolesForActor(currentUser) || STAFF_ROLES;
@@ -428,12 +474,29 @@ const updateStaffRole = async (id, { role }, currentUser) => {
     updatedProfile = await staffProfileRepo.updateById(updatedProfile._id, { roleCategory: role });
   }
 
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'UPDATE_STAFF_ROLE',
+    displayAction: 'Phân loại / thay đổi vai trò nhân viên',
+    module: 'staff',
+    businessModule: 'staff',
+    targetEntityType: 'User',
+    targetEntityId: user._id,
+    targetName: user.fullName || user.email,
+    description: `${currentUser?.fullName || 'Quản trị viên'} đã đổi vai trò nhân viên "${user.fullName || user.email}" từ "${previousRole}" sang "${role}"`,
+    beforeData: { role: previousRole, roleCategory: profile?.roleCategory },
+    afterData: { role, roleCategory: updatedProfile?.roleCategory || role },
+    metadata: { previousRole, newRole: role },
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.STAFF_ROLE_UPDATED), user: { _id: user._id, role: user.role }, staffProfile: updatedProfile };
 };
 
 // ── Ban / Unban (replaces delete) ───────────────────────────────────────────
 
-const banStaff = async (id, { banReason } = {}, currentUser) => {
+const banStaff = async (id, { banReason } = {}, currentUser, req = null) => {
   const user = await userRepo.findById(id);
   if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
   if (user._id.toString() === currentUser._id.toString()) {
@@ -446,13 +509,30 @@ const banStaff = async (id, { banReason } = {}, currentUser) => {
   user.banReason = banReason?.trim() || 'Banned by administrator';
   await userRepo.saveUser(user);
 
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'BAN_STAFF',
+    displayAction: 'Khóa tài khoản nhân viên',
+    module: 'staff',
+    businessModule: 'staff',
+    targetEntityType: 'User',
+    targetEntityId: user._id,
+    targetName: user.fullName || user.email,
+    description: `${currentUser?.fullName || 'Quản trị viên'} đã khóa tài khoản "${user.fullName || user.email}". Lý do: ${user.banReason}`,
+    beforeData: { isBanned: false, isActive: user.isActive },
+    afterData: { isBanned: true, banReason: user.banReason, isActive: user.isActive },
+    metadata: { event: 'ban', banReason: user.banReason },
+    req,
+  });
+
   return {
     ...apiSuccess(SUCCESS.STAFF_BANNED),
     user: { _id: user._id, fullName: user.fullName, isBanned: user.isBanned, banReason: user.banReason },
   };
 };
 
-const unbanStaff = async (id, currentUser) => {
+const unbanStaff = async (id, currentUser, req = null) => {
   const user = await userRepo.findById(id);
   if (!user || !STAFF_ROLES.includes(user.role)) throw apiErr(CODES.STAFF_NOT_FOUND, { statusCode: 404 });
   if (user._id.toString() === currentUser._id.toString()) {
@@ -464,6 +544,23 @@ const unbanStaff = async (id, currentUser) => {
   user.isBanned = false;
   user.banReason = undefined;
   await userRepo.saveUser(user);
+
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'UNBAN_STAFF',
+    displayAction: 'Mở khóa tài khoản nhân viên',
+    module: 'staff',
+    businessModule: 'staff',
+    targetEntityType: 'User',
+    targetEntityId: user._id,
+    targetName: user.fullName || user.email,
+    description: `${currentUser?.fullName || 'Quản trị viên'} đã mở khóa tài khoản "${user.fullName || user.email}"`,
+    beforeData: { isBanned: true, banReason: user.banReason },
+    afterData: { isBanned: false },
+    metadata: { event: 'unban' },
+    req,
+  });
 
   return {
     ...apiSuccess(SUCCESS.STAFF_UNBANNED),
@@ -547,11 +644,14 @@ const pruneAssignedResidentsToAreas = async (profile) => {
   };
 };
 
-const assignAreas = async (id, { floorIds, roomIds }) => {
+const assignAreas = async (id, { floorIds, roomIds }, currentUser = null, req = null) => {
   await assertAssignableStaffByUserId(id);
 
   const profile = await staffProfileRepo.findByUserId(id);
   if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
+
+  const beforeFloorIds = (profile.responsibleAreaIds || []).map((f) => String(f));
+  const beforeRoomIds = (profile.responsibleRoomIds || []).map((r) => String(r));
 
   const updateData = {};
   if (floorIds !== undefined) updateData.responsibleAreaIds = floorIds;
@@ -588,6 +688,28 @@ const assignAreas = async (id, { floorIds, roomIds }) => {
 
   const updated = await staffProfileRepo.updateById(profile._id, updateData);
   const { staffProfile, removedResidents, removedCount } = await pruneAssignedResidentsToAreas(updated);
+
+  const targetUser = await userRepo.findById(id);
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'ASSIGN_STAFF_AREAS',
+    displayAction: 'Phân khu vực phụ trách cho nhân viên',
+    module: 'staff',
+    businessModule: 'staff',
+    targetEntityType: 'StaffProfile',
+    targetEntityId: profile._id,
+    targetName: targetUser?.fullName || targetUser?.email || 'Nhân viên',
+    description: `${currentUser?.fullName || 'Quản trị viên'} đã phân khu vực phụ trách cho nhân viên "${targetUser?.fullName || targetUser?.email}"`,
+    beforeData: { responsibleAreaIds: beforeFloorIds, responsibleRoomIds: beforeRoomIds },
+    afterData: {
+      responsibleAreaIds: (updated.responsibleAreaIds || []).map((f) => String(f)),
+      responsibleRoomIds: (updated.responsibleRoomIds || []).map((r) => String(r)),
+      residentsPrunedCount: removedCount,
+    },
+    metadata: { prunedResidentsCount: removedCount },
+    req,
+  });
 
   return {
     ...apiSuccess(SUCCESS.STAFF_AREAS_UPDATED),
@@ -648,7 +770,7 @@ const listAssignedResidents = async (userId) => {
   return result;
 };
 
-const assignResidents = async (id, { residentIds: residentIdsInput }) => {
+const assignResidents = async (id, { residentIds: residentIdsInput }, currentUser = null, req = null) => {
   await assertAssignableStaffByUserId(id);
 
   const profile = await staffProfileRepo.findByUserId(id);
@@ -656,6 +778,8 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
 
   const parsedIds = parseResidentIds(residentIdsInput);
   const objectIds = validateObjectIds(parsedIds, 'residentId');
+
+  const beforeAssignedIds = (profile.assignedResidentIds || []).map((rid) => String(rid._id || rid));
 
   if (objectIds.length) {
     const residents = await residentRepo.findByFilterLean(
@@ -696,6 +820,27 @@ const assignResidents = async (id, { residentIds: residentIdsInput }) => {
     { path: 'responsibleAreaIds', select: 'floorNumber name' },
     { path: 'responsibleRoomIds', select: 'roomNumber roomType' },
   ]);
+
+  const targetUser = await userRepo.findById(id);
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'ASSIGN_STAFF_RESIDENTS',
+    displayAction: 'Phân công cư dân cho nhân viên',
+    module: 'staff',
+    businessModule: 'staff',
+    targetEntityType: 'StaffProfile',
+    targetEntityId: profile._id,
+    targetName: targetUser?.fullName || targetUser?.email || 'Nhân viên',
+    description: `${currentUser?.fullName || 'Quản trị viên'} đã phân công ${objectIds.length} cư dân cho nhân viên "${targetUser?.fullName || targetUser?.email}"`,
+    beforeData: { assignedResidentIds: beforeAssignedIds },
+    afterData: { assignedResidentIds: objectIds.map((oid) => String(oid)) },
+    metadata: {
+      addedCount: objectIds.filter((oid) => !beforeAssignedIds.includes(String(oid))).length,
+      removedCount: removedIds.length,
+    },
+    req,
+  });
 
   return { ...apiSuccess(SUCCESS.STAFF_RESIDENTS_UPDATED), staffProfile };
 };

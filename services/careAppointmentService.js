@@ -247,18 +247,23 @@ const createAppointment = async (user, body, req) => {
     notes,
   });
 
+  const populated = await careAppointmentRepo.findByIdWithPopulate(appointment._id);
+  const residentName = populated.residentId?.fullName || 'N/A';
+  const startStr = start.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
-    action: 'CREATE',
+    action: 'CREATE_CARE_APPOINTMENT',
     module: 'CareAppointment',
     targetEntityType: 'CareAppointment',
     targetEntityId: appointment._id,
-    afterData: appointment.toObject(),
+    targetName: `${residentName} - ${startStr}`,
+    afterData: populated.toObject ? populated.toObject() : populated,
     req,
   });
 
-  return careAppointmentRepo.findByIdWithPopulate(appointment._id);
+  return populated;
 };
 
 const listAppointments = async (user, staffProfile, query) => {
@@ -417,19 +422,25 @@ const updateAppointment = async (user, staffProfile, id, body, req) => {
   if (body.notes !== undefined) appointment.notes = body.notes;
   await careAppointmentRepo.saveAppointment(appointment);
 
+  const populated = await careAppointmentRepo.findByIdWithPopulate(appointment._id);
+  const resident = await residentRepo.findById(appointment.residentId);
+  const residentName = populated.residentId?.fullName || resident?.fullName || 'N/A';
+  const startStr = start.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
-    action: 'UPDATE',
+    action: 'UPDATE_CARE_APPOINTMENT',
     module: 'CareAppointment',
     targetEntityType: 'CareAppointment',
     targetEntityId: appointment._id,
+    targetName: `${residentName} - ${startStr}`,
     beforeData: before,
-    afterData: appointment.toObject(),
+    afterData: populated.toObject ? populated.toObject() : populated,
     req,
   });
 
-  return careAppointmentRepo.findByIdWithPopulate(appointment._id);
+  return populated;
 };
 
 const deleteAppointment = async (user, staffProfile, id, req) => {
@@ -444,13 +455,20 @@ const deleteAppointment = async (user, staffProfile, id, req) => {
   const before = appointment.toObject();
   await careAppointmentRepo.deleteAppointment(appointment);
 
+  const resident = await residentRepo.findById(appointment.residentId);
+  const residentName = resident?.fullName || 'N/A';
+  const startStr = appointment.scheduledStartAt
+    ? appointment.scheduledStartAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : 'N/A';
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
-    action: 'DELETE',
+    action: 'DELETE_CARE_APPOINTMENT',
     module: 'CareAppointment',
     targetEntityType: 'CareAppointment',
     targetEntityId: before._id,
+    targetName: `${residentName} - ${startStr}`,
     beforeData: before,
     req,
   });
@@ -487,15 +505,33 @@ const updateStatus = async (user, staffProfile, id, body, req) => {
   appointment.status = status;
   await careAppointmentRepo.saveAppointment(appointment);
 
+  const populated = await careAppointmentRepo.findByIdWithPopulate(appointment._id);
+  const resident = await residentRepo.findById(appointment.residentId);
+  const residentName = populated.residentId?.fullName || resident?.fullName || 'N/A';
+  const startStr = appointment.scheduledStartAt
+    ? appointment.scheduledStartAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : 'N/A';
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
-    action: 'UPDATE_STATUS',
+    action: 'UPDATE_APPOINTMENT_STATUS',
     module: 'CareAppointment',
     targetEntityType: 'CareAppointment',
     targetEntityId: appointment._id,
-    beforeData: { status: prevStatus },
-    afterData: { status },
+    targetName: `${residentName} - ${startStr}`,
+    beforeData: {
+      status: prevStatus,
+      residentName,
+      appointmentType: appointment.appointmentType,
+      scheduledStartAt: appointment.scheduledStartAt,
+    },
+    afterData: {
+      status,
+      residentName,
+      appointmentType: appointment.appointmentType,
+      scheduledStartAt: appointment.scheduledStartAt,
+    },
     req,
   });
 
@@ -520,19 +556,35 @@ const assignDoctor = async (user, id, body, req) => {
     await validateStaffAvailability(doctorStaffId, 'doctor', appointment.scheduledStartAt, appointment.scheduledEndAt, appointment._id);
   }
 
-  const before = { doctorStaffId: appointment.doctorStaffId };
+  const beforeDoctorProfile = appointment.doctorStaffId
+    ? await staffProfileRepo.findByIdWithUser(appointment.doctorStaffId)
+    : null;
+  const afterDoctorProfile = doctorStaffId
+    ? await staffProfileRepo.findByIdWithUser(doctorStaffId)
+    : null;
+  const beforeDoctorName = beforeDoctorProfile?.userId?.fullName || null;
+  const afterDoctorName = afterDoctorProfile?.userId?.fullName || null;
+
+  const before = { doctorStaffId, doctorName: beforeDoctorName };
   appointment.doctorStaffId = doctorStaffId || undefined;
   await careAppointmentRepo.saveAppointment(appointment);
+
+  const resident = await residentRepo.findById(appointment.residentId);
+  const residentName = resident?.fullName || 'N/A';
+  const startStr = appointment.scheduledStartAt
+    ? appointment.scheduledStartAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : 'N/A';
 
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
-    action: 'ASSIGN_DOCTOR',
+    action: 'ASSIGN_APPOINTMENT_DOCTOR',
     module: 'CareAppointment',
     targetEntityType: 'CareAppointment',
     targetEntityId: appointment._id,
-    beforeData: before,
-    afterData: { doctorStaffId },
+    targetName: `${residentName} - ${startStr}`,
+    beforeData: { doctorStaffId: appointment.doctorStaffId, doctorName: beforeDoctorName, residentName, scheduledStartAt: appointment.scheduledStartAt },
+    afterData: { doctorStaffId, doctorName: afterDoctorName, residentName, scheduledStartAt: appointment.scheduledStartAt },
     req,
   });
 
@@ -557,19 +609,35 @@ const assignNurse = async (user, id, body, req) => {
     await validateStaffAvailability(nurseStaffId, 'nurse', appointment.scheduledStartAt, appointment.scheduledEndAt, appointment._id);
   }
 
+  const beforeNurseProfile = appointment.nurseStaffId
+    ? await staffProfileRepo.findByIdWithUser(appointment.nurseStaffId)
+    : null;
+  const afterNurseProfile = nurseStaffId
+    ? await staffProfileRepo.findByIdWithUser(nurseStaffId)
+    : null;
+  const beforeNurseName = beforeNurseProfile?.userId?.fullName || null;
+  const afterNurseName = afterNurseProfile?.userId?.fullName || null;
+
   const before = { nurseStaffId: appointment.nurseStaffId };
   appointment.nurseStaffId = nurseStaffId || undefined;
   await careAppointmentRepo.saveAppointment(appointment);
 
+  const resident = await residentRepo.findById(appointment.residentId);
+  const residentName = resident?.fullName || 'N/A';
+  const startStr = appointment.scheduledStartAt
+    ? appointment.scheduledStartAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : 'N/A';
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
-    action: 'ASSIGN_NURSE',
+    action: 'ASSIGN_APPOINTMENT_NURSE',
     module: 'CareAppointment',
     targetEntityType: 'CareAppointment',
     targetEntityId: appointment._id,
-    beforeData: before,
-    afterData: { nurseStaffId },
+    targetName: `${residentName} - ${startStr}`,
+    beforeData: { nurseStaffId: appointment.nurseStaffId, nurseName: beforeNurseName, residentName, scheduledStartAt: appointment.scheduledStartAt },
+    afterData: { nurseStaffId, nurseName: afterNurseName, residentName, scheduledStartAt: appointment.scheduledStartAt },
     req,
   });
 
@@ -638,11 +706,18 @@ const sendReminder = async (user, id, req) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
-    action: 'SEND_REMINDER',
+    action: 'SEND_APPOINTMENT_REMINDER',
     module: 'CareAppointment',
     targetEntityType: 'CareAppointment',
     targetEntityId: appointment._id,
-    afterData: { recipientCount: notifications.length, recipientGroups },
+    targetName: `${residentName} - ${startStr}`,
+    afterData: {
+      residentName,
+      appointmentType: appointment.appointmentType,
+      scheduledStartAt: appointment.scheduledStartAt,
+      recipientCount: notifications.length,
+      recipientGroups,
+    },
     req,
   });
 

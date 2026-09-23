@@ -5,6 +5,7 @@ const userRepo = require('../repositories/userRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const mailService = require('./mailService');
 const otpService = require('./otpService');
+const { createAuditLog } = require('../utils/auditLog');
 const { validatePhone, validateUsername, validateStaffDateOfBirth, validateStaffCertifications, validateFullName, validateEmail, validatePassword, collectErrors } = require('../utils/validators');
 const STAFF_ROLES = ['doctor', 'nurse', 'pharmacist', 'caregiver', 'family'];
 const STAFF_CODE_PREFIXES = { doctor: 'DOC', nurse: 'NUR', pharmacist: 'PHA', caregiver: 'CAR', admin: 'ADM', family: 'FAM' };
@@ -255,6 +256,31 @@ const createStaffAccount = async ({
     });
   }
 
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'CREATE_STAFF_ACCOUNT',
+    displayAction: 'Tạo tài khoản nhân viên',
+    module: 'auth',
+    businessModule: 'auth',
+    targetEntityType: 'User',
+    targetEntityId: user._id.toString(),
+    targetName: user.fullName,
+    description: `Tạo tài khoản nhân viên ${role} cho ${user.fullName} (${user.email})`,
+    beforeData: null,
+    afterData: {
+      _id: user._id.toString(),
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+      phone: user.phone,
+      isActive: user.isActive,
+      staffProfile: staffProfile
+        ? { staffCode: staffProfile.staffCode, specialty: staffProfile.specialty }
+        : null,
+    },
+  });
+
   return {
     ...apiSuccess(SUCCESS.AUTH_STAFF_CREATED),
     user: {
@@ -288,6 +314,21 @@ const toggleStaffActive = async (id, currentUser) => {
 
   user.isActive = !user.isActive;
   await userRepo.saveUser(user);
+
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'TOGGLE_STAFF_ACTIVE',
+    displayAction: user.isActive ? 'Kích hoạt tài khoản' : 'Vô hiệu hóa tài khoản',
+    module: 'auth',
+    businessModule: 'auth',
+    targetEntityType: 'User',
+    targetEntityId: user._id.toString(),
+    targetName: user.fullName,
+    description: `${user.isActive ? 'Kích hoạt' : 'Vô hiệu hóa'} tài khoản ${user.role} của ${user.fullName} (${user.email})`,
+    beforeData: { isActive: !user.isActive },
+    afterData: { isActive: user.isActive },
+  });
 
   return {
     ...apiSuccess(user.isActive ? SUCCESS.AUTH_ACCOUNT_ACTIVATED : SUCCESS.AUTH_ACCOUNT_DEACTIVATED),
@@ -399,7 +440,7 @@ const verifyEmailChangeOtp = async (user, { otpId, code }) => {
 };
 
 // update profile
-const updateProfile = async (user, data) => {
+const updateProfile = async (user, data, req) => {
   if (data.email) {
     throw apiErr(CODES.AUTH_EMAIL_OTP_REQUIRED, { statusCode: 400 });
   }
@@ -413,7 +454,36 @@ const updateProfile = async (user, data) => {
     data.phone = normalizedPhone;
   }
 
-  return await userRepo.updateProfile(user._id, data);
+  const beforeUser = await userRepo.findById(user._id);
+  const beforeData = {
+    fullName: beforeUser.fullName,
+    phone: beforeUser.phone,
+    gender: beforeUser.gender,
+    address: beforeUser.address,
+    dateOfBirth: beforeUser.dateOfBirth,
+    avatarUrl: beforeUser.avatarUrl,
+  };
+
+  const result = await userRepo.updateProfile(user._id, data);
+  const afterData = { ...beforeData, ...data };
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'UPDATE_PROFILE',
+    displayAction: 'Cập nhật hồ sơ cá nhân',
+    module: 'auth',
+    businessModule: 'auth',
+    targetEntityType: 'User',
+    targetEntityId: user._id.toString(),
+    targetName: user.fullName,
+    description: `${user.fullName} cập nhật hồ sơ cá nhân`,
+    beforeData,
+    afterData,
+    req,
+  });
+
+  return result;
 };
 
 // đổi pass
@@ -445,6 +515,21 @@ const changePassword = async (
   dbUser.passwordHash = passwordHash;
 
   await userRepo.saveUser(dbUser);
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'CHANGE_PASSWORD',
+    displayAction: 'Đổi mật khẩu',
+    module: 'auth',
+    businessModule: 'auth',
+    targetEntityType: 'User',
+    targetEntityId: user._id.toString(),
+    targetName: user.fullName,
+    description: `${user.fullName} đã đổi mật khẩu`,
+    beforeData: { passwordChanged: false },
+    afterData: { passwordChanged: true },
+  });
 
   return apiSuccess(SUCCESS.AUTH_PASSWORD_CHANGED);
 };
@@ -520,6 +605,21 @@ const resetPassword = async ({
 
   await userRepo.saveUser(user);
 
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'RESET_PASSWORD',
+    displayAction: 'Đặt lại mật khẩu',
+    module: 'auth',
+    businessModule: 'auth',
+    targetEntityType: 'User',
+    targetEntityId: user._id.toString(),
+    targetName: user.fullName,
+    description: `${user.fullName} đã đặt lại mật khẩu qua email`,
+    beforeData: { passwordChanged: false },
+    afterData: { passwordChanged: true },
+  });
+
   return apiSuccess(SUCCESS.AUTH_PASSWORD_RESET);
 };
 // update user by admin
@@ -577,6 +677,30 @@ const updateUserByAdmin = async (
   });
 
   await userRepo.saveUser(user);
+
+  const beforeData = {};
+  const afterData = {};
+  allowedFields.forEach((field) => {
+    if (data[field] !== undefined) {
+      beforeData[field] = user[field];
+      afterData[field] = data[field];
+    }
+  });
+
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'UPDATE_USER_BY_ADMIN',
+    displayAction: 'Cập nhật tài khoản người dùng',
+    module: 'auth',
+    businessModule: 'auth',
+    targetEntityType: 'User',
+    targetEntityId: user._id.toString(),
+    targetName: user.fullName,
+    description: `Admin cập nhật tài khoản ${user.role} của ${user.fullName} (${user.email})`,
+    beforeData,
+    afterData,
+  });
 
   return {
     ...apiSuccess(SUCCESS.AUTH_USER_UPDATED),

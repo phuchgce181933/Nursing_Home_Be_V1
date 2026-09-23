@@ -24,6 +24,7 @@ const {
   assertStaffDutyMinGap,
   assertBatchStaffDutyMinGap,
 } = require('../utils/careTaskAssignmentValidation');
+const { createAuditLog } = require('../utils/auditLog');
 
 const SCHEDULE_TEMPLATES = [
   {
@@ -219,7 +220,7 @@ const getScheduleTemplates = async () => ({
   })),
 });
 
-const createDraft = async (body, actorUserId) => {
+const createDraft = async (body, actorUserId, req = null) => {
   const workDate = parseAndValidateWorkDate(body.workDate);
   if (workDate < todayVN()) {
     throw apiErr(CODES.CARE_SCHEDULE_PAST_DATE, { statusCode: 400 });
@@ -259,10 +260,31 @@ const createDraft = async (body, actorUserId) => {
     );
   });
   const saved = await careScheduleDayRepo.findById(createdDayId);
-  return { ...apiSuccess(SUCCESS.CARE_SCHEDULE_DRAFT_CREATED), schedule: await hydrateDraft(saved) };
+  const hydrated = await hydrateDraft(saved);
+
+  await createAuditLog({
+    actorUserId: actorUserId,
+    actorRole: req?.user?.role,
+    action: 'CREATE_CARE_SCHEDULE_DRAFT',
+    displayAction: 'Tạo lịch chăm sóc nháp',
+    module: 'careSchedule',
+    businessModule: 'careSchedule',
+    targetEntityType: 'CareScheduleDay',
+    targetEntityId: createdDayId,
+    targetName: saved.title,
+    description: `Tạo lịch chăm sóc nháp ngày ${workDate} với ${entries.length} mục`,
+    afterData: {
+      workDate: saved.workDate,
+      title: saved.title,
+      entriesCount: entries.length,
+    },
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.CARE_SCHEDULE_DRAFT_CREATED), schedule: hydrated };
 };
 
-const updateDraft = async (id, body, actorUserId) => {
+const updateDraft = async (id, body, actorUserId, req = null) => {
   const day = await careScheduleDayRepo.findById(id);
   if (!day) throw apiErr(CODES.CARE_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') throw apiErr(CODES.CARE_SCHEDULE_DRAFT_ONLY_EDIT, { statusCode: 400 });
@@ -314,7 +336,31 @@ const updateDraft = async (id, body, actorUserId) => {
     }
   });
   const saved = await careScheduleDayRepo.findById(id);
-  return { ...apiSuccess(SUCCESS.CARE_SCHEDULE_DRAFT_UPDATED), schedule: await hydrateDraft(saved) };
+  const hydrated = await hydrateDraft(saved);
+
+  await createAuditLog({
+    actorUserId: actorUserId,
+    actorRole: req?.user?.role,
+    action: 'UPDATE_CARE_SCHEDULE_DRAFT',
+    displayAction: 'Cập nhật lịch chăm sóc nháp',
+    module: 'careSchedule',
+    businessModule: 'careSchedule',
+    targetEntityType: 'CareScheduleDay',
+    targetEntityId: id,
+    targetName: saved.title,
+    description: `Cập nhật lịch chăm sóc nháp ngày ${nextWorkDate}`,
+    beforeData: {
+      title: day.title,
+      workDate: day.workDate,
+    },
+    afterData: {
+      title: saved.title,
+      workDate: saved.workDate,
+    },
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.CARE_SCHEDULE_DRAFT_UPDATED), schedule: hydrated };
 };
 
 const listSchedules = async (filter = {}, options = {}) => {
@@ -345,7 +391,7 @@ const getSchedule = async (id) => {
   return hydrateDraft(day);
 };
 
-const deleteDraft = async (id, actorUserId) => {
+const deleteDraft = async (id, actorUserId, req = null) => {
   const day = await careScheduleDayRepo.findById(id);
   if (!day) throw apiErr(CODES.CARE_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') {
@@ -356,6 +402,25 @@ const deleteDraft = async (id, actorUserId) => {
     const dbOpts = session ? { session } : {};
     await careScheduleEntryRepo.deleteByDayId(id, dbOpts);
     await careScheduleDayRepo.deleteById(id, dbOpts);
+  });
+
+  await createAuditLog({
+    actorUserId: actorUserId,
+    actorRole: req?.user?.role,
+    action: 'DELETE_CARE_SCHEDULE_DRAFT',
+    displayAction: 'Xóa lịch chăm sóc nháp',
+    module: 'careSchedule',
+    businessModule: 'careSchedule',
+    targetEntityType: 'CareScheduleDay',
+    targetEntityId: id,
+    targetName: day.title,
+    description: `Xóa lịch chăm sóc nháp ngày ${workDateToVNString(day.workDate)}`,
+    beforeData: {
+      title: day.title,
+      workDate: day.workDate,
+      status: day.status,
+    },
+    req,
   });
 
   return {
@@ -443,7 +508,7 @@ const validateEntryForPublish = async (entry, workDateStr) => {
   return { resident, staffProfile, shift, needsResidentAssignment };
 };
 
-const publishSchedule = async (id, actorUserId) => {
+const publishSchedule = async (id, actorUserId, req = null) => {
   const day = await careScheduleDayRepo.findById(id);
   if (!day) throw apiErr(CODES.CARE_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   if (day.status === 'published') {
@@ -524,6 +589,30 @@ const publishSchedule = async (id, actorUserId) => {
   });
   triggerReadinessSyncForWorkDate(workDateStr);
   const saved = await careScheduleDayRepo.findById(id);
+
+  await createAuditLog({
+    actorUserId: actorUserId,
+    actorRole: req?.user?.role,
+    action: 'PUBLISH_CARE_SCHEDULE',
+    displayAction: 'Xuất bản lịch chăm sóc',
+    module: 'careSchedule',
+    businessModule: 'careSchedule',
+    targetEntityType: 'CareScheduleDay',
+    targetEntityId: id,
+    targetName: day.title,
+    description: `Xuất bản lịch chăm sóc ngày ${workDateStr} với ${entries.length} nhiệm vụ`,
+    beforeData: {
+      status: day.status,
+      title: day.title,
+    },
+    afterData: {
+      status: 'published',
+      title: saved.title,
+      createdCareTasks: entries.length,
+    },
+    req,
+  });
+
   return {
     ...apiSuccess(SUCCESS.CARE_SCHEDULE_PUBLISHED),
     schedule: await hydrateDraft(saved),

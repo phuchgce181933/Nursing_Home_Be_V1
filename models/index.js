@@ -24,7 +24,6 @@ const CareNote = require('./careNote');
 const Invoice = require('./invoice');
 const Payment = require('./payment');
 const Notification = require('./notification');
-const SupportRequest = require('./supportRequest');
 const ConsultationRequest = require('./consultationRequest');
 const Conversation = require('./conversation');
 const Message = require('./message');
@@ -81,7 +80,6 @@ module.exports = {
   Invoice,
   Payment,
   Notification,
-  SupportRequest,
   ConsultationRequest,
   Conversation,
   Message,

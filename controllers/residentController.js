@@ -39,7 +39,12 @@ const getResidentFamilyInfo = async (req, res) => {
 
 const addEmergencyContact = async (req, res) => {
   try {
-    const result = await residentService.addEmergencyContact(req.params.residentId, req.body);
+    const result = await residentService.addEmergencyContact(
+      req.user,
+      req.params.residentId,
+      req.body,
+      req
+    );
     res.status(201).json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -52,7 +57,12 @@ const replaceEmergencyContacts = async (req, res) => {
     if (!Array.isArray(contacts)) {
       return res.status(400).json({ message: 'contacts phải là một mảng' });
     }
-    const result = await residentService.replaceEmergencyContacts(req.params.residentId, contacts);
+    const result = await residentService.replaceEmergencyContacts(
+      req.user,
+      req.params.residentId,
+      contacts,
+      req
+    );
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -62,9 +72,11 @@ const replaceEmergencyContacts = async (req, res) => {
 const updateEmergencyContact = async (req, res) => {
   try {
     const result = await residentService.updateEmergencyContact(
+      req.user,
       req.params.residentId,
       req.params.contactId,
-      req.body
+      req.body,
+      req
     );
     res.json(result);
   } catch (err) {
@@ -75,8 +87,10 @@ const updateEmergencyContact = async (req, res) => {
 const removeEmergencyContact = async (req, res) => {
   try {
     const result = await residentService.removeEmergencyContact(
+      req.user,
       req.params.residentId,
-      req.params.contactId
+      req.params.contactId,
+      req
     );
     res.json(result);
   } catch (err) {
@@ -120,9 +134,18 @@ const getTransferTargets = async (req, res) => {
   }
 };
 
+const formatTransferLocation = (assignment = {}) => {
+  const building = assignment.building?.name || assignment.building?.code || 'chưa xác định tòa';
+  const floor = assignment.floor?.name
+    || (assignment.floor?.floorNumber != null ? `tầng ${assignment.floor.floorNumber}` : 'chưa xác định tầng');
+  const room = assignment.room?.roomNumber || 'chưa xác định phòng';
+  const bed = assignment.bed?.bedCode || 'chưa xác định giường';
+  return `${building}, ${floor}, phòng ${room}, giường ${bed}`;
+};
+
 const transferResidentToRoom = async (req, res) => {
   try {
-    const result = await residentService.transferResidentToRoom(req.params.residentId, req.body);
+    const result = await residentService.transferResidentToRoom(req.params.residentId, req.body, req.user, req);
 
     await createAuditLog({
       actorUserId: req.user._id,
@@ -131,12 +154,28 @@ const transferResidentToRoom = async (req, res) => {
       displayAction: 'Chuyển cư dân',
       businessModule: 'resident',
       module: 'resident',
-      description: `Chuyển cư dân ${result.resident.fullName || req.params.residentId} từ ${result.from.room?.roomNumber || 'phòng cũ'} sang ${result.to.room?.roomNumber || 'phòng mới'}`,
+        description: `Chuyển cư dân ${result.resident.fullName || req.params.residentId} từ ${formatTransferLocation(result.from)} sang ${formatTransferLocation(result.to)}`,
       targetEntityType: 'Resident',
       targetEntityId: req.params.residentId,
-      targetName: result.resident.residentCode || result.resident.fullName || req.params.residentId,
-      beforeData: result.from,
-      afterData: result.to,
+        targetName: result.resident.fullName || result.resident.residentCode || req.params.residentId,
+        beforeData: {
+          resident: {
+            _id: result.resident._id,
+            residentCode: result.resident.residentCode,
+            fullName: result.resident.fullName,
+            residencyStatus: result.resident.residencyStatus,
+          },
+          ...result.from,
+        },
+        afterData: {
+          resident: {
+            _id: result.resident._id,
+            residentCode: result.resident.residentCode,
+            fullName: result.resident.fullName,
+            residencyStatus: result.resident.residencyStatus,
+          },
+          ...result.to,
+        },
       req,
       statusCode: 200,
     });
@@ -185,7 +224,12 @@ const getInitialHealth = async (req, res) => {
 
 const recordInitialHealth = async (req, res) => {
   try {
-    const result = await residentService.recordInitialHealth(req.params.residentId, req.body);
+    const result = await residentService.recordInitialHealth(
+      req.user,
+      req.params.residentId,
+      req.body,
+      req
+    );
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -203,7 +247,12 @@ const getPreExistingConditions = async (req, res) => {
 
 const updatePreExistingConditions = async (req, res) => {
   try {
-    const result = await residentService.updatePreExistingConditions(req.params.residentId, req.body);
+    const result = await residentService.updatePreExistingConditions(
+      req.user,
+      req.params.residentId,
+      req.body,
+      req
+    );
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -221,7 +270,7 @@ const getDrugAllergies = async (req, res) => {
 
 const updateDrugAllergies = async (req, res) => {
   try {
-    const result = await residentService.updateDrugAllergies(req.params.residentId, req.body);
+    const result = await residentService.updateDrugAllergies(req.params.residentId, req.body, req.user, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);

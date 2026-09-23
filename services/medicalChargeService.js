@@ -1,5 +1,6 @@
 const ServiceError = require('./serviceError');
 const medicalChargeRepo = require('../repositories/medicalChargeRepository');
+const { createAuditLog } = require('../utils/auditLog');
 
 const UPDATABLE_FIELDS = [
   'serviceName',
@@ -24,9 +25,16 @@ const getCharge = async (id) => {
   return charge;
 };
 
-const updateCharge = async (id, body) => {
+const updateCharge = async (id, body, currentUser = null, req = null) => {
   const charge = await medicalChargeRepo.findById(id);
   if (!charge) throw new ServiceError('Không tìm thấy khoản phí', 404);
+
+  const beforeData = {};
+  for (const field of UPDATABLE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(body, field)) {
+      beforeData[field] = charge[field];
+    }
+  }
 
   for (const field of UPDATABLE_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(body, field)) {
@@ -34,6 +42,23 @@ const updateCharge = async (id, body) => {
     }
   }
   await medicalChargeRepo.saveDoc(charge);
+
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'UPDATE_MEDICAL_CHARGE',
+    displayAction: 'Cập nhật chi phí y tế',
+    module: 'billing',
+    businessModule: 'billing',
+    targetEntityType: 'MedicalCharge',
+    targetEntityId: id,
+    targetName: charge.serviceName || `Chi phí #${id}`,
+    description: `Cập nhật chi phí y tế ${charge.serviceName || id}`,
+    beforeData,
+    afterData: body,
+    req,
+  });
+
   return charge;
 };
 

@@ -6,6 +6,7 @@ const medicationRepo = require('../repositories/medicationRepository');
 const { getResidentScope, isInScope } = require('./residentScopeHelper');
 const { generateSchedulesForItem } = require('./scheduleGeneratorService');
 const notificationService = require('./notificationService');
+const { createAuditLog } = require('../utils/auditLog');
 
 const residentRepo = require('../repositories/residentRepository');
 const roomRepo = require('../repositories/roomRepository');
@@ -230,7 +231,7 @@ const getCurrentMedications = async ({ query, user }) => {
 
 // ── setMedicationSchedule ────────────────────────────────────────────────────
 
-const setMedicationSchedule = async ({ body, user }) => {
+const setMedicationSchedule = async ({ body, user, req }) => {
   const { prescriptionId, items } = body;
 
   if (!prescriptionId || !isValidObjectId(prescriptionId)) {
@@ -328,6 +329,20 @@ const setMedicationSchedule = async ({ body, user }) => {
   }
 
   const populated = await prescriptionRepo.findByIdListPopulated(prescription._id);
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'SET_MEDICATION_SCHEDULE',
+    displayAction: 'Đặt lịch thuốc',
+    module: 'medication',
+    businessModule: 'medication',
+    targetEntityType: 'MedicationSchedule',
+    targetEntityId: String(prescription._id),
+    description: `Đặt lịch thuốc cho đơn thuốc (${rescheduledItems.length} loại thuốc, tạo ${schedulesCreated} khung giờ)`,
+    afterData: { prescriptionId: String(prescription._id), rescheduledItems: rescheduledItems.map((i) => i.medicationName), schedulesCreated },
+    req,
+  });
 
   return {
     noChanges: false,
@@ -437,7 +452,7 @@ const getSchedules = async ({ query, user }) => {
 
 // ── markTaken ────────────────────────────────────────────────────────────────
 
-const markTaken = async ({ id, body, user }) => {
+const markTaken = async ({ id, body, user, req }) => {
   if (!isValidObjectId(id)) throw new ServiceError('ID lịch không hợp lệ', 400);
 
   const { actualTimeTaken, notes } = body;
@@ -482,13 +497,29 @@ const markTaken = async ({ id, body, user }) => {
 
   await maybeCompletePrescriptionItem(prescription, schedule.prescriptionItemId, user._id);
 
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'MARK_MEDICATION_TAKEN',
+    displayAction: 'Đánh dấu đã dùng thuốc',
+    module: 'medication',
+    businessModule: 'medication',
+    targetEntityType: 'MedicationSchedule',
+    targetEntityId: schedule._id,
+    targetName: schedule.medicationName,
+    description: `Đánh dấu đã dùng thuốc "${schedule.medicationName}" (${schedule.dosage}) - ${schedule.administrationTiming}`,
+    beforeData: { status: 'PENDING' },
+    afterData: { status: schedule.status, actualTimeTaken: schedule.actualTimeTaken, administrationTiming: schedule.administrationTiming },
+    req,
+  });
+
   await schedule.populate('markedBy', 'fullName role');
   return schedule;
 };
 
 // ── markMissed ───────────────────────────────────────────────────────────────
 
-const markMissed = async ({ id, body, user }) => {
+const markMissed = async ({ id, body, user, req }) => {
   if (!isValidObjectId(id)) throw new ServiceError('ID lịch không hợp lệ', 400);
 
   const { reason, notes } = body;
@@ -519,13 +550,29 @@ const markMissed = async ({ id, body, user }) => {
   await notifyDoctorOfSchedule(schedule, prescription, 'bỏ lỡ liều');
   await maybeCompletePrescriptionItem(prescription, schedule.prescriptionItemId, user._id);
 
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'MARK_MEDICATION_MISSED',
+    displayAction: 'Đánh dấu bỏ lỡ thuốc',
+    module: 'medication',
+    businessModule: 'medication',
+    targetEntityType: 'MedicationSchedule',
+    targetEntityId: schedule._id,
+    targetName: schedule.medicationName,
+    description: `Đánh dấu bỏ lỡ thuốc "${schedule.medicationName}" (${schedule.dosage}) - lý do: ${reason}`,
+    beforeData: { status: 'PENDING' },
+    afterData: { status: 'MISSED', missedReason: reason },
+    req,
+  });
+
   await schedule.populate('markedBy', 'fullName role');
   return schedule;
 };
 
 // ── markRefused ──────────────────────────────────────────────────────────────
 
-const markRefused = async ({ id, body, user }) => {
+const markRefused = async ({ id, body, user, req }) => {
   if (!isValidObjectId(id)) throw new ServiceError('ID lịch không hợp lệ', 400);
 
   const { reason, notes } = body;
@@ -554,6 +601,23 @@ const markRefused = async ({ id, body, user }) => {
   const prescription = await prescriptionRepo.findById(schedule.prescriptionId);
   await notifyDoctorOfSchedule(schedule, prescription, 'từ chối dùng thuốc');
   await maybeCompletePrescriptionItem(prescription, schedule.prescriptionItemId, user._id);
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'MARK_MEDICATION_REFUSED',
+    displayAction: 'Đánh dấu từ chối thuốc',
+    module: 'medication',
+    businessModule: 'medication',
+    targetEntityType: 'MedicationSchedule',
+    targetEntityId: schedule._id,
+    targetName: schedule.medicationName,
+    description: `Đánh dấu từ chối thuốc "${schedule.medicationName}" (${schedule.dosage}) - lý do: ${reason}`,
+    beforeData: { status: 'PENDING' },
+    afterData: { status: 'REFUSED', refusedReason: reason },
+    req,
+  });
+
   await schedule.populate('markedBy', 'fullName role');
 
   return schedule;
@@ -561,7 +625,7 @@ const markRefused = async ({ id, body, user }) => {
 
 // ── markHeld ─────────────────────────────────────────────────────────────────
 
-const markHeld = async ({ id, body, user }) => {
+const markHeld = async ({ id, body, user, req }) => {
   if (!isValidObjectId(id)) throw new ServiceError('ID lịch không hợp lệ', 400);
 
   const { reason, notes } = body;
@@ -589,6 +653,23 @@ const markHeld = async ({ id, body, user }) => {
 
   const prescription = await prescriptionRepo.findById(schedule.prescriptionId);
   await notifyDoctorOfSchedule(schedule, prescription, 'giữ lại thuốc');
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'MARK_MEDICATION_HELD',
+    displayAction: 'Giữ lại thuốc',
+    module: 'medication',
+    businessModule: 'medication',
+    targetEntityType: 'MedicationSchedule',
+    targetEntityId: schedule._id,
+    targetName: schedule.medicationName,
+    description: `Giữ lại thuốc "${schedule.medicationName}" (${schedule.dosage}) - lý do: ${reason}`,
+    beforeData: { status: 'PENDING' },
+    afterData: { status: 'HELD', heldReason: reason },
+    req,
+  });
+
   await schedule.populate('markedBy', 'fullName role');
 
   return schedule;
@@ -596,7 +677,7 @@ const markHeld = async ({ id, body, user }) => {
 
 // ── markNotAvailable ─────────────────────────────────────────────────────────
 
-const markNotAvailable = async ({ id, body, user }) => {
+const markNotAvailable = async ({ id, body, user, req }) => {
   if (!isValidObjectId(id)) throw new ServiceError('ID lịch không hợp lệ', 400);
 
   const { reason, notes } = body;
@@ -624,6 +705,23 @@ const markNotAvailable = async ({ id, body, user }) => {
 
   const prescription = await prescriptionRepo.findById(schedule.prescriptionId);
   await notifyDoctorOfSchedule(schedule, prescription, 'thuốc không có sẵn');
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'MARK_MEDICATION_NOT_AVAILABLE',
+    displayAction: 'Đánh dấu thuốc không có sẵn',
+    module: 'medication',
+    businessModule: 'medication',
+    targetEntityType: 'MedicationSchedule',
+    targetEntityId: schedule._id,
+    targetName: schedule.medicationName,
+    description: `Thuốc không có sẵn "${schedule.medicationName}" (${schedule.dosage}) - lý do: ${reason}`,
+    beforeData: { status: 'PENDING' },
+    afterData: { status: 'NOT_AVAILABLE', notAvailableReason: reason },
+    req,
+  });
+
   await schedule.populate('markedBy', 'fullName role');
 
   return schedule;
@@ -631,7 +729,7 @@ const markNotAvailable = async ({ id, body, user }) => {
 
 // ── administerPRN ────────────────────────────────────────────────────────────
 
-const administerPRN = async ({ body, user }) => {
+const administerPRN = async ({ body, user, req }) => {
   const { prescriptionId, prescriptionItemId, notes, reason } = body;
 
   if (!prescriptionId || !isValidObjectId(prescriptionId)) {
@@ -693,6 +791,22 @@ const administerPRN = async ({ body, user }) => {
   await autoDispense(item.medicationId, schedule, prescription._id, prescription.residentId, user._id, item.dosage, 'PRN administration');
 
   await notifyDoctorOfSchedule(schedule, prescription, 'dùng thuốc PRN');
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'ADMINISTER_PRN',
+    displayAction: 'Cho dùng thuốc PRN',
+    module: 'medication',
+    businessModule: 'medication',
+    targetEntityType: 'MedicationSchedule',
+    targetEntityId: schedule._id,
+    targetName: schedule.medicationName,
+    description: `Cho dùng thuốc PRN "${schedule.medicationName}" (${schedule.dosage})`,
+    afterData: { medicationName: schedule.medicationName, dosage: schedule.dosage, prnReason: schedule.prnReason },
+    req,
+  });
+
   await schedule.populate('markedBy', 'fullName role');
 
   return schedule;

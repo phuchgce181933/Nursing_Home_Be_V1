@@ -19,14 +19,6 @@ const recordVitals = async (req, res) => {
     const body = {
       ...req.body,
       physicalExamination: parseJsonField(req.body.physicalExamination),
-      laboratoryTestResults: parseJsonField(req.body.laboratoryTestResults),
-      urinalysisResults: parseJsonField(req.body.urinalysisResults),
-      ecgResults: parseJsonField(req.body.ecgResults),
-      imagingResults: parseJsonField(req.body.imagingResults),
-      cognitiveFunction: parseJsonField(req.body.cognitiveFunction),
-      functionalStatus: parseJsonField(req.body.functionalStatus),
-      fallRisk: parseJsonField(req.body.fallRisk),
-      nutritionalStatus: parseJsonField(req.body.nutritionalStatus),
       selectedServices: parseJsonField(req.body.selectedServices),
     };
 

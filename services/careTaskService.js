@@ -14,6 +14,7 @@ const {
 } = require('../utils/staffAssignment');
 const residentRepo = require('../repositories/residentRepository');
 const careAppointmentRepo = require('../repositories/careAppointmentRepository');
+const { createAuditLog } = require('../utils/auditLog');
 
 const {
   parseWorkDate,
@@ -225,7 +226,7 @@ const getAssignmentContext = async (workDateInput) => {
   };
 };
 
-const assignCareTask = async (body, actorUserId) => {
+const assignCareTask = async (body, actorUserId, req = null) => {
   const {
     staffProfileId: staffProfileIdInput,
     userId,
@@ -407,6 +408,29 @@ const assignCareTask = async (body, actorUserId) => {
   triggerReadinessSyncForWorkDate(workDateStr);
 
   const task = await careTaskRepo.findById(created._id);
+
+  await createAuditLog({
+    actorUserId: actorUserId,
+    actorRole: req?.user?.role || actorUserId,
+    action: 'CREATE_CARE_TASK',
+    displayAction: 'Phân công nhiệm vụ chăm sóc',
+    module: 'careTask',
+    businessModule: 'careTask',
+    targetEntityType: 'CareTask',
+    targetEntityId: task._id,
+    targetName: task.taskType,
+    description: `Phân công nhiệm vụ chăm sóc cho cư dân vào lúc ${scheduledTimeTrimmed}`,
+    afterData: {
+      taskType: task.taskType,
+      careLevel: task.careLevel,
+      workDate: task.workDate,
+      scheduledTime: task.scheduledTime,
+      staffProfileId: task.staffProfileId,
+      residentId: task.residentId,
+    },
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.CARE_TASK_ASSIGNED), task };
 };
 
@@ -485,7 +509,7 @@ const getCareTask = async (id) => {
 
 const ASSIGNEE_ONLY_STATUSES = ['in_progress', 'completed'];
 
-const updateCareTaskStatus = async (id, status, notes, actorUser) => {
+const updateCareTaskStatus = async (id, status, notes, actorUser, req = null) => {
   const task = await careTaskRepo.findById(id);
   if (!task) throw apiErr(CODES.CARE_TASK_NOT_FOUND, { statusCode: 404 });
 
@@ -513,6 +537,23 @@ const updateCareTaskStatus = async (id, status, notes, actorUser) => {
 
   const updated = await careTaskRepo.updateById(id, update);
   triggerReadinessSyncForWorkDate(task.workDate);
+
+  await createAuditLog({
+    actorUserId: actorUser?._id || actorUser,
+    actorRole: actorUser?.role,
+    action: 'UPDATE_CARE_TASK_STATUS',
+    displayAction: 'Cập nhật trạng thái nhiệm vụ',
+    module: 'careTask',
+    businessModule: 'careTask',
+    targetEntityType: 'CareTask',
+    targetEntityId: id,
+    targetName: task.taskType,
+    description: `Cập nhật trạng thái nhiệm vụ chăm sóc từ ${task.status} sang ${status}`,
+    beforeData: { status: task.status, notes: task.notes },
+    afterData: { status: updated.status, notes: updated.notes },
+    req,
+  });
+
   return updated;
 };
 
@@ -522,12 +563,35 @@ const getCareTasksByShift = async (shiftId) => {
   return { data: tasks, total: tasks.length };
 };
 
-const deleteCareTask = async (id) => {
+const deleteCareTask = async (id, currentUser = null, req = null) => {
   const task = await careTaskRepo.findById(id);
   if (!task) throw apiErr(CODES.CARE_TASK_NOT_FOUND, { statusCode: 404 });
   if (task.status !== 'pending')
     throw apiErr(CODES.CARE_TASK_DELETE_PENDING_ONLY, { statusCode: 400 });
+
   await careTaskRepo.deleteById(id);
+
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'DELETE_CARE_TASK',
+    displayAction: 'Xóa nhiệm vụ chăm sóc',
+    module: 'careTask',
+    businessModule: 'careTask',
+    targetEntityType: 'CareTask',
+    targetEntityId: id,
+    targetName: task.taskType,
+    description: `Xóa nhiệm vụ chăm sóc ${task.taskType}`,
+    beforeData: {
+      taskType: task.taskType,
+      careLevel: task.careLevel,
+      workDate: task.workDate,
+      scheduledTime: task.scheduledTime,
+      status: task.status,
+    },
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.CARE_TASK_DELETED), deleted: true };
 };
 

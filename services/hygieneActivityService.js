@@ -4,6 +4,7 @@ const hygieneActivityRepo = require('../repositories/hygieneActivityRecordReposi
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const residentRepo = require('../repositories/residentRepository');
 const assignedResidentService = require('./assignedResidentService');
+const { createAuditLog } = require('../utils/auditLog');
 const {
   HYGIENE_CATEGORIES,
   HYGIENE_ACTIVITY_TYPES,
@@ -211,7 +212,7 @@ const listRecordsForAdmin = async (query) => {
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 };
 
-const createRecord = async (userId, body) => {
+const createRecord = async (userId, body, req = null) => {
   validatePayload(body, false);
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
@@ -244,7 +245,23 @@ const createRecord = async (userId, body) => {
     recordedAt: new Date(),
   });
 
-  return hygieneActivityRepo.findById(record._id);
+  const saved = await hygieneActivityRepo.findById(record._id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'CREATE',
+    displayAction: 'Tạo bản ghi vệ sinh cá nhân',
+    module: 'hygieneActivity',
+    targetEntityType: 'HygieneActivityRecord',
+    targetEntityId: saved._id,
+    targetName: `Vệ sinh ${body.activityType} - ${workDate}`,
+    description: `Tạo bản ghi vệ sinh cá nhân cho cư dân ${body.residentId}, loại: ${body.activityType}`,
+    afterData: saved,
+    req,
+  });
+
+  return saved;
 };
 
 const assertAuthor = (record, profile) => {
@@ -261,7 +278,7 @@ const getRecord = async (userId, id) => {
   return record;
 };
 
-const updateRecord = async (userId, id, body) => {
+const updateRecord = async (userId, id, body, req = null) => {
   const record = await hygieneActivityRepo.findById(id);
   if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
@@ -278,10 +295,28 @@ const updateRecord = async (userId, id, body) => {
   if (body.completionStatus !== undefined) update.completionStatus = body.completionStatus;
   if (body.notes !== undefined) update.notes = body.notes?.trim() || undefined;
 
-  return hygieneActivityRepo.updateById(id, update);
+  const beforeData = record.toObject ? record.toObject() : record;
+  const updated = await hygieneActivityRepo.updateById(id, update);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật bản ghi vệ sinh cá nhân',
+    module: 'hygieneActivity',
+    targetEntityType: 'HygieneActivityRecord',
+    targetEntityId: id,
+    targetName: `Vệ sinh ${record.activityType} - ${workDateToVNString(record.workDate)}`,
+    description: `Cập nhật bản ghi vệ sinh cá nhân ID ${id}`,
+    beforeData,
+    afterData: updated,
+    req,
+  });
+
+  return updated;
 };
 
-const deleteRecord = async (userId, id) => {
+const deleteRecord = async (userId, id, req = null) => {
   const record = await hygieneActivityRepo.findById(id);
   if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
@@ -292,7 +327,24 @@ const deleteRecord = async (userId, id) => {
     workDateToVNString(record.workDate),
     CODES.HYGIENE_SHIFT_WINDOW_CLOSED
   );
+
+  const beforeData = record.toObject ? record.toObject() : record;
   await hygieneActivityRepo.deleteById(id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'DELETE',
+    displayAction: 'Xóa bản ghi vệ sinh cá nhân',
+    module: 'hygieneActivity',
+    targetEntityType: 'HygieneActivityRecord',
+    targetEntityId: id,
+    targetName: `Vệ sinh ${record.activityType} - ${workDateToVNString(record.workDate)}`,
+    description: `Xóa bản ghi vệ sinh cá nhân ID ${id}`,
+    beforeData,
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.HYGIENE_RECORD_DELETED), deleted: true, id };
 };
 

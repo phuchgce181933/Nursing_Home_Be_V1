@@ -4,7 +4,7 @@ const ServiceError = require('../services/serviceError');
 
 const createInvoice = async (req, res, next) => {
   try {
-    const invoice = await paymentService.createInvoice(req.user, req.params.residentId, req.body);
+    const invoice = await paymentService.createInvoice(req.user, req.params.residentId, req.body, req);
     return res.status(201).json({ success: true, data: invoice });
   } catch (error) {
     return next(error);

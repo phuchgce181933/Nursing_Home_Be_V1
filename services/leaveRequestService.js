@@ -6,6 +6,7 @@ const careTaskRepo = require('../repositories/careTaskRepository');
 const residentRepo = require('../repositories/residentRepository');
 const { LEAVE_REQUEST_TYPES, LEAVE_REQUEST_STATUSES } = require('../models/enums');
 const { residentCoversStaffArea } = require('../utils/staffAssignment');
+const { createAuditLog } = require('../utils/auditLog');
 const {
   formatShiftToCover,
   getShiftsToCoverOnLeave,
@@ -31,7 +32,9 @@ const calcDays = (start, end) => {
 
 // ── STT 11 – submit leave request ────────────────────────────────────────────
 
-const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reason }) => {
+const submitLeaveRequest = async (currentUser, body, req) => {
+  const { type, startDate, endDate, reason } = body;
+
   if (!type || !startDate || !endDate || !reason) {
     throw apiErr(CODES.FIELD_REQUIRED, {
       statusCode: 400,
@@ -99,6 +102,20 @@ const submitLeaveRequest = async (currentUser, { type, startDate, endDate, reaso
     reason: reason.trim(),
     daysRequested,
     status: 'pending',
+  });
+
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'SUBMIT_LEAVE_REQUEST',
+    displayAction: 'Gửi đơn xin nghỉ phép',
+    module: 'leaveRequest',
+    businessModule: 'leaveRequest',
+    targetEntityType: 'LeaveRequest',
+    targetEntityId: request._id,
+    description: `Gửi đơn xin nghỉ phép loại "${type}" từ ngày ${start.toISOString().slice(0,10)} đến ${end.toISOString().slice(0,10)}`,
+    afterData: { type, startDate: start, endDate: end, daysRequested, status: 'pending' },
+    req,
   });
 
   return {
@@ -270,8 +287,10 @@ const getReplacementCandidates = async (currentUser, id) => {
 const approveLeaveRequest = async (
   currentUser,
   id,
-  { reviewNote, replacementStaffProfileId } = {}
+  body,
+  req
 ) => {
+  const { reviewNote, replacementStaffProfileId } = body || {};
   await autoRejectExpiredPending();
 
   const request = await leaveRequestRepo.findById(id);
@@ -367,6 +386,21 @@ const approveLeaveRequest = async (
 
   const finalRequest = await leaveRequestRepo.findById(id);
 
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'APPROVE_LEAVE_REQUEST',
+    displayAction: 'Phê duyệt đơn nghỉ phép',
+    module: 'leaveRequest',
+    businessModule: 'leaveRequest',
+    targetEntityType: 'LeaveRequest',
+    targetEntityId: finalRequest._id,
+    description: `Phê duyệt đơn nghỉ phép "${finalRequest.type}" của nhân viên`,
+    beforeData: { status: 'pending' },
+    afterData: { status: 'approved', reviewNote: reviewNote?.trim() || null, replacementStaffProfileId },
+    req,
+  });
+
   return {
     ...apiSuccess(SUCCESS.LEAVE_APPROVED),
     request: finalRequest,
@@ -381,7 +415,8 @@ const approveLeaveRequest = async (
 
 // ── STT 12 – reject leave request ────────────────────────────────────────────
 
-const rejectLeaveRequest = async (currentUser, id, { reviewNote } = {}) => {
+const rejectLeaveRequest = async (currentUser, id, body, req) => {
+  const { reviewNote } = body || {};
   const request = await leaveRequestRepo.findById(id);
   if (!request) throw apiErr(CODES.LEAVE_NOT_FOUND, { statusCode: 404 });
   if (request.status !== 'pending') throw apiErr(CODES.LEAVE_CANNOT_REJECT, { statusCode: 400 });
@@ -400,12 +435,27 @@ const rejectLeaveRequest = async (currentUser, id, { reviewNote } = {}) => {
     reviewNote: reviewNote.trim(),
   });
 
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'REJECT_LEAVE_REQUEST',
+    displayAction: 'Từ chối đơn nghỉ phép',
+    module: 'leaveRequest',
+    businessModule: 'leaveRequest',
+    targetEntityType: 'LeaveRequest',
+    targetEntityId: updated._id,
+    description: `Từ chối đơn nghỉ phép`,
+    beforeData: { status: 'pending' },
+    afterData: { status: 'rejected', reviewNote: reviewNote.trim() },
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.LEAVE_REJECTED), request: updated };
 };
 
 // ── cancel own leave request ──────────────────────────────────────────────────
 
-const cancelLeaveRequest = async (currentUser, id) => {
+const cancelLeaveRequest = async (currentUser, id, req) => {
   const request = await leaveRequestRepo.findById(id);
   if (!request) throw apiErr(CODES.LEAVE_NOT_FOUND, { statusCode: 404 });
   if (request.staffId._id.toString() !== currentUser._id.toString()) {
@@ -414,6 +464,22 @@ const cancelLeaveRequest = async (currentUser, id) => {
   if (request.status !== 'pending') throw apiErr(CODES.LEAVE_CANNOT_CANCEL, { statusCode: 400 });
 
   await leaveRequestRepo.updateById(id, { status: 'cancelled' });
+
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'CANCEL_LEAVE_REQUEST',
+    displayAction: 'Hủy đơn nghỉ phép',
+    module: 'leaveRequest',
+    businessModule: 'leaveRequest',
+    targetEntityType: 'LeaveRequest',
+    targetEntityId: request._id,
+    description: `Hủy đơn nghỉ phép`,
+    beforeData: { status: 'pending' },
+    afterData: { status: 'cancelled' },
+    req,
+  });
+
   return apiSuccess(SUCCESS.LEAVE_CANCELLED);
 };
 

@@ -90,7 +90,6 @@ app.use('/api/residents', require('./routes/residents'));
 app.use('/api/leave-requests', require('./routes/leaveRequests'));
 app.use('/api/care-appointments', require('./routes/careAppointments'));
 app.use('/api/care-notes', require('./routes/careNotes'));
-app.use('/api/resident-visits', require('./routes/staffResidentVisits'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/family', require('./routes/familyIndex'));
 app.use('/api/admin', require('./routes/adminIndex'));

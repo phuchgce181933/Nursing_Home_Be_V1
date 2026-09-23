@@ -21,7 +21,7 @@ const getStaffProfile = async (req, res) => {
 
 const updateStaffProfile = async (req, res) => {
   try {
-    const result = await staffService.updateStaffProfile(req.params.id, req.body, req.user);
+    const result = await staffService.updateStaffProfile(req.params.id, req.body, req.user, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -30,7 +30,7 @@ const updateStaffProfile = async (req, res) => {
 
 const updateStaffRole = async (req, res) => {
   try {
-    const result = await staffService.updateStaffRole(req.params.id, req.body, req.user);
+    const result = await staffService.updateStaffRole(req.params.id, req.body, req.user, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -39,7 +39,7 @@ const updateStaffRole = async (req, res) => {
 
 const banStaff = async (req, res) => {
   try {
-    const result = await staffService.banStaff(req.params.id, req.body, req.user);
+    const result = await staffService.banStaff(req.params.id, req.body, req.user, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -48,7 +48,7 @@ const banStaff = async (req, res) => {
 
 const unbanStaff = async (req, res) => {
   try {
-    const result = await staffService.unbanStaff(req.params.id, req.user);
+    const result = await staffService.unbanStaff(req.params.id, req.user, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -57,7 +57,7 @@ const unbanStaff = async (req, res) => {
 
 const assignAreas = async (req, res) => {
   try {
-    const result = await staffService.assignAreas(req.params.id, req.body);
+    const result = await staffService.assignAreas(req.params.id, req.body, req.user, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -66,7 +66,7 @@ const assignAreas = async (req, res) => {
 
 const assignResidents = async (req, res) => {
   try {
-    const result = await staffService.assignResidents(req.params.id, req.body);
+    const result = await staffService.assignResidents(req.params.id, req.body, req.user, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);

@@ -32,6 +32,10 @@ const activitySchema = new Schema(
     }],
     participantResultNotes: { type: String, trim: true },
     status: { type: String, enum: ACTIVITY_STATUSES, default: 'scheduled', index: true },
+    // seriesId links all occurrences of a multi-day activity together
+    // The first activity in a series gets its own _id as seriesId
+    // Subsequent occurrences reference that same _id
+    seriesId: { type: Types.ObjectId, index: true },
   },
   { timestamps: true }
 );

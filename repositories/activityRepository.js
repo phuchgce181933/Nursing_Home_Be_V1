@@ -20,6 +20,12 @@ const deleteMany = async (filter) => Activity.deleteMany(filter);
 
 const aggregate = async (pipeline) => Activity.aggregate(pipeline);
 
+const findBySeriesId = async (seriesId) =>
+  Activity.find({ seriesId }).sort({ scheduledAt: 1 });
+
+const updateManyBySeries = async (seriesId, update) =>
+  Activity.updateMany({ seriesId }, update, { runValidators: true });
+
 module.exports = {
   create,
   find,
@@ -30,4 +36,6 @@ module.exports = {
   deleteById,
   deleteMany,
   aggregate,
+  findBySeriesId,
+  updateManyBySeries,
 };

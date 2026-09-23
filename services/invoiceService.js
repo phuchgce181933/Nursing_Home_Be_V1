@@ -3,6 +3,7 @@ const ServiceError = require('./serviceError');
 const invoiceRepo = require('../repositories/invoiceRepository');
 const paymentService = require('./paymentService');
 const { runWithOptionalTransaction } = require('../utils/transaction');
+const { createAuditLog } = require('../utils/auditLog');
 
 const Invoice = require('../models/invoice');
 const MedicalCharge = require('../models/medicalCharge');
@@ -19,7 +20,7 @@ const getInvoice = async (id) => {
   return inv;
 };
 
-const createMonthlyInvoice = async ({ residentId, periodStart, periodEnd }) => {
+const createMonthlyInvoice = async ({ residentId, periodStart, periodEnd }, req) => {
   if (!residentId || !periodStart || !periodEnd) {
     throw new ServiceError('residentId, periodStart và periodEnd là bắt buộc', 400);
   }
@@ -50,6 +51,21 @@ const createMonthlyInvoice = async ({ residentId, periodStart, periodEnd }) => {
     });
     await invoice.save(dbOpts);
 
+    await createAuditLog({
+      actorUserId: req?.user?._id,
+      actorRole: req?.user?.role,
+      action: 'CREATE_MONTHLY_INVOICE',
+      displayAction: 'Tạo hóa đơn hàng tháng',
+      module: 'billing',
+      businessModule: 'billing',
+      targetEntityType: 'Invoice',
+      targetEntityId: invoice._id,
+      performedBy: req?.user?.fullName,
+      description: `Tạo hóa đơn tháng cho cư dân ${residentId} (kỳ: ${periodStart} - ${periodEnd})`,
+      afterData: { residentId, periodStart: from, periodEnd: to, itemCount: items.length, totalAmount: items.reduce((s, i) => s + (i.amount || 0), 0) },
+      req,
+    });
+
     if (charges.length) {
       await MedicalCharge.updateMany(
         { _id: { $in: charges.map((c) => c._id) } },
@@ -62,8 +78,26 @@ const createMonthlyInvoice = async ({ residentId, periodStart, periodEnd }) => {
   });
 };
 
-const markPaid = async (id) => {
-  return paymentService.markInvoiceAsPaid(id);
+const markPaid = async (id, req) => {
+  const invoice = await paymentService.markInvoiceAsPaid(id);
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'MARK_INVOICE_PAID',
+    displayAction: 'Đánh dấu hóa đơn đã thanh toán',
+    module: 'billing',
+    businessModule: 'billing',
+    targetEntityType: 'Invoice',
+    targetEntityId: invoice._id,
+    performedBy: req?.user?.fullName,
+    description: `Đánh dấu hóa đơn đã thanh toán`,
+    beforeData: { status: 'ISSUED' },
+    afterData: { status: invoice.status },
+    req,
+  });
+
+  return invoice;
 };
 
 module.exports = { listInvoices, getInvoice, createMonthlyInvoice, markPaid };

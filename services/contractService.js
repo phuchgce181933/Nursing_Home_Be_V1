@@ -1156,22 +1156,55 @@ const softDeleteDraftInvoice = async (admin, invoiceId, body, req) => {
     cancellationReason: reason || 'Admin yêu cầu dừng (xóa mềm)',
   });
 
+  // Lookup resident + contract để hiển thị thông tin đầy đủ trong audit log.
+  const [resident, contract] = await Promise.all([
+    invoice.residentId ? residentRepo.findById(invoice.residentId) : Promise.resolve(null),
+    invoice.contractId ? contractRepo.findById(invoice.contractId) : Promise.resolve(null),
+  ]);
+  const residentName = resident?.fullName || null;
+  const residentCode = resident?.residentCode || null;
+  const contractNumber = contract?.contractNumber || null;
+  const invoiceLabel = invoice.invoiceNumber || `Hóa đơn #${invoiceId}`;
+
   await createAuditLog({
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'SOFT_DELETE_DRAFT_INVOICE',
+    displayAction: 'Dừng hóa đơn nháp',
     module: 'contract',
+    businessModule: 'contract',
     targetEntityType: 'Invoice',
     targetEntityId: invoiceId,
+    targetName: invoiceLabel,
+    description: `${admin.fullName || admin.email || 'Quản trị viên'} đã dừng (xóa mềm) ${invoiceLabel}${residentName ? ` của cư dân ${residentName}` : ''}${contractNumber ? ` (hợp đồng ${contractNumber})` : ''}.${reason ? ` Lý do: ${reason}` : ''}`,
     beforeData: {
       status: invoice.status,
       deletedAt: invoice.deletedAt || null,
+      invoiceNumber: invoice.invoiceNumber || null,
+      type: invoice.type || null,
       totalAmount: Number(invoice.totalAmount || 0),
+      residentId: invoice.residentId || null,
+      residentName,
+      residentCode,
+      contractNumber,
     },
     afterData: {
       status: 'CANCELLED',
       deletedAt,
-      deletedBy: admin._id,
+      deletedBy: admin.fullName || admin.email || String(admin._id),
+      deletedById: admin._id,
+      cancellationReason: reason || 'Admin yêu cầu dừng (xóa mềm)',
+    },
+    metadata: {
+      event: 'soft_delete_draft_invoice',
+      invoiceNumber: invoice.invoiceNumber || null,
+      invoiceType: invoice.type || null,
+      totalAmount: Number(invoice.totalAmount || 0),
+      contractId: invoice.contractId || null,
+      contractNumber,
+      residentId: invoice.residentId || null,
+      residentName,
+      residentCode,
       reason,
     },
     req,

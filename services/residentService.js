@@ -563,7 +563,12 @@ const getResidentFamilyInfo = async (residentId) => {
   };
 };
 
-const addEmergencyContact = async (residentId, body) => {
+const snapshotEmergencyContact = (contact) => {
+  if (!contact) return undefined;
+  return typeof contact.toObject === 'function' ? contact.toObject() : { ...contact };
+};
+
+const addEmergencyContact = async (user, residentId, body, req) => {
   assertResidentId(residentId);
   const contact = validateContactPayload(body, { requireAll: true });
   const existing = await residentRepo.findById(residentId);
@@ -572,10 +577,23 @@ const addEmergencyContact = async (residentId, body) => {
   const resident = await residentRepo.addEmergencyContact(residentId, contact);
   if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   const added = resident.emergencyContacts[resident.emergencyContacts.length - 1];
+  await createAuditLog({
+    actorUserId: user?._id,
+    actorRole: user?.role,
+    action: 'ADD_RESIDENT_EMERGENCY_CONTACT',
+    displayAction: 'Thêm liên hệ khẩn cấp',
+    module: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    targetName: existing.fullName,
+    description: `Thêm liên hệ khẩn cấp ${added.fullName || added.phone || ''} cho cư dân ${existing.fullName}`,
+    afterData: { emergencyContact: snapshotEmergencyContact(added) },
+    req,
+  });
   return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_ADDED), emergencyContact: added, emergencyContacts: resident.emergencyContacts };
 };
 
-const replaceEmergencyContacts = async (residentId, contactsInput) => {
+const replaceEmergencyContacts = async (user, residentId, contactsInput, req) => {
   assertResidentId(residentId);
   if (!Array.isArray(contactsInput)) throw apiErr(CODES.RESIDENT_VALIDATION_FAILED, { statusCode: 400, params: { detail: 'contacts phải là mảng' } });
   const contacts = contactsInput.map((c) => validateContactPayload(c, { requireAll: true }));
@@ -597,10 +615,24 @@ const replaceEmergencyContacts = async (residentId, contactsInput) => {
   assertPrimaryContactNotRemoved(existing.emergencyContacts, normalized);
   const resident = await residentRepo.replaceEmergencyContacts(residentId, normalized);
   if (!resident) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
+  await createAuditLog({
+    actorUserId: user?._id,
+    actorRole: user?.role,
+    action: 'REPLACE_RESIDENT_EMERGENCY_CONTACTS',
+    displayAction: 'Cập nhật danh sách liên hệ khẩn cấp',
+    module: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    targetName: existing.fullName,
+    description: `Cập nhật danh sách liên hệ khẩn cấp của cư dân ${existing.fullName}`,
+    beforeData: { emergencyContacts: existing.emergencyContacts },
+    afterData: { emergencyContacts: resident.emergencyContacts },
+    req,
+  });
   return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_UPDATED), emergencyContacts: resident.emergencyContacts };
 };
 
-const updateEmergencyContact = async (residentId, contactId, body) => {
+const updateEmergencyContact = async (user, residentId, contactId, body, req) => {
   assertResidentId(residentId);
   assertContactId(contactId);
   const patch = validateContactPayload(body, { requireAll: false, partial: true });
@@ -620,10 +652,45 @@ const updateEmergencyContact = async (residentId, contactId, body) => {
   const resident = await residentRepo.updateEmergencyContact(residentId, contactId, patch);
   if (!resident) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
   const updated = resident.emergencyContacts.id(contactId);
+  const isSettingPrimary = body.isPrimary === true && !current.isPrimary;
+  const beforeData = isSettingPrimary
+    ? {
+        emergencyContact: snapshotEmergencyContact(current),
+        isPrimary: false,
+        emergencyContacts: existing.emergencyContacts,
+      }
+    : { emergencyContact: snapshotEmergencyContact(current) };
+  const afterData = isSettingPrimary
+    ? {
+        emergencyContact: snapshotEmergencyContact(updated),
+        isPrimary: true,
+        emergencyContacts: resident.emergencyContacts,
+      }
+    : { emergencyContact: snapshotEmergencyContact(updated) };
+  await createAuditLog({
+    actorUserId: user?._id,
+    actorRole: user?.role,
+    action: isSettingPrimary
+      ? 'SET_PRIMARY_RESIDENT_EMERGENCY_CONTACT'
+      : 'UPDATE_RESIDENT_EMERGENCY_CONTACT',
+    displayAction: isSettingPrimary
+      ? 'Đặt liên hệ khẩn cấp chính'
+      : 'Sửa liên hệ khẩn cấp',
+    module: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    targetName: existing.fullName,
+    description: isSettingPrimary
+      ? `Đặt ${updated.fullName || updated.phone || 'liên hệ'} làm liên hệ khẩn cấp chính của cư dân ${existing.fullName}`
+      : `Sửa thông tin liên hệ khẩn cấp ${updated.fullName || updated.phone || ''} của cư dân ${existing.fullName}`,
+    beforeData,
+    afterData,
+    req,
+  });
   return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_UPDATED), emergencyContact: updated, emergencyContacts: resident.emergencyContacts };
 };
 
-const removeEmergencyContact = async (residentId, contactId) => {
+const removeEmergencyContact = async (user, residentId, contactId, req) => {
   assertResidentId(residentId);
   assertContactId(contactId);
   const existing = await residentRepo.findById(residentId);
@@ -632,6 +699,19 @@ const removeEmergencyContact = async (residentId, contactId) => {
   if (!contact) throw apiErr(CODES.RESIDENT_CONTACT_NOT_FOUND, { statusCode: 404 });
   if (contact.isPrimary) throw apiErr(CODES.RESIDENT_EMERGENCY_CONTACT_CANNOT_DELETE_PRIMARY, { statusCode: 400 });
   const resident = await residentRepo.removeEmergencyContact(residentId, contactId);
+  await createAuditLog({
+    actorUserId: user?._id,
+    actorRole: user?.role,
+    action: 'REMOVE_RESIDENT_EMERGENCY_CONTACT',
+    displayAction: 'Xóa liên hệ khẩn cấp',
+    module: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    targetName: existing.fullName,
+    description: `Xóa liên hệ khẩn cấp ${contact.fullName || contact.phone || ''} khỏi cư dân ${existing.fullName}`,
+    beforeData: { emergencyContact: snapshotEmergencyContact(contact) },
+    req,
+  });
   return { ...apiSuccess(SUCCESS.RESIDENT_EMERGENCY_CONTACT_DELETED), emergencyContacts: resident.emergencyContacts };
 };
 
@@ -780,7 +860,7 @@ const getTransferTargets = async (residentId, { floorId }) => {
   };
 };
 
-const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId }) => {
+const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId }, currentUser = null, req = null) => {
   assertResidentId(residentId);
   assertObjectId(targetRoomId, 'targetRoomId');
   assertObjectId(targetBedId, 'targetBedId');
@@ -833,6 +913,28 @@ const transferResidentToRoom = async (residentId, { targetRoomId, targetBedId })
   const staffAreasSynced = await syncStaffAreasAfterResidentTransfer(residentId, {
     targetRoomId,
     targetFloorId,
+  });
+
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'TRANSFER_RESIDENT_ROOM',
+    displayAction: 'Chuyển phòng cư dân',
+    module: 'resident',
+    businessModule: 'resident',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    targetName: resident.fullName,
+    description: `Chuyển cư dân ${resident.fullName} sang phòng/giường mới`,
+    beforeData: {
+      roomId: resident.roomId,
+      bedId: resident.bedId,
+    },
+    afterData: {
+      roomId: updatedResident.roomId,
+      bedId: updatedResident.bedId,
+    },
+    req,
   });
 
   return {
@@ -894,6 +996,7 @@ const adminReleaseResident = async (admin, residentId, req) => {
     module: 'resident',
     targetEntityType: 'Resident',
     targetEntityId: residentId,
+    targetName: resident.fullName,
     beforeData: {
       roomId: resident.roomId,
       bedId: resident.bedId,
@@ -1083,7 +1186,7 @@ const getInitialHealth = async (residentIdOrCode) => {
   return { resident: formatResident(resident), initialHealth: mapInitialHealth(resident) };
 };
 
-const recordInitialHealth = async (residentIdOrCode, body) => {
+const recordInitialHealth = async (user, residentIdOrCode, body, req) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const description = parseInitialHealthConditionFromBody(body);
   if (!description) {
@@ -1115,6 +1218,31 @@ const recordInitialHealth = async (residentIdOrCode, body) => {
   const updated = await residentRepo.updateInitialHealth(residentId, update);
   if (!updated) throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500 });
 
+  const isUpdate = hasInitialHealthRecord(existing);
+  await createAuditLog({
+    actorUserId: user?._id,
+    actorRole: user?.role,
+    action: isUpdate ? 'UPDATE_INITIAL_HEALTH' : 'RECORD_INITIAL_HEALTH',
+    displayAction: isUpdate ? 'Cập nhật sức khỏe ban đầu' : 'Ghi nhận sức khỏe ban đầu',
+    module: 'health',
+    businessModule: 'health',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    targetName: existing.fullName,
+    description: isUpdate
+      ? `Cập nhật thông tin sức khỏe ban đầu của cư dân ${existing.fullName}`
+      : `Ghi nhận thông tin sức khỏe ban đầu cho cư dân ${existing.fullName}`,
+    beforeData: {
+      bloodType: existing.bloodType,
+      initialHealthCondition: existing.initialHealthCondition || '',
+    },
+    afterData: {
+      bloodType: updated.bloodType,
+      initialHealthCondition: updated.initialHealthCondition || '',
+    },
+    req,
+  });
+
   return {
     ...apiSuccess(SUCCESS.RESIDENT_HEALTH_SAVED),
     resident: formatResident(updated),
@@ -1132,7 +1260,7 @@ const getPreExistingConditions = async (residentIdOrCode) => {
   };
 };
 
-const updatePreExistingConditions = async (residentIdOrCode, body) => {
+const updatePreExistingConditions = async (user, residentIdOrCode, body, req) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const { chronicConditions: chronic, medicalHistory: history } = parsePreExistingBody(body);
   const update = {};
@@ -1141,8 +1269,35 @@ const updatePreExistingConditions = async (residentIdOrCode, body) => {
   if (Object.keys(update).length === 0) {
     throw apiErr(CODES.RESIDENT_MEDICAL_HISTORY_REQUIRED, { statusCode: 400 });
   }
+  const existing = await residentRepo.findById(residentId);
+  if (!existing) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   const updated = await residentRepo.updatePreExistingConditions(residentId, update);
   if (!updated) throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500 });
+
+  const isUpdate = hasPreExistingRecord(existing);
+  await createAuditLog({
+    actorUserId: user?._id,
+    actorRole: user?.role,
+    action: isUpdate ? 'UPDATE_PRE_EXISTING_CONDITIONS' : 'RECORD_PRE_EXISTING_CONDITIONS',
+    displayAction: isUpdate ? 'Cập nhật bệnh lý nền và tiền sử' : 'Ghi nhận bệnh lý nền và tiền sử',
+    module: 'health',
+    businessModule: 'health',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    targetName: existing.fullName,
+    description: isUpdate
+      ? `Cập nhật bệnh lý nền và tiền sử của cư dân ${existing.fullName}`
+      : `Ghi nhận bệnh lý nền và tiền sử cho cư dân ${existing.fullName}`,
+    beforeData: {
+      chronicConditions: existing.chronicConditions || [],
+      medicalHistory: existing.medicalHistory || [],
+    },
+    afterData: {
+      chronicConditions: updated.chronicConditions || [],
+      medicalHistory: updated.medicalHistory || [],
+    },
+    req,
+  });
   return {
     ...apiSuccess(SUCCESS.RESIDENT_MEDICAL_HISTORY_SAVED),
     resident: formatResident(updated),
@@ -1160,15 +1315,37 @@ const getDrugAllergies = async (residentIdOrCode) => {
   };
 };
 
-const updateDrugAllergies = async (residentIdOrCode, body) => {
+const updateDrugAllergies = async (residentIdOrCode, body, currentUser = null, req = null) => {
   const residentId = await resolveResidentId(residentIdOrCode);
   const parsed = parseDrugAllergiesBody(body);
   if (parsed === undefined) {
     throw apiErr(CODES.RESIDENT_DRUG_ALLERGIES_REQUIRED, { statusCode: 400 });
   }
   const bounded = assertStringArrayBounds(parsed, 'drugAllergies');
+
+  // Capture before data for audit log
+  const existing = await residentRepo.findDrugAllergiesByResidentId(residentId);
+  const beforeData = { drugAllergies: existing?.drugAllergies || [] };
+
   const updated = await residentRepo.updateDrugAllergies(residentId, { drugAllergies: bounded });
   if (!updated) throw apiErr(CODES.INTERNAL_ERROR, { statusCode: 500 });
+
+  await createAuditLog({
+    actorUserId: currentUser?._id,
+    actorRole: currentUser?.role,
+    action: 'UPDATE_DRUG_ALLERGIES',
+    displayAction: 'Cập nhật dị ứng thuốc',
+    module: 'health',
+    businessModule: 'health',
+    targetEntityType: 'Resident',
+    targetEntityId: residentId,
+    targetName: updated.fullName,
+    description: `Cập nhật danh sách dị ứng thuốc của cư dân ${updated.fullName}`,
+    beforeData,
+    afterData: { drugAllergies: updated.drugAllergies || [] },
+    req,
+  });
+
   return {
     ...apiSuccess(SUCCESS.RESIDENT_ALLERGIES_SAVED),
     resident: formatResident(updated),
@@ -1229,6 +1406,7 @@ const adminCreateResident = async (user, body, req) => {
     module: 'resident',
     targetEntityType: 'Resident',
     targetEntityId: resident._id,
+    targetName: resident.fullName,
     afterData: { residentCode: resident.residentCode, fullName: resident.fullName },
     req,
   });
@@ -1317,6 +1495,18 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
   const before = await residentRepo.findByIdForAdmin(residentId);
   if (!before) throw apiErr(CODES.RESIDENT_NOT_FOUND, { statusCode: 404 });
   const updated = await residentRepo.updateById(residentId, update);
+
+  // Build before/after data for audit log (exclude bloodType)
+  const trackedFields = ['fullName', 'dateOfBirth', 'gender', 'citizenId', 'insuranceNumber', 'personalAddress', 'avatarUrl', 'allergies', 'chronicConditions'];
+  const beforeData = {};
+  const afterData = {};
+  trackedFields.forEach(field => {
+    if (update[field] !== undefined) {
+      beforeData[field] = before[field];
+      afterData[field] = updated[field];
+    }
+  });
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
@@ -1324,8 +1514,9 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
     module: 'resident',
     targetEntityType: 'Resident',
     targetEntityId: residentId,
-    beforeData: { fullName: before.fullName, citizenId: before.citizenId },
-    afterData: { fullName: updated.fullName, citizenId: updated.citizenId },
+    targetName: before.fullName,
+    beforeData,
+    afterData,
     req,
   });
   return { ...apiSuccess(SUCCESS.RESIDENT_UPDATED), resident: formatResident(updated) };
@@ -1352,6 +1543,7 @@ const adminUpdateFamilyInfo = async (user, residentId, body, req) => {
     module: 'resident',
     targetEntityType: 'Resident',
     targetEntityId: residentId,
+    targetName: before.fullName,
     beforeData: { familyPortalAccountIds: before.familyPortalAccountIds },
     afterData: { familyPortalAccountIds: updated.familyPortalAccountIds },
     req,
@@ -1394,6 +1586,7 @@ const adminUploadAvatar = async (user, residentId, file, req) => {
     module: 'resident',
     targetEntityType: 'Resident',
     targetEntityId: residentId,
+    targetName: before.fullName,
     beforeData: { avatarUrl: before.avatarUrl },
     afterData: { avatarUrl: updated.avatarUrl },
     req,

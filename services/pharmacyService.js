@@ -121,8 +121,8 @@ const createMedication = async (user, body, req) => {
 	if (!/^[A-Za-z]/.test(name)) throw new ServiceError('name phải bắt đầu bằng một chữ cái', 400);
 
 	const minStockLevel = Number(body.minStockLevel);
-	if (body.minStockLevel == null || Number.isNaN(minStockLevel) || minStockLevel <= 1) {
-		throw new ServiceError('minStockLevel phải lớn hơn 1', 400);
+	if (body.minStockLevel == null || Number.isNaN(minStockLevel) || minStockLevel < 0) {
+		throw new ServiceError('minStockLevel phải là số không âm', 400);
 	}
 
 	const medicationCode = body.medicationCode ? String(body.medicationCode).trim() : await generateMedicationCode();
@@ -151,7 +151,18 @@ const createMedication = async (user, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'Medication',
 		targetEntityId: medication._id,
-		afterData: { medicationCode: medication.medicationCode, name: medication.name },
+		targetName: medication.name,
+		afterData: {
+			medicationCode: medication.medicationCode,
+			name: medication.name,
+			form: medication.form,
+			strength: medication.strength,
+			unit: medication.unit,
+			manufacturer: medication.manufacturer,
+			minStockLevel: medication.minStockLevel,
+			isActive: medication.isActive,
+			price: medication.price,
+		},
 		req,
 	});
 
@@ -162,8 +173,8 @@ const updateMedication = async (user, medicationId, body, req) => {
 	const medication = await medicationRepo.findById(medicationId);
 	if (!medication) throw new ServiceError('Không tìm thấy thuốc', 404);
 
-	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel <= 1)) {
-		throw new ServiceError('minStockLevel phải lớn hơn 1', 400);
+	if (body.minStockLevel != null && (typeof body.minStockLevel !== 'number' || body.minStockLevel < 0)) {
+		throw new ServiceError('minStockLevel phải là số không âm', 400);
 	}
 
 	const updateData = { updatedBy: user._id };
@@ -186,8 +197,27 @@ const updateMedication = async (user, medicationId, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'Medication',
 		targetEntityId: medication._id,
-		beforeData: { name: medication.name, minStockLevel: medication.minStockLevel, isActive: medication.isActive },
-		afterData: { name: updated.name, minStockLevel: updated.minStockLevel, isActive: updated.isActive },
+		targetName: medication.name,
+		beforeData: {
+			name: medication.name,
+			form: medication.form,
+			strength: medication.strength,
+			unit: medication.unit,
+			manufacturer: medication.manufacturer,
+			minStockLevel: medication.minStockLevel,
+			isActive: medication.isActive,
+			price: medication.price,
+		},
+		afterData: {
+			name: updated.name,
+			form: updated.form,
+			strength: updated.strength,
+			unit: updated.unit,
+			manufacturer: updated.manufacturer,
+			minStockLevel: updated.minStockLevel,
+			isActive: updated.isActive,
+			price: updated.price,
+		},
 		req,
 	});
 
@@ -218,6 +248,7 @@ const updateSellingPrice = async (user, medicationId, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'Medication',
 		targetEntityId: medication._id,
+		targetName: medication.name,
 		beforeData: { price: medication.price },
 		afterData: { price: updated.price },
 		req,
@@ -289,6 +320,7 @@ const addMedicationNote = async (user, medicationId, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'Medication',
 		targetEntityId: medication._id,
+		targetName: medication.name,
 		afterData: { note },
 		req,
 	});
@@ -345,7 +377,16 @@ const createSupplier = async (user, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'Supplier',
 		targetEntityId: supplier._id,
-		afterData: { name: supplier.name },
+		targetName: supplier.name,
+		afterData: {
+			name: supplier.name,
+			contactName: supplier.contactName,
+			phone: supplier.phone,
+			email: supplier.email,
+			address: supplier.address,
+			notes: supplier.notes,
+			isActive: supplier.isActive,
+		},
 		req,
 	});
 
@@ -379,8 +420,25 @@ const updateSupplier = async (user, supplierId, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'Supplier',
 		targetEntityId: supplier._id,
-		beforeData: { name: supplier.name, isActive: supplier.isActive },
-		afterData: { name: updated.name, isActive: updated.isActive },
+		targetName: supplier.name,
+		beforeData: {
+			name: supplier.name,
+			contactName: supplier.contactName,
+			phone: supplier.phone,
+			email: supplier.email,
+			address: supplier.address,
+			notes: supplier.notes,
+			isActive: supplier.isActive,
+		},
+		afterData: {
+			name: updated.name,
+			contactName: updated.contactName,
+			phone: updated.phone,
+			email: updated.email,
+			address: updated.address,
+			notes: updated.notes,
+			isActive: updated.isActive,
+		},
 		req,
 	});
 
@@ -401,6 +459,7 @@ const deleteSupplier = async (user, supplierId, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'Supplier',
 		targetEntityId: supplier._id,
+		targetName: supplier.name,
 		beforeData: { isActive: true },
 		afterData: { isActive: false },
 		req,
@@ -499,7 +558,18 @@ const createStock = async (user, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'MedicationStock',
 		targetEntityId: stock._id,
-		afterData: { medicationId: medication._id, quantity: stock.quantity },
+		targetName: `${medication.name} - lô ${stock.lotNumber || 'N/A'}`,
+		afterData: {
+			medicationName: medication.name,
+			supplierName: supplierId ? (await supplierRepo.findById(supplierId))?.name : undefined,
+			quantity: stock.quantity,
+			unit: stock.unit,
+			lotNumber: stock.lotNumber,
+			expiryDate: stock.expiryDate,
+			receivedDate: stock.receivedDate,
+			costPerUnit: stock.costPerUnit,
+			notes: stock.notes,
+		},
 		req,
 	});
 
@@ -509,6 +579,8 @@ const createStock = async (user, body, req) => {
 const updateStock = async (user, stockId, body, req) => {
 	const stock = await medicationStockRepo.findById(stockId);
 	if (!stock) throw new ServiceError('Không tìm thấy phiếu nhập kho', 404);
+
+	const stockMedication = await medicationRepo.findById(stock.medicationId);
 
 	if (body.quantity != null && (typeof body.quantity !== 'number' || body.quantity < 0)) {
 		throw new ServiceError('quantity phải là số không âm', 400);
@@ -547,6 +619,11 @@ const updateStock = async (user, stockId, body, req) => {
 
 	const updated = await medicationStockRepo.updateById(stockId, updateData);
 
+	const [beforeSupplier, afterSupplier] = await Promise.all([
+		stock.supplierId ? supplierRepo.findById(stock.supplierId) : null,
+		updated.supplierId ? supplierRepo.findById(updated.supplierId) : null,
+	]);
+
 	await createAuditLog({
 		actorUserId: user._id,
 		actorRole: user.role,
@@ -554,8 +631,29 @@ const updateStock = async (user, stockId, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'MedicationStock',
 		targetEntityId: stock._id,
-		beforeData: { quantity: stock.quantity },
-		afterData: { quantity: updated.quantity },
+		targetName: stockMedication ? `${stockMedication.name} - lô ${updated.lotNumber || stock.lotNumber || 'N/A'}` : undefined,
+		beforeData: {
+			medicationName: stockMedication?.name,
+			supplierName: beforeSupplier?.name,
+			quantity: stock.quantity,
+			unit: stock.unit,
+			lotNumber: stock.lotNumber,
+			expiryDate: stock.expiryDate,
+			receivedDate: stock.receivedDate,
+			costPerUnit: stock.costPerUnit,
+			notes: stock.notes,
+		},
+		afterData: {
+			medicationName: stockMedication?.name,
+			supplierName: afterSupplier?.name,
+			quantity: updated.quantity,
+			unit: updated.unit,
+			lotNumber: updated.lotNumber,
+			expiryDate: updated.expiryDate,
+			receivedDate: updated.receivedDate,
+			costPerUnit: updated.costPerUnit,
+			notes: updated.notes,
+		},
 		req,
 	});
 
@@ -648,6 +746,7 @@ const dispenseMedication = async (user, body, req) => {
 		module: 'pharmacy',
 		targetEntityType: 'MedicationDispense',
 		targetEntityId: dispense._id,
+		targetName: medication.name,
 		afterData: { medicationId: medication._id, quantity: dispense.quantity },
 		req,
 	});

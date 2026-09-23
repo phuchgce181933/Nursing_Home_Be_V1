@@ -9,13 +9,13 @@ const getTemplates = (req, res) =>
 
 const createDraft = (req, res) =>
   svc
-    .createDraft(req.body, req.user._id)
+    .createDraft(req.body, req.user._id, req)
     .then((data) => res.status(201).json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
 const updateDraft = (req, res) =>
   svc
-    .updateDraft(req.params.id, req.body, req.user._id)
+    .updateDraft(req.params.id, req.body, req.user._id, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
@@ -42,13 +42,13 @@ const getSchedule = (req, res) =>
 
 const deleteDraft = (req, res) =>
   svc
-    .deleteDraft(req.params.id, req.user._id)
+    .deleteDraft(req.params.id, req.user._id, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
 const publishSchedule = (req, res) =>
   svc
-    .publishSchedule(req.params.id, req.user._id)
+    .publishSchedule(req.params.id, req.user._id, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 

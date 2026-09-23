@@ -1,6 +1,7 @@
 const ServiceError = require('./serviceError');
 const { FamilyWallet } = require('../models');
 const paymentService = require('./paymentService');
+const { createAuditLog } = require('../utils/auditLog');
 
 const getOrCreateWallet = async (userId) => {
   let wallet = await FamilyWallet.findOne({ userId });
@@ -77,6 +78,23 @@ const generateTopupPaymentUrl = async (user, amount, req) => {
     await wallet.save();
   }
 
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role || 'family',
+    action: 'CREATE_WALLET_TOPUP',
+    displayAction: 'Tạo giao dịch nạp ví',
+    module: 'wallet',
+    businessModule: 'wallet',
+    targetEntityType: 'WalletTransaction',
+    targetEntityId: topupId,
+    targetName: `Nạp ${amount.toLocaleString('vi-VN')}₫ vào ví`,
+    description: `${user.fullName || user.email || 'Người dùng'} đã tạo yêu cầu nạp ${amount.toLocaleString('vi-VN')}₫ vào ví`,
+    beforeData: { balance: wallet.balance - 0 },
+    afterData: { pendingTopupAmount: amount, orderCode: payosData.orderCode || null },
+    metadata: { amount, orderCode: payosData.orderCode || null, status: 'pending' },
+    req,
+  });
+
   return {
     checkoutUrl: payosData.checkoutUrl,
     qrCode: payosData.qrCode || null,
@@ -94,7 +112,7 @@ const generateTopupPaymentUrl = async (user, amount, req) => {
   };
 };
 
-const confirmTopup = async (userId, topupId, paymentId) => {
+const confirmTopup = async (userId, topupId, paymentId, actor = null, req = null) => {
   const wallet = await getOrCreateWallet(userId);
   const transaction = wallet.transactions.find((tx) => tx.paymentId === topupId && tx.type === 'topup');
 
@@ -106,6 +124,7 @@ const confirmTopup = async (userId, topupId, paymentId) => {
     return wallet;
   }
 
+  const previousBalance = wallet.balance;
   transaction.status = 'completed';
   transaction.paymentId = paymentId || transaction.paymentId || topupId;
 
@@ -113,6 +132,26 @@ const confirmTopup = async (userId, topupId, paymentId) => {
   wallet.totalTopup += transaction.amount;
 
   await wallet.save();
+
+  await createAuditLog({
+    actorUserId: actor?._id || userId,
+    actorRole: actor?.role || 'family',
+    action: 'CONFIRM_WALLET_TOPUP',
+    displayAction: 'Xác nhận nạp tiền vào ví',
+    module: 'wallet',
+    businessModule: 'wallet',
+    targetEntityType: 'WalletTransaction',
+    targetEntityId: topupId,
+    targetName: `Nạp ${transaction.amount.toLocaleString('vi-VN')}₫ vào ví`,
+    description: actor
+      ? `${actor.fullName || actor.email || 'Hệ thống'} đã xác nhận nạp ${transaction.amount.toLocaleString('vi-VN')}₫ vào ví`
+      : `Hệ thống đã xác nhận nạp ${transaction.amount.toLocaleString('vi-VN')}₫ vào ví`,
+    beforeData: { balance: previousBalance, status: 'pending' },
+    afterData: { balance: wallet.balance, status: 'completed' },
+    metadata: { amount: transaction.amount, paymentId, source: actor ? 'admin' : 'system-webhook' },
+    req,
+  });
+
   return wallet;
 };
 
@@ -156,10 +195,26 @@ const verifyAndConfirmTopup = async (userId, topupId) => {
   const payosStatus = String(paymentData.status || 'PENDING').toUpperCase();
 
   if (payosStatus === 'PAID') {
+    const previousBalance = wallet.balance;
     tx.status = 'completed';
     wallet.balance += tx.amount;
     wallet.totalTopup += tx.amount;
     await wallet.save();
+    await createAuditLog({
+      actorUserId: null,
+      actorRole: 'system',
+      action: 'VERIFY_WALLET_TOPUP',
+      displayAction: 'Xác minh & xác nhận nạp tiền',
+      module: 'wallet',
+      businessModule: 'wallet',
+      targetEntityType: 'WalletTransaction',
+      targetEntityId: topupId,
+      targetName: `Nạp ${tx.amount.toLocaleString('vi-VN')}₫ vào ví`,
+      description: `Hệ thống đã xác minh với PayOS và xác nhận nạp ${tx.amount.toLocaleString('vi-VN')}₫ vào ví`,
+      beforeData: { balance: previousBalance, status: 'pending' },
+      afterData: { balance: wallet.balance, status: 'completed' },
+      metadata: { amount: tx.amount, orderCode: tx.orderCode, source: 'payos-api-verify' },
+    });
     return {
       status: 'PAID',
       wallet: { balance: wallet.balance, totalTopup: wallet.totalTopup, totalSpent: wallet.totalSpent },
@@ -199,12 +254,30 @@ const confirmPendingTopupByAmount = async (amount, paymentId, userId) => {
 
   if (tx.status === 'completed') return wallet;
 
+  const previousBalance = wallet.balance;
   tx.status = 'completed';
   if (paymentId) tx.paymentId = paymentId;
   wallet.balance += tx.amount;
   wallet.totalTopup += tx.amount;
 
   await wallet.save();
+
+  await createAuditLog({
+    actorUserId: userId || null,
+    actorRole: 'family',
+    action: 'CONFIRM_PENDING_TOPUP',
+    displayAction: 'Xác nhận giao dịch nạp tiền pending',
+    module: 'wallet',
+    businessModule: 'wallet',
+    targetEntityType: 'WalletTransaction',
+    targetEntityId: tx.paymentId,
+    targetName: `Nạp ${tx.amount.toLocaleString('vi-VN')}₫ vào ví`,
+    description: `Hệ thống đã xác nhận giao dịch nạp ${tx.amount.toLocaleString('vi-VN')}₫ (fallback theo số tiền)`,
+    beforeData: { balance: previousBalance, status: 'pending' },
+    afterData: { balance: wallet.balance, status: 'completed' },
+    metadata: { amount: tx.amount, paymentId, source: 'payos-webhook-fallback' },
+  });
+
   return wallet;
 };
 
@@ -227,14 +300,31 @@ const deductFromWallet = async (userId, amount, description, invoiceId) => {
   // Update balance and total spent
   wallet.balance -= amount;
   wallet.totalSpent += amount;
-  
+
   await wallet.save();
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: 'family',
+    action: 'DEDUCT_WALLET',
+    displayAction: 'Trừ tiền ví thanh toán hóa đơn',
+    module: 'wallet',
+    businessModule: 'wallet',
+    targetEntityType: 'WalletTransaction',
+    targetEntityId: invoiceId || 'wallet-deduct',
+    targetName: `Thanh toán ${amount.toLocaleString('vi-VN')}₫`,
+    description: `Trừ ${amount.toLocaleString('vi-VN')}₫ từ ví để thanh toán hóa đơn${invoiceId ? ` ${invoiceId}` : ''}`,
+    beforeData: { balance: wallet.balance + amount },
+    afterData: { balance: wallet.balance, status: 'completed' },
+    metadata: { amount, type: 'payment', invoiceId, description },
+  });
+
   return wallet;
 };
 
 const refundToWallet = async (userId, amount, description, invoiceId) => {
   const wallet = await getOrCreateWallet(userId);
-  
+
   wallet.transactions.push({
     type: 'refund',
     amount,
@@ -244,8 +334,25 @@ const refundToWallet = async (userId, amount, description, invoiceId) => {
   });
 
   wallet.balance += amount;
-  
+
   await wallet.save();
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: 'family',
+    action: 'REFUND_WALLET',
+    displayAction: 'Hoàn tiền vào ví',
+    module: 'wallet',
+    businessModule: 'wallet',
+    targetEntityType: 'WalletTransaction',
+    targetEntityId: invoiceId || 'wallet-refund',
+    targetName: `Hoàn ${amount.toLocaleString('vi-VN')}₫`,
+    description: `Hoàn ${amount.toLocaleString('vi-VN')}₫ vào ví${invoiceId ? ` cho hóa đơn ${invoiceId}` : ''}`,
+    beforeData: { balance: wallet.balance - amount },
+    afterData: { balance: wallet.balance, status: 'completed' },
+    metadata: { amount, type: 'refund', invoiceId, description },
+  });
+
   return wallet;
 };
 

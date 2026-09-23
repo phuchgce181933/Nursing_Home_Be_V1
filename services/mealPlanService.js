@@ -8,6 +8,7 @@ const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = 
 const residentRepo = require('../repositories/residentRepository');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 const { assertNoMealPlanConflicts } = require('../utils/mealPlanValidation');
+const { createAuditLog } = require('../utils/auditLog');
 
 const NON_TX_ERROR_PATTERNS = [
   /retryable writes/i,
@@ -290,7 +291,7 @@ const listResidentsForMealPlan = async (params = {}, actorUser) => {
   return listAssignedAdmittedResidentsForUser(actorUser._id, { search: params.search });
 };
 
-const createDraft = async (body, actorUserId) => {
+const createDraft = async (body, actorUserId, req = null) => {
   const workDate = parseWorkDateStrict(body.workDate);
   if (workDate < todayVN()) {
     throw apiErr(CODES.MEAL_PAST_DATE_NOT_ALLOWED, { statusCode: 400 });
@@ -336,13 +337,30 @@ const createDraft = async (body, actorUserId) => {
     await mealPlanEntryRepo.createMany(entries.map((e) => ({ ...e, mealPlanDayId: day._id })), dbOpts);
   });
   const saved = await mealPlanDayRepo.findById(createdId);
-  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_CREATED), plan: await hydratePlan(saved) };
+  const hydrated = await hydratePlan(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'CREATE',
+    displayAction: 'Tạo nháp kế hoạch bữa ăn',
+    module: 'mealPlan',
+    targetEntityType: 'MealPlanDay',
+    targetEntityId: createdId,
+    targetName: saved.title,
+    description: `Tạo nháp kế hoạch bữa ăn ngày ${workDate}, giai đoạn: ${careStage}, ${entries.length} mục`,
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_CREATED), plan: hydrated };
 };
 
-const updateDraft = async (id, body, actorUserId) => {
+const updateDraft = async (id, body, actorUserId, req = null) => {
   const day = await mealPlanDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') throw apiErr(CODES.MEAL_PLAN_DRAFT_ONLY_EDIT, { statusCode: 400 });
+
+  const beforeData = day.toObject ? day.toObject() : day;
 
   const updatePayload = {};
   if (body.workDate !== undefined) {
@@ -433,7 +451,23 @@ const updateDraft = async (id, body, actorUserId) => {
     }
   });
   const saved = await mealPlanDayRepo.findById(id);
-  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_UPDATED), plan: await hydratePlan(saved) };
+  const hydrated = await hydratePlan(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật nháp kế hoạch bữa ăn',
+    module: 'mealPlan',
+    targetEntityType: 'MealPlanDay',
+    targetEntityId: id,
+    targetName: saved.title,
+    description: `Cập nhật nháp kế hoạch bữa ăn ID ${id}`,
+    beforeData,
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_UPDATED), plan: hydrated };
 };
 
 const listPlans = async (filter = {}, options = {}) => {
@@ -465,12 +499,14 @@ const getPlan = async (id) => {
   return hydratePlan(day);
 };
 
-const deleteDraft = async (id) => {
+const deleteDraft = async (id, req = null) => {
   const day = await mealPlanDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') {
     throw apiErr(CODES.MEAL_PLAN_DRAFT_ONLY_DELETE, { statusCode: 400 });
   }
+
+  const beforeData = day.toObject ? day.toObject() : day;
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
@@ -478,10 +514,23 @@ const deleteDraft = async (id) => {
     await mealPlanDayRepo.deleteById(id, dbOpts);
   });
 
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    action: 'DELETE',
+    displayAction: 'Xóa nháp kế hoạch bữa ăn',
+    module: 'mealPlan',
+    targetEntityType: 'MealPlanDay',
+    targetEntityId: id,
+    targetName: day.title,
+    description: `Xóa nháp kế hoạch bữa ăn ID ${id}`,
+    beforeData,
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_DELETED), deleted: true, id };
 };
 
-const publishPlan = async (id, actorUserId) => {
+const publishPlan = async (id, actorUserId, req = null) => {
   const day = await mealPlanDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   if (day.status === 'published') {
@@ -525,6 +574,8 @@ const publishPlan = async (id, actorUserId) => {
     excludeMealPlanDayId: id,
   });
 
+  const beforeData = day.toObject ? day.toObject() : day;
+
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
     await mealPlanDayRepo.updateById(
@@ -540,9 +591,25 @@ const publishPlan = async (id, actorUserId) => {
   });
 
   const saved = await mealPlanDayRepo.findById(id);
+  const hydrated = await hydratePlan(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'UPDATE',
+    displayAction: 'Xuất bản kế hoạch bữa ăn',
+    module: 'mealPlan',
+    targetEntityType: 'MealPlanDay',
+    targetEntityId: id,
+    targetName: saved.title,
+    description: `Xuất bản kế hoạch bữa ăn ID ${id}, ngày ${workDate}`,
+    beforeData,
+    afterData: hydrated,
+    req,
+  });
+
   return {
     ...apiSuccess(SUCCESS.MEAL_PLAN_PUBLISHED),
-    plan: await hydratePlan(saved),
+    plan: hydrated,
     createdExecutionRows: entries.length,
   };
 };

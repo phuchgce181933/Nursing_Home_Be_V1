@@ -35,6 +35,26 @@ const {
 } = require('../utils/shiftTime');
 const { isAssignableRole } = require('../utils/staffAssignment');
 const { assertNoActiveCareTasksForShift } = require('../utils/careTaskGuards');
+
+const SHIFT_STATUS_LABELS = {
+  draft: 'Bản nháp',
+  published: 'Đã xuất bản',
+  confirmed: 'Đã xác nhận',
+  completed: 'Hoàn thành',
+  cancelled: 'Đã hủy',
+};
+
+const SHIFT_FIELD_LABELS = {
+  assignedStaffId: 'Nhân viên phụ trách',
+  shiftTemplateId: 'Mẫu ca',
+  name: 'Tên ca',
+  workDate: 'Ngày làm việc',
+  startTime: 'Giờ bắt đầu',
+  endTime: 'Giờ kết thúc',
+  status: 'Trạng thái',
+  notes: 'Ghi chú',
+  taskDescription: 'Mô tả công việc',
+};
 const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
 const { createAuditLog } = require('../utils/auditLog');
 const { apiErr, CODES } = require('../utils/apiError');
@@ -127,20 +147,32 @@ const getStaffNameFromShift = (shift) => {
   return staff.userId?.fullName || staff.staffCode || undefined;
 };
 
-const snapshotShiftForAudit = (shift) => {
+const getTemplateNameFromShift = (shift) => {
+  const tpl = shift?.shiftTemplateId;
+  if (!tpl || typeof tpl !== 'object') return undefined;
+  return tpl.name || tpl.shiftCode || undefined;
+};
+
+const snapshotShiftForAudit = (shift, cancelReason) => {
   if (!shift) return null;
   const doc = enrichShift(shift);
-  return {
-    _id: doc._id,
+  const workDateStr = workDateToVNString(doc.workDate) || (doc.workDate ? String(doc.workDate).slice(0, 10) : undefined);
+  const snap = {
     name: doc.name,
-    workDate: doc.workDate,
+    workDate: workDateStr,
     startTime: doc.startTime,
     endTime: doc.endTime,
-    status: doc.status,
-    assignedStaffId: doc.assignedStaffId?._id || doc.assignedStaffId,
+    statusLabel: SHIFT_STATUS_LABELS[doc.status] || doc.status,
     staffName: getStaffNameFromShift(doc),
-    shiftTemplateId: doc.shiftTemplateId?._id || doc.shiftTemplateId,
+    templateName: getTemplateNameFromShift(doc),
+    checkInTime: doc.checkInTime,
+    checkOutTime: doc.checkOutTime,
+    totalHours: doc.totalHours,
   };
+  if (doc.status === 'cancelled' && cancelReason) {
+    snap.cancelReason = cancelReason;
+  }
+  return snap;
 };
 
 const buildShiftTargetName = (shift) => {
@@ -159,6 +191,7 @@ const writeShiftAuditLog = async ({
   shiftAfter,
   description,
   metadata,
+  cancelReason,
   req,
 }) => {
   if (!actorUser) return;
@@ -175,7 +208,7 @@ const writeShiftAuditLog = async ({
     targetName: buildShiftTargetName(shiftAfter || shiftBefore),
     description,
     beforeData: snapshotShiftForAudit(shiftBefore),
-    afterData: snapshotShiftForAudit(shiftAfter),
+    afterData: snapshotShiftForAudit(shiftAfter, cancelReason),
     metadata,
     req,
     performedBy: actorUser.fullName,
@@ -520,7 +553,7 @@ const resolveShiftTemplate = async (shiftTemplateId, { startTime, endTime } = {}
 
 // ── Shift CRUD ────────────────────────────────────────────────────────────────
 
-const createShift = async (body, actorUserId) => {
+const createShift = async (body, actorUserId, actorUser = null, req = null) => {
   const { workDate, assignedStaffId, shiftTemplateId, taskDescription, notes, startTime, endTime } = body;
 
   if (!workDate || !assignedStaffId || !shiftTemplateId) {
@@ -572,10 +605,34 @@ const createShift = async (body, actorUserId) => {
     ],
   });
 
+  if (actorUser) {
+    // Populate staff + template so audit snapshot has readable names
+    const [staffProfile, shiftTemplate] = await Promise.all([
+      staffProfileRepo.findByIdWithUser(resolvedStaffProfileId),
+      shiftTemplateRepo.findById(resolvedTemplateId),
+    ]);
+    const shiftForAudit = {
+      ...shift.toObject(),
+      assignedStaffId: staffProfile || shift.assignedStaffId,
+      shiftTemplateId: shiftTemplate || shift.shiftTemplateId,
+    };
+    const actorName = actorUser.fullName || 'Quản trị viên';
+    await writeShiftAuditLog({
+      actorUser,
+      action: 'CREATE_SHIFT',
+      displayAction: 'Tạo ca làm việc',
+      shiftBefore: null,
+      shiftAfter: shiftForAudit,
+      description: `${actorName} đã tạo ca làm việc ${buildShiftTargetName(shiftForAudit)}`,
+      metadata: { event: 'create' },
+      req,
+    });
+  }
+
   return { shift: enrichShift(shift), conflicts };
 };
 
-const publishShift = async (id, actorUserId) => {
+const publishShift = async (id, actorUserId, actorUser = null, req = null) => {
   const shift = await shiftRepo.findById(id);
   if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
   if (shift.status !== 'draft')
@@ -600,6 +657,20 @@ const publishShift = async (id, actorUserId) => {
     $push: { changeLog: logEntry },
   });
 
+  if (actorUser) {
+    const user = { _id: actorUserId, role: actorUser.role, fullName: actorUser.fullName };
+    await writeShiftAuditLog({
+      actorUser: user,
+      action: 'PUBLISH_SHIFT',
+      displayAction: 'Xuất bản ca làm việc',
+      shiftBefore: shift,
+      shiftAfter: updated,
+      description: `Xuất bản ca ${buildShiftTargetName(shift)}`,
+      metadata: { previousStatus: 'draft', newStatus: 'published' },
+      req,
+    });
+  }
+
   return { shift: updated, conflicts };
 };
 
@@ -618,6 +689,17 @@ const confirmShift = async (id, actorUser) => {
     $push: { changeLog: logEntry },
   });
   triggerReadinessSyncForWorkDate(shift.workDate);
+
+  await writeShiftAuditLog({
+    actorUser,
+    action: 'CONFIRM_SHIFT',
+    displayAction: 'Xác nhận ca làm việc',
+    shiftBefore: shift,
+    shiftAfter: updated,
+    description: `Xác nhận ca ${buildShiftTargetName(shift)}`,
+    metadata: { previousStatus: 'published', newStatus: 'confirmed' },
+  });
+
   return updated;
 };
 
@@ -630,7 +712,19 @@ const checkInShift = async (id, actorUser) => {
 
   await assertActorMayConfirmShift(shift, actorUser);
 
-  return shiftRepo.updateById(id, { checkInTime: new Date() });
+  const updated = await shiftRepo.updateById(id, { checkInTime: new Date() });
+
+  await writeShiftAuditLog({
+    actorUser,
+    action: 'CHECK_IN_SHIFT',
+    displayAction: 'Check-in ca làm việc',
+    shiftBefore: shift,
+    shiftAfter: updated,
+    description: `Check-in ca ${buildShiftTargetName(shift)}`,
+    metadata: { checkInTime: updated.checkInTime },
+  });
+
+  return updated;
 };
 
 const checkOutShift = async (id, actorUser) => {
@@ -641,7 +735,19 @@ const checkOutShift = async (id, actorUser) => {
 
   await assertActorMayConfirmShift(shift, actorUser);
 
-  return shiftRepo.updateById(id, { checkOutTime: new Date() });
+  const updated = await shiftRepo.updateById(id, { checkOutTime: new Date() });
+
+  await writeShiftAuditLog({
+    actorUser,
+    action: 'CHECK_OUT_SHIFT',
+    displayAction: 'Check-out ca làm việc',
+    shiftBefore: shift,
+    shiftAfter: updated,
+    description: `Check-out ca ${buildShiftTargetName(shift)}`,
+    metadata: { checkOutTime: updated.checkOutTime },
+  });
+
+  return updated;
 };
 
 const completeShift = async (id, actorUser) => {
@@ -675,6 +781,17 @@ const completeShift = async (id, actorUser) => {
     $push: { changeLog: logEntry },
   });
   triggerReadinessSyncForWorkDate(shift.workDate);
+
+  await writeShiftAuditLog({
+    actorUser,
+    action: 'COMPLETE_SHIFT',
+    displayAction: 'Hoàn thành ca làm việc',
+    shiftBefore: shift,
+    shiftAfter: updated,
+    description: `Hoàn thành ca ${buildShiftTargetName(shift)}`,
+    metadata: { previousStatus: 'confirmed', newStatus: 'completed' },
+  });
+
   return updated;
 };
 
@@ -808,14 +925,17 @@ const updateShift = async (id, body, actorUser, isAdmin = false, req = null) => 
   if (body.workDate) triggerReadinessSyncForWorkDate(updatedDate);
 
   const updatedPopulated = await shiftRepo.findById(id);
+  const fieldsChangedLabel = (logEntry.fieldsChanged || [])
+    .map((f) => SHIFT_FIELD_LABELS[f] || f)
+    .join(', ');
   await writeShiftAuditLog({
     actorUser,
     action: 'UPDATE_SHIFT',
     displayAction: 'Cập nhật ca làm việc',
     shiftBefore: shift,
     shiftAfter: updatedPopulated,
-    description: `Cập nhật ca ${buildShiftTargetName(shift)}. Trường đổi: ${logEntry.fieldsChanged.join(', ')}`,
-    metadata: { fieldsChanged: logEntry.fieldsChanged, changeReason: reason },
+    description: `Cập nhật ca ${buildShiftTargetName(shift)}. Trường đổi: ${fieldsChangedLabel}`,
+    metadata: { fieldsChanged: logEntry.fieldsChanged, fieldsChangedLabel, changeReason: reason },
     req,
   });
 
@@ -939,6 +1059,7 @@ const cancelShift = async (id, actorUser, reason = 'Cancelled', req = null) => {
     displayAction: 'Hủy ca làm việc',
     shiftBefore: shift,
     shiftAfter: cancelled,
+    cancelReason: reason,
     description: `Hủy ca ${buildShiftTargetName(shift)}. Lý do: ${reason}`,
     metadata: { reason, previousStatus: shift.status },
     req,
@@ -947,7 +1068,7 @@ const cancelShift = async (id, actorUser, reason = 'Cancelled', req = null) => {
   return cancelled;
 };
 
-const deleteShift = async (id) => {
+const deleteShift = async (id, actorUser = null, req = null) => {
   const shift = await shiftRepo.findById(id);
   if (!shift) throw apiErr(CODES.SHIFT_NOT_FOUND, { statusCode: 404 });
   if (shift.status !== 'draft')
@@ -956,6 +1077,20 @@ const deleteShift = async (id) => {
   await assertNoActiveCareTasksForShift(id);
 
   await shiftRepo.deleteById(id);
+
+  if (actorUser) {
+    await writeShiftAuditLog({
+      actorUser,
+      action: 'DELETE_SHIFT',
+      displayAction: 'Xóa ca làm việc',
+      shiftBefore: shift,
+      shiftAfter: null,
+      description: `Xóa ca ${buildShiftTargetName(shift)}`,
+      metadata: { event: 'delete' },
+      req,
+    });
+  }
+
   return { deleted: true };
 };
 

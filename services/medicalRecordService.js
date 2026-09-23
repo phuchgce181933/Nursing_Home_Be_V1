@@ -121,159 +121,6 @@ const normalizePhysicalExamination = (value) => {
   };
 };
 
-const normalizeLabResults = (value) => {
-  if (!value) return [];
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? [{ testName: 'Tổng quan', result: trimmed, unit: '', referenceRange: '', notes: '' }] : [];
-  }
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => ({
-      testName: normalizeString(item.testName),
-      result: normalizeString(item.result),
-      unit: normalizeString(item.unit),
-      referenceRange: normalizeString(item.referenceRange),
-      notes: normalizeString(item.notes),
-    }))
-    .filter((item) => item.testName || item.result || item.notes);
-};
-
-const normalizeUrinalysisResults = (value) => {
-  if (!value) return undefined;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? { notes: trimmed } : undefined;
-  }
-  return {
-    appearance: normalizeString(value.appearance),
-    color: normalizeString(value.color),
-    pH: normalizeNumber(value.pH),
-    specificGravity: normalizeNumber(value.specificGravity),
-    protein: normalizeString(value.protein),
-    glucose: normalizeString(value.glucose),
-    ketones: normalizeString(value.ketones),
-    blood: normalizeString(value.blood),
-    leukocyteEsterase: normalizeString(value.leukocyteEsterase),
-    nitrites: normalizeString(value.nitrites),
-    urobilinogen: normalizeString(value.urobilinogen),
-    bilirubin: normalizeString(value.bilirubin),
-    microscopy: normalizeString(value.microscopy),
-    notes: normalizeString(value.notes),
-  };
-};
-
-const normalizeECGResults = (value) => {
-  if (!value) return undefined;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? { interpretation: trimmed } : undefined;
-  }
-  return {
-    heartRate: normalizeNumber(value.heartRate),
-    rhythm: normalizeString(value.rhythm),
-    prInterval: normalizeString(value.prInterval),
-    qrsDuration: normalizeString(value.qrsDuration),
-    qtInterval: normalizeString(value.qtInterval),
-    axis: normalizeString(value.axis),
-    interpretation: normalizeString(value.interpretation),
-    notes: normalizeString(value.notes),
-  };
-};
-
-const normalizeImagingResults = (value) => {
-  if (!value) return [];
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? [{ modality: '', bodyPart: '', finding: '', impression: '', imageUrls: [], cloudinaryPublicIds: [], notes: trimmed }] : [];
-  }
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => ({
-      modality: normalizeString(item.modality),
-      bodyPart: normalizeString(item.bodyPart),
-      finding: normalizeString(item.finding),
-      impression: normalizeString(item.impression),
-      imageUrls: Array.isArray(item.imageUrls) ? item.imageUrls.map(normalizeString).filter(Boolean) : [],
-      cloudinaryPublicIds: Array.isArray(item.cloudinaryPublicIds) ? item.cloudinaryPublicIds.map(normalizeString).filter(Boolean) : [],
-      notes: normalizeString(item.notes),
-    }))
-    .filter((item) => item.modality || item.bodyPart || item.finding || item.impression || item.notes);
-};
-
-const normalizeCognitiveFunction = (value) => {
-  if (!value) return undefined;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? { notes: trimmed } : undefined;
-  }
-  return {
-    assessmentTool: normalizeString(value.assessmentTool),
-    score: normalizeString(value.score),
-    orientation: normalizeString(value.orientation),
-    memory: normalizeString(value.memory),
-    attention: normalizeString(value.attention),
-    language: normalizeString(value.language),
-    executiveFunction: normalizeString(value.executiveFunction),
-    notes: normalizeString(value.notes),
-  };
-};
-
-const normalizeFunctionalStatus = (value) => {
-  if (!value) return undefined;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? { notes: trimmed } : undefined;
-  }
-  return {
-    mobility: normalizeString(value.mobility),
-    transfers: normalizeString(value.transfers),
-    adls: normalizeString(value.adls),
-    iadls: normalizeString(value.iadls),
-    assistanceRequired: normalizeString(value.assistanceRequired),
-    notes: normalizeString(value.notes),
-  };
-};
-
-const normalizeFallRisk = (value) => {
-  if (!value) return undefined;
-  if (typeof value === 'string') {
-    const level = normalizeString(value).toLowerCase();
-    return {
-      level: ['low', 'medium', 'high'].includes(level) ? level : undefined,
-      notes: normalizeString(value),
-    };
-  }
-  return {
-    level: ['low', 'medium', 'high'].includes(normalizeString(value.level).toLowerCase()) ? normalizeString(value.level).toLowerCase() : undefined,
-    historyOfFalls: value.historyOfFalls === true || value.historyOfFalls === 'true',
-    gait: normalizeString(value.gait),
-    balance: normalizeString(value.balance),
-    medications: normalizeString(value.medications),
-    vision: normalizeString(value.vision),
-    cognition: normalizeString(value.cognition),
-    notes: normalizeString(value.notes),
-  };
-};
-
-const normalizeNutritionalStatus = (value) => {
-  if (!value) return undefined;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? { notes: trimmed } : undefined;
-  }
-  return {
-    bmi: normalizeNumber(value.bmi),
-    weightChange: normalizeString(value.weightChange),
-    appetite: normalizeString(value.appetite),
-    dietType: normalizeString(value.dietType),
-    swallowing: normalizeString(value.swallowing),
-    proteinIntake: normalizeString(value.proteinIntake),
-    hydration: normalizeString(value.hydration),
-    notes: normalizeString(value.notes),
-  };
-};
-
 const mongoose = require('mongoose');
 
 const normalizeServiceFieldValues = (values) => {
@@ -490,14 +337,6 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     summary,
     bloodType,
     physicalExamination,
-    laboratoryTestResults,
-    urinalysisResults,
-    ecgResults,
-    imagingResults,
-    cognitiveFunction,
-    functionalStatus,
-    fallRisk,
-    nutritionalStatus,
     roomCost,
     medicationCost,
     careServiceCost,
@@ -541,7 +380,7 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
       billingPeriodStart: body.billingPeriodStart,
       billingPeriodEnd: body.billingPeriodEnd,
       dueDate: body.dueDate,
-    });
+    }, req);
     invoiceId = invoice._id;
   }
 
@@ -558,14 +397,6 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     weightKg,
     heightCm,
     physicalExamination: normalizePhysicalExamination(physicalExamination),
-    laboratoryTestResults: normalizeLabResults(laboratoryTestResults),
-    urinalysisResults: normalizeUrinalysisResults(urinalysisResults),
-    ecgResults: normalizeECGResults(ecgResults),
-    imagingResults: normalizeImagingResults(imagingResults),
-    cognitiveFunction: normalizeCognitiveFunction(cognitiveFunction),
-    functionalStatus: normalizeFunctionalStatus(functionalStatus),
-    fallRisk: normalizeFallRisk(fallRisk),
-    nutritionalStatus: normalizeNutritionalStatus(nutritionalStatus),
     selectedServices: normalizedSelectedServices,
     roomCost,
     medicationCost,
@@ -662,15 +493,67 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
   }
   await resident.save();
 
-  // Create Audit Log
+  // Create Audit Log (Vietnamese)
+  const abnormalSummary = abnormalFlag
+    ? ' có chỉ số bất thường'
+    : '';
+  const servicesCount = Array.isArray(normalizedSelectedServices) ? normalizedSelectedServices.length : 0;
+  const doctorName = user?.fullName || user?.name || user?.email || 'Bác sĩ';
+  const residentName = resident?.fullName || resident?.residentCode || 'cư dân';
+
+  // Snapshot chỉ giữ các trường có dữ liệu để hiển thị gọn trong audit log
+  const vitalSnapshot = {};
+  if (record.measuredAt) vitalSnapshot.measuredAt = record.measuredAt;
+  if (record.bloodPressureSystolic != null) vitalSnapshot.bloodPressureSystolic = record.bloodPressureSystolic;
+  if (record.bloodPressureDiastolic != null) vitalSnapshot.bloodPressureDiastolic = record.bloodPressureDiastolic;
+  if (record.pulse != null) vitalSnapshot.pulse = record.pulse;
+  if (record.temperatureCelsius != null) vitalSnapshot.temperatureCelsius = record.temperatureCelsius;
+  if (record.oxygenSaturation != null) vitalSnapshot.oxygenSaturation = record.oxygenSaturation;
+  if (record.bloodSugar != null) vitalSnapshot.bloodSugar = record.bloodSugar;
+  if (record.weightKg != null) vitalSnapshot.weightKg = record.weightKg;
+  if (record.heightCm != null) vitalSnapshot.heightCm = record.heightCm;
+  if (record.bloodType) vitalSnapshot.bloodType = record.bloodType;
+  vitalSnapshot.abnormalFlag = !!record.abnormalFlag;
+  if (record.summary) vitalSnapshot.summary = record.summary;
+  if (record.physicalExamination && typeof record.physicalExamination === 'object') {
+    const peEntries = Object.entries(record.physicalExamination).filter(
+      ([, v]) => v !== undefined && v !== null && String(v).trim() !== ''
+    );
+    if (peEntries.length > 0) vitalSnapshot.physicalExamination = Object.fromEntries(peEntries);
+  }
+  if (Array.isArray(record.selectedServices) && record.selectedServices.length > 0) {
+    vitalSnapshot.selectedServices = record.selectedServices.map((s) => ({
+      serviceName: s.serviceName,
+      serviceCode: s.serviceCode,
+      quantity: s.quantity,
+      unitPrice: s.unitPrice,
+      fieldValues: s.fieldValues && typeof s.fieldValues === 'object' && Object.keys(s.fieldValues).length > 0
+        ? s.fieldValues
+        : undefined,
+    })).map((s) => { const { fieldValues, ...rest } = s; if (fieldValues) return { ...rest, fieldValues }; return rest; });
+  }
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
     action: 'RECORD_VITAL_SIGNS',
+    displayAction: 'Ghi nhận dấu hiệu sinh tồn',
+    description: `${doctorName} đã ghi nhận dấu hiệu sinh tồn cho ${residentName}${abnormalSummary}.`,
     module: 'health',
+    businessModule: 'health',
     targetEntityType: 'MedicalRecord',
     targetEntityId: record._id,
-    afterData: record.toObject(),
+    targetName: residentName,
+    performedBy: doctorName,
+    performedByRole: user.role,
+    metadata: {
+      abnormalFlag: !!abnormalFlag,
+      servicesCount,
+      hasInvoice: !!invoiceId,
+      consentToPayment: consentToPayment === true || consentToPayment === 'true',
+    },
+    beforeData: null,
+    afterData: vitalSnapshot,
     req,
   });
 

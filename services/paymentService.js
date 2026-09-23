@@ -48,7 +48,7 @@ const applyPaymentPlanToAmount = (amount, paymentPlan) => {
 
 const isUnpaidInvoice = (invoice) => ['DRAFT', 'ISSUED', 'PARTIALLY_PAID'].includes(invoice?.status);
 
-const markInvoiceAsPaid = async (invoiceId) => {
+const markInvoiceAsPaid = async (invoiceId, actor = null, req = null) => {
   const invoice = await invoiceRepo.findById(invoiceId);
   if (!invoice) {
     throw new ServiceError('Không tìm thấy hóa đơn', 404);
@@ -58,6 +58,7 @@ const markInvoiceAsPaid = async (invoiceId) => {
     return invoice;
   }
 
+  const previousStatus = invoice.status;
   const updatedInvoice = await invoiceRepo.updateById(invoiceId, { status: 'PAID' });
   const chargeIds = (invoice.items || [])
     .map((it) => it.chargeId)
@@ -114,6 +115,31 @@ const markInvoiceAsPaid = async (invoiceId) => {
   } catch (err) {
     console.error('Error during auto-dispense on invoice payment:', err.message || err);
   }
+
+  await createAuditLog({
+    actorUserId: actor?._id || null,
+    actorRole: actor?.role || 'system',
+    action: 'MARK_INVOICE_PAID',
+    displayAction: 'Đánh dấu hóa đơn đã thanh toán',
+    module: 'billing',
+    businessModule: 'billingPayment',
+    targetEntityType: 'Invoice',
+    targetEntityId: updatedInvoice._id,
+    performedBy: actor?.fullName || actor?.email,
+    targetName: updatedInvoice.invoiceNumber || updatedInvoice._id?.toString(),
+    description: actor
+      ? `${actor.fullName || actor.email || 'Người dùng'} đã đánh dấu hóa đơn ${updatedInvoice.invoiceNumber || updatedInvoice._id} đã thanh toán`
+      : `Hệ thống tự động đánh dấu hóa đơn ${updatedInvoice.invoiceNumber || updatedInvoice._id} đã thanh toán`,
+    beforeData: { status: previousStatus },
+    afterData: { status: 'PAID' },
+    metadata: {
+      totalAmount: updatedInvoice.totalAmount,
+      chargeCount: chargeIds.length,
+      source: actor ? 'admin' : 'system-webhook',
+    },
+    req,
+  });
+
   return updatedInvoice;
 };
 
@@ -544,7 +570,97 @@ const estimateMedicationCostForPrescription = async (prescriptionId, residentId)
   return await estimateMedicationCostFromPrescription(prescription);
 };
 
-const createInvoice = async (user, residentId, body) => {
+/**
+ * Lấy danh sách thuốc / line item của hóa đơn kèm tổng tiền để ghi vào audit log.
+ * Trả về:
+ *   - items: mảng các dòng thuốc, mỗi dòng gồm stt, tên thuốc, đơn vị, số lượng,
+ *     đơn giá, thành tiền chưa thuế, thuế suất, tiền thuế, thành tiền (sau thuế).
+ *   - totals: { subTotal, taxAmount, total }.
+ *   - prescriptionCode: mã đơn thuốc gốc (nếu có).
+ *
+ * Lưu ý: hàm này chỉ dùng để bổ sung metadata cho audit log, không thay thế
+ * afterData vốn đã có sẵn toàn bộ thông tin hóa đơn.
+ */
+const buildInvoiceBreakdownForAudit = async ({ invoice, prescriptionId, resident }) => {
+  if (!invoice) return { items: [], totals: { subTotal: 0, taxAmount: 0, total: 0 } };
+  const invoiceObj = typeof invoice.toObject === 'function' ? invoice.toObject() : { ...invoice };
+
+  const items = [];
+  let prescriptionCode = null;
+
+  // Hóa đơn MEDICATION: lấy chi tiết từ đơn thuốc
+  if (prescriptionId) {
+    const prescription = await prescriptionRepo.findByIdListPopulated
+      ? await prescriptionRepo.findByIdListPopulated(prescriptionId)
+      : await prescriptionRepo.findByIdPopulated(prescriptionId);
+    if (prescription) {
+      const presObj = typeof prescription.toObject === 'function' ? prescription.toObject() : prescription;
+      prescriptionCode = presObj.prescriptionCode || null;
+      const sourceItems = Array.isArray(presObj.items) ? presObj.items : [];
+      let runningStt = 1;
+      for (const it of sourceItems) {
+        if (it.isActive === false) continue;
+        const quantity = Number(it.quantity || 0);
+        const unitPrice = Number(it.price || 0);
+        const taxRate = Number(it.taxRate || 0);
+        const subtotalExclTax = Number(
+          it.subtotalExclTax != null ? it.subtotalExclTax : quantity * unitPrice
+        );
+        const taxAmount = Number(
+          it.taxAmount != null ? it.taxAmount : Math.round(subtotalExclTax * taxRate)
+        );
+        const subtotalInclTax = Number(
+          it.subtotalInclTax != null ? it.subtotalInclTax : subtotalExclTax + taxAmount
+        );
+        items.push({
+          stt: runningStt++,
+          medicationName: it.medicationName || it.medicationId?.name || null,
+          unit: it.unit || it.medicationId?.unit || null,
+          quantity,
+          unitPrice,
+          subtotalExclTax,
+          taxRate,
+          taxAmount,
+          subtotalInclTax,
+        });
+      }
+    }
+  }
+
+  // Hóa đơn SERVICE / khác có items[] (medical charges)
+  if (items.length === 0 && Array.isArray(invoiceObj.items) && invoiceObj.items.length > 0) {
+    let runningStt = 1;
+    for (const it of invoiceObj.items) {
+      const amount = Number(it.amount || 0);
+      const taxRate = Number(it.taxRate || 0);
+      const taxAmount = taxRate > 0 ? Math.round(amount * taxRate / (1 + taxRate)) : 0;
+      const subtotalExclTax = amount - taxAmount;
+      items.push({
+        stt: runningStt++,
+        medicationName: it.description || null,
+        unit: it.unit || null,
+        quantity: Number(it.quantity || 1),
+        unitPrice: Number(it.unitPrice || 0),
+        subtotalExclTax,
+        taxRate,
+        taxAmount,
+        subtotalInclTax: amount,
+      });
+    }
+  }
+
+  const total = Number(invoiceObj.totalAmount ?? invoiceObj.total ?? 0);
+  const taxAmount = Number(invoiceObj.tax || 0);
+  const subTotal = total - taxAmount;
+
+  return {
+    items,
+    totals: { subTotal, taxAmount, total },
+    prescriptionCode,
+  };
+};
+
+const createInvoice = async (user, residentId, body, req) => {
   const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
@@ -663,14 +779,37 @@ const createInvoice = async (user, residentId, body) => {
       );
     }
 
+    const breakdown = await buildInvoiceBreakdownForAudit({ invoice, prescriptionId, resident });
     await createAuditLog({
       actorUserId: user._id,
       actorRole: user.role,
       action: 'CREATE_INVOICE',
+      displayAction: invoice.type === 'MEDICATION'
+        ? 'Tạo hóa đơn thuốc'
+        : invoice.type === 'SERVICE'
+          ? 'Tạo hóa đơn dịch vụ'
+          : 'Tạo hóa đơn',
       module: 'billing',
+      businessModule: invoice.type === 'MEDICATION' ? 'contract' : 'billing',
       targetEntityType: 'Invoice',
       targetEntityId: invoice._id,
-      afterData: invoice.toObject(),
+      targetName: invoice.invoiceNumber || invoice._id?.toString(),
+      performedBy: user.fullName,
+      description: `${user.fullName || user.email || 'Quản trị viên'} đã tạo hóa đơn ${invoice.invoiceNumber}${invoice.type ? ` (${invoice.type})` : ''} cho cư dân ${resident.fullName}${breakdown?.items?.length ? ` — gồm ${breakdown.items.length} mục, tổng ${Number(breakdown.totals?.total || 0).toLocaleString('vi-VN')} VND` : ''}.`,
+      afterData: (() => {
+        const d = invoice.toObject();
+        delete d.roomCost;
+        delete d.medicationCost;
+        delete d.careServiceCost;
+        delete d.otherCost;
+        delete d.remainingAmount;
+        delete d.originalTotalAmount;
+        delete d.type;
+        d.residentName = resident.fullName;
+        return d;
+      })(),
+      metadata: breakdown || null,
+      req,
     });
     return invoice;
   }
@@ -780,14 +919,26 @@ const createInvoice = async (user, residentId, body) => {
 
   // Log audit for all created invoices
   for (const invoice of createdInvoices) {
+    const breakdown = await buildInvoiceBreakdownForAudit({ invoice, prescriptionId, resident });
     await createAuditLog({
       actorUserId: user._id,
       actorRole: user.role,
       action: 'CREATE_INVOICE',
+      displayAction: invoice.type === 'MEDICATION'
+        ? 'Tạo hóa đơn thuốc'
+        : invoice.type === 'SERVICE'
+          ? 'Tạo hóa đơn dịch vụ'
+          : 'Tạo hóa đơn',
       module: 'billing',
+      businessModule: invoice.type === 'MEDICATION' ? 'contract' : 'billing',
       targetEntityType: 'Invoice',
       targetEntityId: invoice._id,
+      targetName: invoice.invoiceNumber || invoice._id?.toString(),
+      performedBy: user.fullName,
+      description: `${user.fullName || user.email || 'Quản trị viên'} đã tạo hóa đơn ${invoice.invoiceNumber}${invoice.type ? ` (${invoice.type})` : ''} cho cư dân ${resident.fullName}${breakdown?.items?.length ? ` — gồm ${breakdown.items.length} mục, tổng ${Number(breakdown.totals?.total || 0).toLocaleString('vi-VN')} VND` : ''}.`,
       afterData: invoice.toObject(),
+      metadata: breakdown || null,
+      req,
     });
   }
 

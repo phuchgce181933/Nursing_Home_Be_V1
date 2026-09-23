@@ -6,6 +6,7 @@ const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = 
 const { assertNoPublishedScheduleConflicts } = require('../utils/nutritionPublishGuards');
 const residentRepo = require('../repositories/residentRepository');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
+const { createAuditLog } = require('../utils/auditLog');
 
 const NON_TX_ERROR_PATTERNS = [
   /retryable writes/i,
@@ -244,7 +245,7 @@ const resolveMealTimeForResident = async (workDateStr, residentId, mealType) => 
   return DEFAULT_MEAL_TIMES[mealType] || DEFAULT_MEAL_TIMES.breakfast;
 };
 
-const createDraft = async (body, actorUserId) => {
+const createDraft = async (body, actorUserId, req = null) => {
   const workDate = parseWorkDateStrict(body.workDate);
   if (workDate < todayVN()) {
     throw apiErr(CODES.MEAL_PAST_DATE_NOT_ALLOWED, { statusCode: 400 });
@@ -286,13 +287,30 @@ const createDraft = async (body, actorUserId) => {
   });
 
   const saved = await mealTimeScheduleDayRepo.findById(createdId);
-  return { ...apiSuccess(SUCCESS.MEAL_TIME_SCHEDULE_DRAFT_CREATED), schedule: await hydrateSchedule(saved) };
+  const hydrated = await hydrateSchedule(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'CREATE',
+    displayAction: 'Tạo nháp lịch giờ ăn',
+    module: 'mealTimeSchedule',
+    targetEntityType: 'MealTimeScheduleDay',
+    targetEntityId: createdId,
+    targetName: saved.title,
+    description: `Tạo nháp lịch giờ ăn ngày ${workDate}, ${entries.length} mục`,
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_TIME_SCHEDULE_DRAFT_CREATED), schedule: hydrated };
 };
 
-const updateDraft = async (id, body, actorUserId) => {
+const updateDraft = async (id, body, actorUserId, req = null) => {
   const day = await mealTimeScheduleDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_TIME_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') throw apiErr(CODES.MEAL_TIME_SCHEDULE_DRAFT_ONLY_EDIT, { statusCode: 400 });
+
+  const beforeData = day.toObject ? day.toObject() : day;
 
   const updatePayload = {};
   if (body.workDate !== undefined) {
@@ -337,7 +355,23 @@ const updateDraft = async (id, body, actorUserId) => {
   });
 
   const saved = await mealTimeScheduleDayRepo.findById(id);
-  return { ...apiSuccess(SUCCESS.MEAL_TIME_SCHEDULE_DRAFT_UPDATED), schedule: await hydrateSchedule(saved) };
+  const hydrated = await hydrateSchedule(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật nháp lịch giờ ăn',
+    module: 'mealTimeSchedule',
+    targetEntityType: 'MealTimeScheduleDay',
+    targetEntityId: id,
+    targetName: saved.title,
+    description: `Cập nhật nháp lịch giờ ăn ID ${id}`,
+    beforeData,
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_TIME_SCHEDULE_DRAFT_UPDATED), schedule: hydrated };
 };
 
 const listSchedules = async (filter = {}, options = {}) => {
@@ -368,7 +402,7 @@ const getSchedule = async (id) => {
   return hydrateSchedule(day);
 };
 
-const deleteDraft = async (id) => {
+const deleteDraft = async (id, req = null) => {
   const day = await mealTimeScheduleDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_TIME_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') {
@@ -381,16 +415,31 @@ const deleteDraft = async (id) => {
     throw apiErr(CODES.MEAL_TIME_SCHEDULE_IN_USE, { statusCode: 409 });
   }
 
+  const beforeData = day.toObject ? day.toObject() : day;
+
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
     await mealTimeScheduleEntryRepo.deleteByDayId(id, dbOpts);
     await mealTimeScheduleDayRepo.deleteById(id, dbOpts);
   });
 
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    action: 'DELETE',
+    displayAction: 'Xóa nháp lịch giờ ăn',
+    module: 'mealTimeSchedule',
+    targetEntityType: 'MealTimeScheduleDay',
+    targetEntityId: id,
+    targetName: day.title,
+    description: `Xóa nháp lịch giờ ăn ID ${id}`,
+    beforeData,
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.MEAL_TIME_SCHEDULE_DRAFT_DELETED), deleted: true, id };
 };
 
-const publishSchedule = async (id, actorUserId) => {
+const publishSchedule = async (id, actorUserId, req = null) => {
   const day = await mealTimeScheduleDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_TIME_SCHEDULE_NOT_FOUND, { statusCode: 404 });
   if (day.status === 'published') {
@@ -429,6 +478,8 @@ const publishSchedule = async (id, actorUserId) => {
   await assertResidentsAssignedToUser(actorUserId, residentIds);
   await assertNoPublishedScheduleConflicts(workDate, residentIds, id);
 
+  const beforeData = day.toObject ? day.toObject() : day;
+
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
     await mealTimeScheduleDayRepo.updateById(
@@ -444,7 +495,23 @@ const publishSchedule = async (id, actorUserId) => {
   });
 
   const saved = await mealTimeScheduleDayRepo.findById(id);
-  return { ...apiSuccess(SUCCESS.MEAL_TIME_SCHEDULE_PUBLISHED), schedule: await hydrateSchedule(saved) };
+  const hydrated = await hydrateSchedule(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'UPDATE',
+    displayAction: 'Xuất bản lịch giờ ăn',
+    module: 'mealTimeSchedule',
+    targetEntityType: 'MealTimeScheduleDay',
+    targetEntityId: id,
+    targetName: saved.title,
+    description: `Xuất bản lịch giờ ăn ID ${id}, ngày ${workDate}`,
+    beforeData,
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_TIME_SCHEDULE_PUBLISHED), schedule: hydrated };
 };
 
 module.exports = {

@@ -14,8 +14,11 @@ const connectDB = async () => {
 
     await mongoose.connect(uri);
 
-    console.log('MongoDB connected:', uri);
-    
+    // Log only non-secret connection info. NEVER log the full URI: it embeds the
+    // Atlas username/password. host + db name are enough to confirm the target.
+    const { host, port, name } = mongoose.connection;
+    console.log(`MongoDB connected: host=${host}${port ? ':' + port : ''} db=${name}`);
+
   } catch (err) {
     console.error('MongoDB connection failed:', err.message);
     throw err;

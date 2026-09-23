@@ -603,7 +603,7 @@ const notifyIncident = async (incident, options = {}) => {
         deliveryChannels: ['in_app'],
       }));
 
-      await notificationRepo.insertMany(adminNotificationDocs);
+      await notificationService.createMany(adminNotificationDocs);
     }
   }
 

@@ -11,7 +11,19 @@ const {
 } = require('../controllers/careNoteController');
 const { protect, authorize } = require('../middleware/auth');
 
-const STAFF_ROLES = ['admin', 'nurse'];
+/**
+ * Quyền ĐỌC ghi chú chăm sóc.
+ *
+ * `caregiver` được bổ sung vì Web đã coi hộ lý là vai trò CHỈ ĐỌC hợp lệ
+ * (pages/shared/CareNotesPage.jsx: nút Sửa/Xoá chỉ hiện với `nurse`, còn trang
+ * vẫn nằm trong sidebar của hộ lý) nhưng route lại chặn ở tầng middleware nên
+ * cả Web lẫn Mobile đều nhận 403.
+ *
+ * Việc mở quyền này KHÔNG làm lộ toàn bộ ghi chú: careNoteService lọc kết quả
+ * theo `StaffProfile.assignedResidentIds` của chính người gọi
+ * (getReadableResidentIds). Quyền GHI (POST/PUT/DELETE) vẫn chỉ dành cho y tá.
+ */
+const READ_ROLES = ['admin', 'nurse', 'caregiver'];
 
 /**
  * @swagger
@@ -159,7 +171,7 @@ router.post('/', protect, authorize('nurse'), createNote);
  *       200:
  *         description: Danh sách ghi chú chăm sóc có phân trang
  */
-router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
+router.get('/', protect, authorize(...READ_ROLES), listNotes);
 
 /**
  * @swagger
@@ -214,7 +226,7 @@ router.get('/', protect, authorize(...STAFF_ROLES), listNotes);
  *       200:
  *         description: Danh sách ghi chú chăm sóc của y tá đang đăng nhập
  */
-router.get('/my-notes', protect, authorize('nurse'), getMyNotes);
+router.get('/my-notes', protect, authorize(...READ_ROLES), getMyNotes);
 
 /**
  * @swagger
@@ -273,7 +285,7 @@ router.get('/my-notes', protect, authorize('nurse'), getMyNotes);
  *       400:
  *         description: residentId không hợp lệ
  */
-router.get('/history/:residentId', protect, authorize(...STAFF_ROLES), getNoteHistory);
+router.get('/history/:residentId', protect, authorize(...READ_ROLES), getNoteHistory);
 
 /**
  * @swagger
@@ -295,7 +307,7 @@ router.get('/history/:residentId', protect, authorize(...STAFF_ROLES), getNoteHi
  *       404:
  *         description: Không tìm thấy ghi chú
  */
-router.get('/:id', protect, authorize(...STAFF_ROLES), getNote);
+router.get('/:id', protect, authorize(...READ_ROLES), getNote);
 
 /**
  * @swagger

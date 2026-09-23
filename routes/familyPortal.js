@@ -8,6 +8,8 @@ const {
   getInvoicePaymentUrl,
   getInvoiceDetail,
   getWalletBalance,
+  getWalletTransactions,
+  getWalletTransactionDetail,
   generateWalletTopupUrl,
   confirmWalletTopup,
   verifyWalletTopup,
@@ -287,6 +289,40 @@ router.post('/wallet/topup', generateWalletTopupUrl);
  */
 router.post('/wallet/topup/confirm', confirmWalletTopup);
 router.post('/wallet/topup/verify', verifyWalletTopup);
+
+/**
+ * @swagger
+ * /api/family/wallet/transactions:
+ *   get:
+ *     summary: Unified financial transaction history for the logged-in family account
+ *     description: >
+ *       Returns every financial movement belonging to the authenticated family account:
+ *       PayOS wallet top-ups, wallet invoice payments, refunds, and invoices settled
+ *       directly through PayOS. Scope comes from the session user only — no userId
+ *       parameter is accepted, so one family can never read another family's ledger.
+ *     tags: [Family Portal]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema: { type: string }
+ *         description: Comma-separated subset of topup,payment,refund
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *         description: Comma-separated subset of pending,completed,failed
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20, maximum: 100 }
+ *     responses:
+ *       200:
+ *         description: Paginated ledger plus a wallet summary
+ */
+router.get('/wallet/transactions', getWalletTransactions);
+router.get('/wallet/transactions/:transactionId', getWalletTransactionDetail);
 
 /**
  * Wallet payment with OTP

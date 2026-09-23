@@ -82,13 +82,19 @@ const buildFilterFromQuery = (query) => {
   if (query.organizerStaffIds) filter.organizerStaffIds = { $in: [query.organizerStaffIds] };
   if (query.participantResidentIds) filter.participantResidentIds = { $in: query.participantResidentIds };
   else if (query.participantResidentId) filter.participantResidentIds = query.participantResidentId;
+  // `search` và khoảng thời gian đều cần $or riêng. Gom vào $and thay vì gán
+  // thẳng filter.$or hai lần — trước đây nhánh from/to ghi đè nhánh search,
+  // nên mọi lời gọi có đủ cả hai (chính là cách web và mobile gọi) đều bị mất
+  // điều kiện tìm kiếm và trả về toàn bộ danh sách.
+  const orGroups = [];
+
   if (query.search) {
     const search = query.search.trim();
-    filter.$or = [
+    orGroups.push([
       { title: { $regex: search, $options: 'i' } },
       { description: { $regex: search, $options: 'i' } },
       { category: { $regex: search, $options: 'i' } },
-    ];
+    ]);
   }
   if (query.from || query.to) {
     const from = query.from ? new Date(query.from) : null;
@@ -110,8 +116,15 @@ const buildFilterFromQuery = (query) => {
     }
 
     if (conditions.length) {
-      filter.$or = conditions;
+      orGroups.push(conditions);
     }
+  }
+
+  // Một nhóm thì giữ nguyên hình dạng $or cũ; nhiều nhóm thì phải thoả tất cả.
+  if (orGroups.length === 1) {
+    filter.$or = orGroups[0];
+  } else if (orGroups.length > 1) {
+    filter.$and = orGroups.map((group) => ({ $or: group }));
   }
   return filter;
 };

@@ -11,7 +11,7 @@ const createNote = async (req, res) => {
 
 const listNotes = async (req, res) => {
   try {
-    const result = await careNoteService.listNotes(req.query);
+    const result = await careNoteService.listNotes(req.query, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -20,7 +20,7 @@ const listNotes = async (req, res) => {
 
 const getNoteHistory = async (req, res) => {
   try {
-    const result = await careNoteService.getNoteHistory(req.params.residentId, req.query);
+    const result = await careNoteService.getNoteHistory(req.params.residentId, req.query, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -29,7 +29,7 @@ const getNoteHistory = async (req, res) => {
 
 const getNote = async (req, res) => {
   try {
-    const result = await careNoteService.getNote(req.params.id);
+    const result = await careNoteService.getNote(req.params.id, req.user);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });

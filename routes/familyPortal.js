@@ -6,6 +6,8 @@ const {
   getResidentBillingSummary,
   getResidentInvoices,
   getInvoicePaymentUrl,
+  createInvoicePayosCheckout,
+  verifyInvoicePayos,
   getInvoiceDetail,
   getWalletBalance,
   getWalletTransactions,
@@ -181,6 +183,10 @@ router.get('/residents/:residentId/invoices', getResidentInvoices);
  *         description: Invoice not found
  */
 router.get('/residents/:residentId/invoices/:invoiceId/payment-url', getInvoicePaymentUrl);
+
+// PayOS QR trong app (song song với nạp ví): tạo checkout JSON + xác thực server-to-server.
+router.post('/residents/:residentId/invoices/:invoiceId/payos', createInvoicePayosCheckout);
+router.post('/residents/:residentId/invoices/:invoiceId/payos/verify', verifyInvoicePayos);
 
 /**
  * @swagger

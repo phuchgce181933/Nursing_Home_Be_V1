@@ -92,6 +92,66 @@ const getInvoicePaymentUrl = async (user, residentId, invoiceId, req) => {
   return { paymentUrl };
 };
 
+/**
+ * Tạo checkout PayOS (dạng JSON) cho MỘT hoá đơn — song song với luồng nạp ví
+ * (`walletService.generateTopupPaymentUrl`) để app di động vẽ QR NGAY TRONG app
+ * thay vì chỉ mở trang thanh toán ngoài.
+ *
+ * Toàn bộ dữ liệu (qrCode/checkoutUrl/orderCode/thông tin ngân hàng) là dữ liệu
+ * THẬT do PayOS trả về — không bịa. orderCode được lưu vào hoá đơn để sau này
+ * xác thực server-to-server; tạo checkout KHÔNG hề đánh dấu hoá đơn đã trả.
+ */
+const createInvoicePayosCheckout = async (user, residentId, invoiceId, req) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
+  }
+
+  const invoice = await familyPortalRepo.findInvoiceByIdAndResident(invoiceId, residentId);
+  if (!invoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
+  if (invoice.status === 'PAID') throw new ServiceError('Hóa đơn đã được thanh toán đầy đủ', 400);
+  if (invoice.status === 'CANCELLED') throw new ServiceError('Không thể thanh toán hóa đơn đã bị hủy.', 400);
+
+  const payosData = await paymentService.createPayosPaymentRequest({ invoice, req });
+  if (payosData.orderCode) {
+    await paymentService.storeInvoicePayosOrderCode(invoice._id, payosData.orderCode);
+  }
+  if (!payosData.qrCode && !payosData.checkoutUrl) {
+    throw new ServiceError('Không nhận được thông tin thanh toán từ PayOS', 502);
+  }
+
+  return {
+    invoiceId: String(invoice._id),
+    invoiceNumber: invoice.invoiceNumber,
+    amount: Math.round(invoice.totalAmount || 0),
+    // qrCode là chuỗi VietQR thật của PayOS — client tự vẽ QR, không phải PNG bịa.
+    qrCode: payosData.qrCode || null,
+    checkoutUrl: payosData.checkoutUrl || null,
+    orderCode: payosData.orderCode || null,
+    bankBin: payosData.bin || null,
+    bankAccountNumber: payosData.accountNumber || null,
+    bankAccountName: payosData.accountName || null,
+    description: payosData.description || null,
+    payerName: user.fullName || null,
+    createdAt: new Date().toISOString(),
+  };
+};
+
+/**
+ * Hỏi PayOS trạng thái THẬT của hoá đơn (server-to-server) rồi mới đánh dấu đã
+ * trả. Idempotent — dùng cho polling từ app di động. Không bao giờ tin trạng thái
+ * do client báo về.
+ */
+const verifyInvoicePayos = async (user, residentId, invoiceId) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
+  }
+  const invoice = await familyPortalRepo.findInvoiceByIdAndResident(invoiceId, residentId);
+  if (!invoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
+
+  const result = await paymentService.verifyAndMarkInvoicePaid(invoiceId);
+  return { status: result.status };
+};
+
 const getInvoiceDetail = async (user, residentId, invoiceId) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
@@ -771,6 +831,8 @@ module.exports = {
   getResidentBillingSummary,
   getResidentInvoices,
   getInvoicePaymentUrl,
+  createInvoicePayosCheckout,
+  verifyInvoicePayos,
   getInvoiceDetail,
   getVitals,
   getHealthHistory,

@@ -47,6 +47,26 @@ const getInvoicePaymentUrl = async (req, res) => {
   }
 };
 
+// Tạo checkout PayOS dạng JSON cho một hoá đơn — app di động tự vẽ QR trong app.
+const createInvoicePayosCheckout = async (req, res) => {
+  try {
+    const result = await familyPortalService.createInvoicePayosCheckout(req.user, req.params.residentId, req.params.invoiceId, req);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// Xác thực trạng thái hoá đơn với PayOS (server-to-server) rồi mới đánh dấu đã trả.
+const verifyInvoicePayos = async (req, res) => {
+  try {
+    const result = await familyPortalService.verifyInvoicePayos(req.user, req.params.residentId, req.params.invoiceId);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const getVitals = async (req, res) => {
   try {
     const result = await familyPortalService.getVitals(req.user, req.params.residentId);
@@ -367,6 +387,8 @@ module.exports = {
   getResidentBillingSummary,
   getResidentInvoices,
   getInvoicePaymentUrl,
+  createInvoicePayosCheckout,
+  verifyInvoicePayos,
   getInvoiceDetail,
   getWalletBalance,
   getWalletTransactions,

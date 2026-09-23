@@ -1,4 +1,5 @@
 const svc = require('../services/careTaskService');
+const selfSvc = require('../services/caregiverCareTaskService');
 const { sendApiError } = require('../utils/apiErrorResponse');
 
 const getAssignmentContext = (req, res) =>
@@ -13,9 +14,14 @@ const assignCareTask = (req, res) =>
     .then((result) => res.status(201).json({ success: true, ...result }))
     .catch((err) => sendApiError(res, err));
 
+// Admin thấy toàn bộ; nhân viên (nurse/doctor/caregiver) chỉ thấy nhiệm vụ của chính mình.
+// Dùng lại caregiverCareTaskService.listMyCareTasks: nó đã ép staffProfileId và
+// kiểm tra residentId theo assignedResidentIds, và trả về cùng shape kết quả.
 const listCareTasks = (req, res) =>
-  svc
-    .listCareTasks(req.query, req.query)
+  (req.user.role === 'admin'
+    ? svc.listCareTasks(req.query, req.query)
+    : selfSvc.listMyCareTasks(req.user._id, req.query)
+  )
     .then((result) =>
       res.json({
         success: true,

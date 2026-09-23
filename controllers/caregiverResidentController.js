@@ -16,6 +16,12 @@ const listResidents = (req, res) =>
     )
     .catch((err) => sendApiError(res, err));
 
+const listRooms = (req, res) =>
+  svc
+    .listAssignedRoomsForUser(req.user._id)
+    .then((result) => res.json({ success: true, ...result }))
+    .catch((err) => sendApiError(res, err));
+
 const getResident = (req, res) =>
   svc
     .getAssignedResidentById(req.user._id, req.params.id)
@@ -36,6 +42,7 @@ const listResidentActivities = (req, res) =>
 
 module.exports = {
   listResidents,
+  listRooms,
   getResident,
   listResidentActivities,
 };

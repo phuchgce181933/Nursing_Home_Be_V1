@@ -184,6 +184,31 @@ const getWalletBalance = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/family/wallet/transactions — LỊCH SỬ GIAO DỊCH HỢP NHẤT.
+ *
+ * Phạm vi lấy từ `req.user` của phiên đăng nhập. Không có tham số userId nào
+ * được chấp nhận từ client, nên gia đình này không thể đọc sổ của gia đình kia.
+ */
+const getWalletTransactions = async (req, res) => {
+  try {
+    const result = await walletService.listTransactions(req.user, req.query);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+/** GET /api/family/wallet/transactions/:transactionId — chi tiết một giao dịch. */
+const getWalletTransactionDetail = async (req, res) => {
+  try {
+    const result = await walletService.getTransactionById(req.user, req.params.transactionId);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const generateWalletTopupUrl = async (req, res) => {
   try {
     const { amount } = req.body;
@@ -344,6 +369,8 @@ module.exports = {
   getInvoicePaymentUrl,
   getInvoiceDetail,
   getWalletBalance,
+  getWalletTransactions,
+  getWalletTransactionDetail,
   generateWalletTopupUrl,
   confirmWalletTopup,
   verifyWalletTopup,

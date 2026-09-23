@@ -28,6 +28,14 @@ const loginLimiter = rateLimit({
   message: { message: 'Quá nhiều lần thử từ địa chỉ IP này, vui lòng thử lại sau' },
 });
 
+// Rate limit riêng cho /reset-password: token là 64 hex ký tự nên về lý thuyết brute-force
+// rất khó, nhưng vẫn cần giới hạn để giảm thiểu việc dò token đã rò rỉ qua log, history, v.v.
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { message: 'Quá nhiều lần thử từ địa chỉ IP này, vui lòng thử lại sau' },
+});
+
 /**
  * @swagger
  * /api/auth/login:
@@ -367,7 +375,7 @@ router.put('/change-password', protect, changePassword);
  *         description: Email not found
  */
 router.post('/forgot-password', loginLimiter, forgotPassword);
-// reset mk
+// reset mk — áp dụng resetLimiter (10 req / 15 min) để giảm brute-force token đã rò rỉ.
 /**
  * @swagger
  * /api/auth/reset-password:
@@ -394,7 +402,7 @@ router.post('/forgot-password', loginLimiter, forgotPassword);
  *       400:
  *         description: Invalid or expired token
  */
-router.post('/reset-password', resetPassword);
+router.post('/reset-password', resetLimiter, resetPassword);
 
 // update user by admin
 /**

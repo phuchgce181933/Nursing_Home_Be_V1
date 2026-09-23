@@ -1,6 +1,19 @@
 const paymentService = require('../services/paymentService');
 const walletService = require('../services/walletService');
 const ServiceError = require('../services/serviceError');
+const { apiErr, CODES } = require('../utils/apiError');
+
+/**
+ * Người nhà chỉ được trừ ví qua luồng có xác thực OTP
+ * (`/api/family/wallet/payments/initiate` + `/verify`). Hai endpoint ghi nhận
+ * thanh toán dưới đây vẫn dành cho nhân viên ghi nhận tiền mặt/chuyển khoản và
+ * cho PayOS, nên chỉ chặn đúng trường hợp `family` + `wallet`.
+ */
+const assertWalletPaymentNeedsOtp = (user, paymentMethod) => {
+  if (paymentMethod === 'wallet' && user?.role === 'family') {
+    throw apiErr(CODES.WALLET_PAYMENT_OTP_REQUIRED, { statusCode: 403 });
+  }
+};
 
 const createInvoice = async (req, res, next) => {
   try {
@@ -76,6 +89,8 @@ const recordPayment = async (req, res, next) => {
   let deductedFromWallet = false;
 
   try {
+    assertWalletPaymentNeedsOtp(req.user, paymentMethod);
+
     const invoice = await paymentService.findInvoiceById(req.user, req.params.invoiceId);
     const amount = Number(requestedAmount != null ? requestedAmount : invoice.totalAmount) || 0;
     if (amount <= 0) {
@@ -134,6 +149,8 @@ const batchPayment = async (req, res, next) => {
   let deductedFromWallet = false;
 
   try {
+    assertWalletPaymentNeedsOtp(req.user, paymentMethod);
+
     // Calculate total amount for validation
     let totalAmount = 0;
     for (const invoiceId of invoiceIds) {

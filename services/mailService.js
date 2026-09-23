@@ -15,9 +15,9 @@ const {
   renderEmailLayout,
 } = require('../utils/emailBrand');
 
+// Cổng SMS TextBee. KHÔNG đặt api key / device id mặc định ở đây: credential chỉ
+// được lấy từ biến môi trường (.env), giống cách PayOS đã được xử lý trước đó.
 const DEFAULT_TEXTBEE_BASE_URL = 'https://api.textbee.dev';
-const DEFAULT_TEXTBEE_DEVICE_ID = '68747523c430dcc62c1ef2fa';
-const DEFAULT_TEXTBEE_API_KEY = 'a91dbad8-8208-4661-aebc-70afa9ecf388';
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -406,21 +406,34 @@ const sendFamilyAccountCreatedEmail = async ({
 
 /* ───────────────────────── SMS (unchanged) ───────────────────────── */
 
+/** Che số điện thoại trước khi ghi log: chỉ giữ 4 số cuối. */
+const maskPhone = (phone) => String(phone || '').replace(/.(?=.{4})/g, '*');
+
 const sendTextBeeSms = async ({ to, message }) => {
   if (!to) return;
 
-  const apiKey =
-    process.env.TEXTBEE_API_KEY || DEFAULT_TEXTBEE_API_KEY;
+  const apiKey = process.env.TEXTBEE_API_KEY;
+  const deviceId = process.env.TEXTBEE_DEVICE_ID;
+  const baseUrl = process.env.TEXTBEE_BASE_URL || DEFAULT_TEXTBEE_BASE_URL;
 
-  const deviceId =
-    process.env.TEXTBEE_DEVICE_ID || DEFAULT_TEXTBEE_DEVICE_ID;
+  if (!apiKey || !deviceId) {
+    // Thà báo lỗi rõ ràng còn hơn im lặng coi như đã gửi được SMS.
+    throw new Error('Chưa cấu hình TEXTBEE_API_KEY / TEXTBEE_DEVICE_ID trong .env');
+  }
 
-  const normalizedPhone = to.startsWith('0')
-    ? `+84${to.slice(1)}`
-    : to;
+  // TextBee yêu cầu số ở định dạng quốc tế (E.164). Số VN nội địa bắt đầu bằng 0
+  // → đổi thành +84…; số đã có +84 hoặc 84 thì giữ/chuẩn hoá lại.
+  const digits = String(to).trim().replace(/[\s.()-]/g, '');
+  const normalizedPhone = digits.startsWith('+')
+    ? digits
+    : digits.startsWith('0')
+      ? `+84${digits.slice(1)}`
+      : digits.startsWith('84')
+        ? `+${digits}`
+        : digits;
 
-  const endpoint =
-    `https://api.textbee.dev/api/v1/gateway/devices/${deviceId}/send-sms`;
+  // Giữ nguyên endpoint gắn thiết bị như trước (đã chạy đúng), chỉ đưa credential ra .env.
+  const endpoint = `${baseUrl}/api/v1/gateway/devices/${deviceId}/send-sms`;
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -434,16 +447,23 @@ const sendTextBeeSms = async ({ to, message }) => {
     }),
   });
 
-  const data = await response.text();
-
-  console.log('TEXTBEE STATUS:', response.status);
-  console.log('TEXTBEE RESPONSE:', data);
+  const raw = await response.text();
+  let payload = null;
+  try { payload = JSON.parse(raw); } catch { payload = null; }
 
   if (!response.ok) {
-    throw new Error(data || `TextBee returned ${response.status}`);
+    // Không log nội dung `message` (có thể chứa mã OTP) và không log api key.
+    console.error(`[TextBee] Gửi tới ${maskPhone(normalizedPhone)} thất bại — HTTP ${response.status}: ${raw.slice(0, 300)}`);
+    throw new Error(raw || `TextBee returned ${response.status}`);
   }
 
-  return data;
+  const result = payload?.data ?? {};
+  // "Đã nhận vào hàng đợi" KHÔNG phải là "đã gửi tới máy" — ghi đúng mức độ.
+  console.log(
+    `[TextBee] Đã nhận yêu cầu gửi tới ${maskPhone(normalizedPhone)} | batch=${result.smsBatchId || '-'} | recipients=${result.recipientCount ?? '-'} (chưa phải xác nhận đã giao)`,
+  );
+
+  return payload ?? raw;
 };
 
 module.exports = {

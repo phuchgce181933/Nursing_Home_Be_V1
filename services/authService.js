@@ -377,7 +377,8 @@ const requestPhoneChangeOtp = async (user, { phone }) => {
     throw apiErr(CODES.AUTH_PHONE_IN_USE, { statusCode: 400 });
   }
 
-  console.log(`[OTP] requestPhoneChangeOtp -> sending to new phone: ${normalizedPhone}`);
+  // Chỉ log số đã che — không ghi số điện thoại đầy đủ vào log ứng dụng.
+  console.log(`[OTP] requestPhoneChangeOtp -> gửi tới ${normalizedPhone.replace(/.(?=.{4})/g, '*')}`);
 
   const { otpId, maskedRecipient } = await otpService.createOtp({
     userId: user._id,
@@ -535,10 +536,20 @@ const changePassword = async (
 };
 // quên mk
 const forgotPassword = async ({ email }) => {
+  // Validate định dạng email ngay tại backend — khớp với regex frontend:
+  // ^[^\s@]+@[^\s@]+\.[^\s@]{2,}$. Trả messageKey AUTH_INVALID_EMAIL đã có sẵn trong
+  // bộ CODES. Luôn trả về message thân thiện, không leak thông tin.
+  const validationError = validateEmail(email);
+  if (validationError) {
+    throw apiErr(CODES.AUTH_INVALID_EMAIL, { statusCode: 400 });
+  }
+
   const user = await userRepo.findByEmail(email);
 
   // Always respond the same way whether or not the email exists, so callers
   // can't use this endpoint to enumerate registered accounts.
+  // Lưu ý: nếu email sai định dạng, ta đã throw ở trên — nếu email hợp lệ nhưng
+  // không tồn tại, vẫn trả success để tránh account-enumeration.
   if (user) {
     const resetToken = crypto
       .randomBytes(32)

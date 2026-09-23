@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const { apiErr, CODES } = require('../utils/apiError');
 const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
+const specialDietDayRepo = require('../repositories/specialDietDayRepository');
 const assignedResidentService = require('./assignedResidentService');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
@@ -8,7 +9,6 @@ const {
   findPublishedMealsForResident,
   countPublishedMealsByResidents,
   hasAnyPublishedMealPlanDay,
-  workDateRangeFilter,
 } = require('../utils/publishedMealPlanLookup');
 const { parseWorkDate } = require('../utils/shiftTime');
 
@@ -45,14 +45,6 @@ const assertResidentAssigned = async (profile, residentId) => {
   }
 };
 
-const findLatestPublishedDay = async (Model, workDateStr) =>
-  Model.findOne({
-    status: 'published',
-    workDate: workDateRangeFilter(workDateStr),
-  })
-    .sort({ publishedAt: -1 })
-    .lean();
-
 const sortMeals = (entries) =>
   [...entries].sort((a, b) => MEAL_ORDER.indexOf(a.mealType) - MEAL_ORDER.indexOf(b.mealType));
 
@@ -83,7 +75,7 @@ const loadPublishedMealsForResident = async (residentId, workDateStr, mealTimesB
 };
 
 const loadPublishedSpecialDietsForResident = async (residentId, workDateStr) => {
-  const day = await findLatestPublishedDay(SpecialDietDay, workDateStr);
+  const day = await specialDietDayRepo.findPublishedByWorkDate(workDateStr);
   if (!day) {
     return { published: false, planTitle: null, entries: [] };
   }
@@ -132,7 +124,7 @@ const listDietPlansOverview = async (userId, query) => {
 
   const [hasPublishedMealPlanDay, specialDietDay, mealCountsByResident] = await Promise.all([
     hasAnyPublishedMealPlanDay(workDate),
-    findLatestPublishedDay(SpecialDietDay, workDate),
+    specialDietDayRepo.findPublishedByWorkDate(workDate),
     countPublishedMealsByResidents(residentIds, workDate),
   ]);
 

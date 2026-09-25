@@ -52,6 +52,7 @@ const CODES = {
   AUTH_CANNOT_TOGGLE_SELF: 'AUTH_CANNOT_TOGGLE_SELF',
   AUTH_EMAIL_REQUIRED: 'AUTH_EMAIL_REQUIRED',
   AUTH_EMAIL_ALREADY_CURRENT: 'AUTH_EMAIL_ALREADY_CURRENT',
+  AUTH_INVALID_EMAIL: 'AUTH_INVALID_EMAIL',
   AUTH_PHONE_REQUIRED: 'AUTH_PHONE_REQUIRED',
   AUTH_PHONE_ALREADY_CURRENT: 'AUTH_PHONE_ALREADY_CURRENT',
   AUTH_OTP_REQUIRED: 'AUTH_OTP_REQUIRED',
@@ -303,6 +304,28 @@ const CODES = {
   RESIDENT_LIST_ITEM_LENGTH_INVALID: 'RESIDENT_LIST_ITEM_LENGTH_INVALID',
   RESIDENT_HEALTH_CONDITION_TOO_LONG: 'RESIDENT_HEALTH_CONDITION_TOO_LONG',
 
+  // OTP (dùng chung cho đổi email/SĐT và xác thực thanh toán ví)
+  OTP_PHONE_MISSING: 'OTP_PHONE_MISSING',
+  OTP_NOT_FOUND: 'OTP_NOT_FOUND',
+  OTP_FORBIDDEN: 'OTP_FORBIDDEN',
+  OTP_PURPOSE_MISMATCH: 'OTP_PURPOSE_MISMATCH',
+  OTP_ALREADY_USED: 'OTP_ALREADY_USED',
+  OTP_EXPIRED: 'OTP_EXPIRED',
+  OTP_INVALID: 'OTP_INVALID',
+  OTP_TOO_MANY_ATTEMPTS: 'OTP_TOO_MANY_ATTEMPTS',
+  OTP_RESEND_TOO_SOON: 'OTP_RESEND_TOO_SOON',
+  OTP_SEND_FAILED: 'OTP_SEND_FAILED',
+
+  // Thanh toán hoá đơn bằng ví
+  WALLET_INSUFFICIENT_BALANCE: 'WALLET_INSUFFICIENT_BALANCE',
+  WALLET_PAYMENT_AMOUNT_INVALID: 'WALLET_PAYMENT_AMOUNT_INVALID',
+  WALLET_PAYMENT_AMOUNT_MISMATCH: 'WALLET_PAYMENT_AMOUNT_MISMATCH',
+  WALLET_PAYMENT_INVOICE_REQUIRED: 'WALLET_PAYMENT_INVOICE_REQUIRED',
+  WALLET_PAYMENT_TOO_MANY_INVOICES: 'WALLET_PAYMENT_TOO_MANY_INVOICES',
+  WALLET_PAYMENT_OTP_REQUIRED: 'WALLET_PAYMENT_OTP_REQUIRED',
+  INVOICE_ALREADY_PAID: 'INVOICE_ALREADY_PAID',
+  INVOICE_NOT_PAYABLE: 'INVOICE_NOT_PAYABLE',
+
   INTERNAL_ERROR: 'INTERNAL_ERROR',
 };
 
@@ -358,6 +381,7 @@ const ERROR_MESSAGES = {
   [CODES.AUTH_CANNOT_TOGGLE_SELF]: 'Không thể thay đổi trạng thái hoạt động của chính bạn',
   [CODES.AUTH_EMAIL_REQUIRED]: 'Email là bắt buộc',
   [CODES.AUTH_EMAIL_ALREADY_CURRENT]: 'Email này đã là email hiện tại',
+  [CODES.AUTH_INVALID_EMAIL]: 'Email không hợp lệ',
   [CODES.AUTH_PHONE_REQUIRED]: 'Số điện thoại là bắt buộc',
   [CODES.AUTH_PHONE_ALREADY_CURRENT]: 'Số điện thoại này đã là số hiện tại',
   [CODES.AUTH_OTP_REQUIRED]: 'otpId và code là bắt buộc',
@@ -613,6 +637,26 @@ const ERROR_MESSAGES = {
   [CODES.RESIDENT_LIST_TOO_MANY_ITEMS]: '{{field}} không được có quá {{max}} mục',
   [CODES.RESIDENT_LIST_ITEM_LENGTH_INVALID]: 'Mỗi mục của {{field}} phải có độ dài từ {{min}} đến {{max}} ký tự',
   [CODES.RESIDENT_HEALTH_CONDITION_TOO_LONG]: 'initialHealthCondition không được vượt quá {{max}} ký tự',
+
+  [CODES.OTP_PHONE_MISSING]: 'Tài khoản chưa có số điện thoại để nhận mã xác thực',
+  [CODES.OTP_NOT_FOUND]: 'Không tìm thấy mã OTP',
+  [CODES.OTP_FORBIDDEN]: 'Mã OTP không thuộc về người dùng này',
+  [CODES.OTP_PURPOSE_MISMATCH]: 'Mã OTP không dùng được cho thao tác này',
+  [CODES.OTP_ALREADY_USED]: 'Mã OTP đã được sử dụng',
+  [CODES.OTP_EXPIRED]: 'Mã OTP đã hết hạn',
+  [CODES.OTP_INVALID]: 'Mã OTP không đúng',
+  [CODES.OTP_TOO_MANY_ATTEMPTS]: 'Bạn đã nhập sai quá nhiều lần. Vui lòng yêu cầu mã mới',
+  [CODES.OTP_RESEND_TOO_SOON]: 'Vui lòng đợi {{seconds}} giây trước khi gửi lại mã',
+  [CODES.OTP_SEND_FAILED]: 'Không gửi được mã xác thực. Vui lòng thử lại',
+
+  [CODES.WALLET_INSUFFICIENT_BALANCE]: 'Số dư ví không đủ để thanh toán hóa đơn này',
+  [CODES.WALLET_PAYMENT_AMOUNT_INVALID]: 'Số tiền thanh toán không hợp lệ',
+  [CODES.WALLET_PAYMENT_AMOUNT_MISMATCH]: 'Số tiền thanh toán không khớp với hóa đơn',
+  [CODES.WALLET_PAYMENT_INVOICE_REQUIRED]: 'Chưa chọn hóa đơn để thanh toán',
+  [CODES.WALLET_PAYMENT_TOO_MANY_INVOICES]: 'Chỉ có thể thanh toán tối đa {{max}} hóa đơn mỗi lần',
+  [CODES.WALLET_PAYMENT_OTP_REQUIRED]: 'Thanh toán bằng ví cần được xác thực bằng mã OTP',
+  [CODES.INVOICE_ALREADY_PAID]: 'Hóa đơn này đã được thanh toán',
+  [CODES.INVOICE_NOT_PAYABLE]: 'Hóa đơn này hiện không thể thanh toán',
 
   [CODES.INTERNAL_ERROR]: 'Đã xảy ra lỗi hệ thống',
 };

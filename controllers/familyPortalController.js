@@ -47,6 +47,26 @@ const getInvoicePaymentUrl = async (req, res) => {
   }
 };
 
+// Tạo checkout PayOS dạng JSON cho một hoá đơn — app di động tự vẽ QR trong app.
+const createInvoicePayosCheckout = async (req, res) => {
+  try {
+    const result = await familyPortalService.createInvoicePayosCheckout(req.user, req.params.residentId, req.params.invoiceId, req);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+// Xác thực trạng thái hoá đơn với PayOS (server-to-server) rồi mới đánh dấu đã trả.
+const verifyInvoicePayos = async (req, res) => {
+  try {
+    const result = await familyPortalService.verifyInvoicePayos(req.user, req.params.residentId, req.params.invoiceId);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const getVitals = async (req, res) => {
   try {
     const result = await familyPortalService.getVitals(req.user, req.params.residentId);
@@ -178,6 +198,31 @@ const downloadReport = async (req, res) => {
 const getWalletBalance = async (req, res) => {
   try {
     const result = await walletService.getWalletBalance(req.user);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+/**
+ * GET /api/family/wallet/transactions — LỊCH SỬ GIAO DỊCH HỢP NHẤT.
+ *
+ * Phạm vi lấy từ `req.user` của phiên đăng nhập. Không có tham số userId nào
+ * được chấp nhận từ client, nên gia đình này không thể đọc sổ của gia đình kia.
+ */
+const getWalletTransactions = async (req, res) => {
+  try {
+    const result = await walletService.listTransactions(req.user, req.query);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+/** GET /api/family/wallet/transactions/:transactionId — chi tiết một giao dịch. */
+const getWalletTransactionDetail = async (req, res) => {
+  try {
+    const result = await walletService.getTransactionById(req.user, req.params.transactionId);
     res.json({ success: true, data: result });
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -342,8 +387,12 @@ module.exports = {
   getResidentBillingSummary,
   getResidentInvoices,
   getInvoicePaymentUrl,
+  createInvoicePayosCheckout,
+  verifyInvoicePayos,
   getInvoiceDetail,
   getWalletBalance,
+  getWalletTransactions,
+  getWalletTransactionDetail,
   generateWalletTopupUrl,
   confirmWalletTopup,
   verifyWalletTopup,

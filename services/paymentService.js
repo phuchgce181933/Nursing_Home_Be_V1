@@ -151,16 +151,88 @@ const storeInvoicePayosOrderCode = async (invoiceId, orderCode) => {
   await Promise.all(ids.map((id) => invoiceRepo.updateById(id, { payosOrderCode: Number(orderCode) })));
 };
 
+/**
+ * Ghi nhận đầy đủ một hoá đơn được trả THẲNG qua PayOS (tiền KHÔNG đi qua ví).
+ *
+ * Trước đây luồng này chỉ đổi `status` của hoá đơn thành PAID: không có bản ghi
+ * `Payment`, không có dòng nào trong lịch sử tài chính của người nhà — tiền vào
+ * mà sổ sách trắng trơn. Hàm này bù đủ cả hai, và IDEMPOTENT theo
+ * `transactionRef = PAYOS-<orderCode>-<invoiceId>` nên webhook gửi lại bao nhiêu
+ * lần cũng chỉ sinh đúng một Payment và một dòng lịch sử.
+ *
+ * Số dư ví KHÔNG được đụng tới ở đây — tiền chưa bao giờ nằm trong ví.
+ */
+const recordPayosInvoiceSettlement = async (invoice, orderCode, reference) => {
+  const walletService = require('./walletService'); // nạp trễ: tránh vòng lặp require
+  const invoiceId = String(invoice._id);
+  const amount = normalizeCost(invoice.totalAmount);
+  const transactionRef = `PAYOS-${orderCode}-${invoiceId}`;
+
+  let payment = await paymentRepo.findByTransactionRef(transactionRef);
+  if (!payment && invoice.familyAccountId && amount > 0) {
+    try {
+      payment = await paymentRepo.create({
+        invoiceId,
+        paidByFamilyAccountId: invoice.familyAccountId,
+        // PayOS là cổng chuyển khoản ngân hàng — dùng đúng giá trị enum đã có,
+        // KHÔNG thêm giá trị enum mới chỉ để hiển thị.
+        paymentMethod: 'bank_transfer',
+        transactionRef,
+        amount,
+        paymentStatus: 'confirmed',
+        paidAt: new Date(),
+        confirmedAt: new Date(),
+        note: `Thanh toán qua PayOS (orderCode ${orderCode})`,
+      });
+    } catch (err) {
+      // Chạy song song hai webhook: bản ghi kia đã tạo trước -> đọc lại, không nhân đôi.
+      payment = await paymentRepo.findByTransactionRef(transactionRef);
+      if (!payment) console.error('[PayOS] Không ghi được Payment:', err.message || err);
+    }
+  }
+
+  if (invoice.familyAccountId && amount > 0) {
+    await walletService
+      .recordExternalInvoicePayment({
+        userId: invoice.familyAccountId,
+        amount,
+        invoiceId,
+        invoiceNumber: invoice.invoiceNumber,
+        orderCode,
+        reference,
+      })
+      .catch((err) => console.error('[PayOS] Không ghi được lịch sử giao dịch:', err.message || err));
+  }
+
+  await createAuditLog({
+    actorUserId: invoice.familyAccountId || null,
+    actorRole: 'family',
+    action: 'INVOICE_PAID_PAYOS',
+    module: 'billing',
+    targetEntityType: 'Invoice',
+    targetEntityId: invoice._id,
+    // Chỉ lưu tham chiếu đối soát — không bao giờ lưu chữ ký/secret của PayOS.
+    afterData: { invoiceNumber: invoice.invoiceNumber, amount, orderCode, paymentMethod: 'payos' },
+  }).catch(() => {});
+
+  return payment;
+};
+
 // Called from the (signature-verified) PayOS webhook: the webhook payload itself already IS the
 // verified confirmation, so this looks invoices up by the orderCode PayOS reports and marks them
 // paid directly, without a further PayOS API round-trip.
-const confirmInvoicesByOrderCode = async (orderCode) => {
+const confirmInvoicesByOrderCode = async (orderCode, reference) => {
   const invoices = await invoiceRepo.findByPayosOrderCode(orderCode);
   const paid = [];
   for (const invoice of invoices) {
-    if (invoice.status === 'PAID') continue;
-    const updated = await markInvoiceAsPaid(invoice._id);
-    paid.push(updated);
+    // Hoá đơn đã PAID: bỏ qua việc đổi trạng thái, nhưng VẪN chạy phần ghi sổ —
+    // hàm ghi sổ tự chống trùng, nên đây là chỗ vá cho các hoá đơn đã được đánh
+    // dấu PAID từ trước mà chưa có Payment/lịch sử.
+    if (invoice.status !== 'PAID') {
+      await markInvoiceAsPaid(invoice._id);
+    }
+    await recordPayosInvoiceSettlement(invoice, orderCode, reference);
+    paid.push(invoice);
   }
   return paid;
 };
@@ -189,6 +261,12 @@ const verifyAndMarkInvoicePaid = async (invoiceId) => {
   const payosStatus = String(paymentData.status || 'PENDING').toUpperCase();
   if (payosStatus === 'PAID') {
     const updated = await markInvoiceAsPaid(invoiceId);
+    // Ghi sổ đầy đủ: Payment + lịch sử tài chính. Idempotent nên chạy lại vô hại.
+    await recordPayosInvoiceSettlement(
+      invoice,
+      invoice.payosOrderCode,
+      paymentData?.transactions?.[0]?.reference,
+    );
     return { status: 'PAID', invoice: updated };
   }
   return { status: payosStatus };
@@ -1288,4 +1366,5 @@ module.exports = {
   storeInvoicePayosOrderCode,
   verifyAndMarkInvoicePaid,
   confirmInvoicesByOrderCode,
+  recordPayosInvoiceSettlement,
 };

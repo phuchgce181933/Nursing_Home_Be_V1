@@ -27,7 +27,7 @@ const VITAL_RANGES = {
   pulse: { min: 30, max: 220 },
   temperatureCelsius: { min: 30, max: 45 },
   oxygenSaturation: { min: 0, max: 100 },
-  bloodSugar: { min: 20, max: 800 },
+  bloodSugar: { min: 0, max: 50 },
   weightKg: { min: 1, max: 300 },
   heightCm: { min: 30, max: 250 },
 };
@@ -73,6 +73,7 @@ const checkAbnormalVitals = (body) => {
     pulse,
     temperatureCelsius,
     oxygenSaturation,
+    bloodSugar,
   } = body;
 
   // Standard vital thresholds
@@ -90,6 +91,9 @@ const checkAbnormalVitals = (body) => {
   }
   if (pulse !== undefined && (pulse > 100 || pulse < 60)) {
     return true; // Tachycardia or bradycardia
+  }
+  if (bloodSugar !== undefined && (bloodSugar > 5.5 || bloodSugar < 3.9)) {
+    return true; // Outside the normal mmol/L range
   }
 
   return false;
@@ -359,6 +363,17 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
   const fileUploads = Array.isArray(req.files) ? req.files : [];
   const uploadedSelectedServices = await uploadSelectedServiceImages(selectedServices, fileUploads, residentId);
   const normalizedSelectedServices = normalizeSelectedServices(uploadedSelectedServices);
+  console.log('[medicalRecordService] normalized selectedServices:', {
+    inputCount: Array.isArray(selectedServices) ? selectedServices.length : 0,
+    normalizedCount: normalizedSelectedServices.length,
+    services: normalizedSelectedServices.map((service) => ({
+      serviceId: service.serviceId,
+      serviceCode: service.serviceCode,
+      serviceName: service.serviceName,
+      quantity: service.quantity,
+      unitPrice: service.unitPrice,
+    })),
+  });
   const serviceFieldsAbnormal = await checkAbnormalSelectedServiceFields(normalizedSelectedServices, resident.gender);
   const abnormalFlag = checkAbnormalVitals(body) || serviceFieldsAbnormal;
 
@@ -439,11 +454,11 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     }
   }
 
-  // If selectedServices provided, create charges (with origin linked to this record) and invoice for them
-  if (body.selectedServices && Array.isArray(body.selectedServices) && body.selectedServices.length > 0 && (consentToPayment === true || consentToPayment === 'true')) {
-    console.log('[medicalRecordService] Creating charges for resident:', residentId, 'Services:', body.selectedServices.length);
+  // Selected clinical services always generate charges and an invoice.
+  if (normalizedSelectedServices.length > 0) {
+    console.log('[medicalRecordService] Creating charges for resident:', residentId, 'Services:', normalizedSelectedServices.length);
     const createdCharges = [];
-    for (const s of body.selectedServices) {
+    for (const s of normalizedSelectedServices) {
       try {
         const charge = await chargeService.createChargeForRecord({
           originType: 'MedicalRecord',
@@ -457,6 +472,7 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
           performedAt: new Date(),
           quantity: s.quantity || 1,
           unitPrice: s.unitPrice || 0,
+          req,
         });
         if (charge) {
           console.log('[medicalRecordService] Charge created successfully:', charge._id);
@@ -464,6 +480,7 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
         }
       } catch (err) {
         console.error('[medicalRecordService] Failed creating charge for selected service:', s.serviceName, err.message || err);
+        throw err;
       }
     }
     console.log('[medicalRecordService] Total charges created:', createdCharges.length);
@@ -475,12 +492,18 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
       category: 'SERVICE',
     }));
 
-    // Charges are created in PENDING state here. Invoice creation is deferred until an admin
-    // explicitly generates the invoice for these clinical service charges.
     if (items.length) {
-      console.log(
-        `[medicalRecordService] Created ${items.length} service charge(s) for resident ${residentId}; invoice generation deferred.`
-      );
+      const invoice = await paymentService.createInvoice(user, residentId, {
+        items,
+        paymentMethod,
+        paymentPlan: 'FULL',
+      }, req);
+      invoiceId = invoice?._id || null;
+      if (invoiceId) {
+        record.invoiceId = invoiceId;
+        await record.save();
+      }
+      console.log(`[medicalRecordService] Created invoice ${invoiceId} for ${items.length} clinical service charge(s).`);
     }
   }
 

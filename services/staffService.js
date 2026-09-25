@@ -322,8 +322,8 @@ const updateStaffProfile = async (id, body, currentUser, req = null) => {
   await userRepo.saveUser(user);
 
   let profile = await staffProfileRepo.findByUserId(id);
+  const profileUpdate = {};
   if (profile) {
-    const profileUpdate = {};
     if (specialty !== undefined) profileUpdate.specialty = specialty?.trim() || undefined;
     if (certifications !== undefined) profileUpdate.certifications = Array.isArray(certifications) ? certifications : [];
     if (profile.roleCategory !== user.role) {

@@ -9,6 +9,15 @@ const { createAuditLog } = require('../utils/auditLog');
 
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 
+// Translate noteType for display in audit logs
+const NOTE_TYPE_LABELS = {
+  meal: 'Bữa ăn',
+  activity: 'Hoạt động',
+  daily_living: 'Sinh hoạt hàng ngày',
+  health: 'Sức khỏe',
+  general: 'Tổng quát',
+};
+
 // Meal metadata
 const VALID_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 const VALID_INTAKE_AMOUNTS = ['none', 'little', 'half', 'most', 'all'];
@@ -199,11 +208,15 @@ const createNote = async (user, body, req) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'CREATE',
     module: 'CareNote',
+    displayAction: 'Tạo ghi chú chăm sóc',
     targetEntityType: 'CareNote',
     targetEntityId: note._id,
-    afterData: note.toObject(),
+    targetName: `${resident.fullName} — ${NOTE_TYPE_LABELS[resolvedType] || resolvedType}`,
+    description: `Tạo ghi chú chăm sóc "${NOTE_TYPE_LABELS[resolvedType] || resolvedType}" cho cư dân ${resident.fullName}`,
+    afterData: { noteType: resolvedType, content: content.trim(), noteAt: note.noteAt, residentName: resident.fullName },
     req,
   });
 
@@ -336,15 +349,34 @@ const updateNote = async (user, id, body, req) => {
   }
   await careNoteRepo.saveNote(note);
 
+  const updatedNoteType = body.noteType || note.noteType;
+
+  const afterObj = note.toObject();
+  // Clean up metadata if needed to avoid large objects in audit
+  const afterData = { ...afterObj };
+  delete afterData.__v;
+
+  // Resolve creator name for audit log metadata
+  let creatorName = '—';
+  try {
+    const creatorProfile = await staffProfileRepo.findByIdWithUser(note.authorStaffId);
+    if (creatorProfile?.userId?.fullName) creatorName = creatorProfile.userId.fullName;
+  } catch (_) {}
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'UPDATE',
     module: 'CareNote',
+    displayAction: 'Cập nhật ghi chú chăm sóc',
     targetEntityType: 'CareNote',
     targetEntityId: note._id,
+    targetName: `Ghi chú "${NOTE_TYPE_LABELS[updatedNoteType] || updatedNoteType}" (${note._id.toString().slice(-6)})`,
+    description: `Cập nhật ghi chú chăm sóc loại "${NOTE_TYPE_LABELS[updatedNoteType] || updatedNoteType}"`,
     beforeData: before,
-    afterData: note.toObject(),
+    afterData,
+    metadata: { createdByName: creatorName },
     req,
   });
 
@@ -367,14 +399,26 @@ const deleteNote = async (user, id, req) => {
   const before = note.toObject();
   await careNoteRepo.deleteNote(note);
 
+  // Resolve creator name for audit log metadata
+  let creatorName = '—';
+  try {
+    const creatorProfile = await staffProfileRepo.findByIdWithUser(note.authorStaffId);
+    if (creatorProfile?.userId?.fullName) creatorName = creatorProfile.userId.fullName;
+  } catch (_) {}
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'DELETE',
     module: 'CareNote',
+    displayAction: 'Xóa ghi chú chăm sóc',
     targetEntityType: 'CareNote',
     targetEntityId: before._id,
+    targetName: `Ghi chú "${NOTE_TYPE_LABELS[note.noteType] || note.noteType}" (${note._id.toString().slice(-6)})`,
+    description: `Xóa ghi chú chăm sóc loại "${NOTE_TYPE_LABELS[note.noteType] || note.noteType}"`,
     beforeData: before,
+    metadata: { createdByName: creatorName },
     req,
   });
 

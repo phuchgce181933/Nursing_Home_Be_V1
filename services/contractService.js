@@ -7,6 +7,10 @@ const servicePackageRepo = require('../repositories/servicePackageRepository');
 const invoiceRepo = require('../repositories/invoiceRepository');
 const bedRepo = require('../repositories/bedRepository');
 const roomRepo = require('../repositories/roomRepository');
+const careTaskRepo = require('../repositories/careTaskRepository');
+const staffProfileRepo = require('../repositories/staffProfileRepository');
+const careAppointmentRepo = require('../repositories/careAppointmentRepository');
+const CareTask = require('../models/careTask');
 const walletService = require('./walletService');
 const { createAuditLog } = require('../utils/auditLog');
 
@@ -287,18 +291,77 @@ const createContract = async (admin, admissionId, body, req) => {
   // Hóa đơn luôn khởi tạo ở trạng thái 'DRAFT' (chưa xuất) — chỉ Admin thấy,
   // gia đình chỉ thấy sau khi Admin bấm "Xuất hóa đơn" (flip DRAFT → ISSUED).
   const invoiceAmountFactor = paymentPlan === 'HALF_NOW' ? 0.5 : 1;
-  const perInvoiceGross = Math.round(monthlyFeeAfterDiscount * invoiceAmountFactor);
-  const perInvoiceOriginalGross = paymentPlan === 'HALF_NOW' ? monthlyFee : monthlyFee;
   const perInvoiceRemainingFactor = paymentPlan === 'HALF_NOW' ? 0.5 : 0;
+  // Số tiền nếu tính trên CẢ THÁNG (chưa proration):
+  //   FULL / MONTHLY: monthlyFee (đã discount)
+  //   HALF_NOW:       monthlyFee * 0.5 (phần trả ngay)
+  const fullMonthInvoiceGross = Math.round(monthlyFeeAfterDiscount * invoiceAmountFactor);
+  const fullMonthRemaining = Math.round(monthlyFeeAfterDiscount * perInvoiceRemainingFactor);
+  const perInvoiceOriginalGross = paymentPlan === 'HALF_NOW' ? monthlyFee : monthlyFee;
+
+  /**
+   * Tính số ngày inclusive trong [start, end] (cả 2 đầu).
+   * Vd: 25/09 00:00 → 30/09 23:59 = 6 ngày (25, 26, 27, 28, 29, 30).
+   */
+  const daysBetweenInclusive = (start, end) => {
+    const ms = end.getTime() - start.getTime();
+    return Math.floor(ms / 86400000) + 1;
+  };
 
   for (let i = 0; i < invoiceCount; i++) {
-    const periodStart = new Date(contract.startDate);
-    periodStart.setMonth(periodStart.getMonth() + i);
-    periodStart.setDate(1);
+    // ── Tính kỳ hóa đơn ─────────────────────────────────────────────
+    // Quy tắc đúng:
+    //   • Hóa đơn ĐẦU TIÊN (i=0): bắt đầu từ contract.startDate (có thể giữa tháng),
+    //     kết thúc cuối tháng đó — vì ngày vào viện thực tế có thể là ngày 24.
+    //   • Hóa đơn GIỮA (i>0 và không phải cuối): 1 → cuối tháng của tháng tương ứng.
+    //   • Hóa đơn CUỐI (i=invoiceCount-1): kết thúc tại contract.endDate (hợp đồng
+    //     có thể kết thúc giữa tháng), fallback cuối tháng nếu không có endDate.
+    const isFirst = i === 0;
+    const isLast = i === invoiceCount - 1;
 
-    const periodEnd = new Date(periodStart);
-    periodEnd.setMonth(periodEnd.getMonth() + 1);
-    periodEnd.setDate(0); // Last day of month
+    let periodStart;
+    if (isFirst) {
+      // Hóa đơn đầu: lấy đúng contract.startDate (giữ nguyên giờ/phút, reset giờ về 00:00)
+      periodStart = new Date(contract.startDate);
+      periodStart.setHours(0, 0, 0, 0);
+    } else {
+      // Hóa đơn sau: ngày 1 của tháng thứ (startMonth + i)
+      periodStart = new Date(contract.startDate);
+      periodStart.setMonth(periodStart.getMonth() + i);
+      periodStart.setDate(1);
+      periodStart.setHours(0, 0, 0, 0);
+    }
+
+    let periodEnd;
+    if (isLast && contract.endDate) {
+      // Hóa đơn cuối: cắt theo contract.endDate
+      periodEnd = new Date(contract.endDate);
+      periodEnd.setHours(23, 59, 59, 999);
+    } else {
+      // Cuối tháng của periodStart
+      periodEnd = new Date(periodStart);
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      periodEnd.setDate(0); // last day of month
+      periodEnd.setHours(23, 59, 59, 999);
+    }
+
+    // ── Tính proration theo ngày ────────────────────────────────────
+    // Phí tháng = 200.000 VND. Nếu hóa đơn chỉ cover một phần tháng (vd vào viện
+    // ngày 25/09 → 30/09 = 6 ngày trong tháng có 30 ngày), tiền hóa đơn = 200k * 6/30
+    // = 40.000 VND. Cả hóa đơn đầu (giữa tháng) và hóa đơn cuối (giữa tháng) đều
+    // được tính theo công thức này. Hóa đơn giữa kỳ (cả tháng) sẽ có ratio = 1.
+    const monthLength = new Date(
+      periodStart.getFullYear(),
+      periodStart.getMonth() + 1,
+      0
+    ).getDate();
+    const daysInPeriod = daysBetweenInclusive(periodStart, periodEnd);
+    // Giới hạn ratio ở [0, 1] phòng trường hợp periodEnd > cuối tháng thực tế
+    const prorationRatio = Math.min(1, Math.max(0, daysInPeriod / monthLength));
+    const isPartialMonth = prorationRatio < 1;
+
+    const perInvoiceGross = Math.round(fullMonthInvoiceGross * prorationRatio);
+    const remainingAmount = Math.round(fullMonthRemaining * prorationRatio);
 
     // Invoice number format: HD-YYYYMMDD-XXX (XXX = sequential number)
     const invoiceNumber = `HD-${contract.contractNumber}-${String(i + 1).padStart(3, '0')}`;
@@ -324,10 +387,18 @@ const createContract = async (admin, admissionId, body, req) => {
       careServiceCost: perInvoiceGross,
       total: perInvoiceGross,
       totalAmount: perInvoiceGross,
-      // HALF_NOW: 50% còn lại được ghi nhận remaining; FULL/MONTHLY: 0 (đã bao gồm trong totalAmount)
-      remainingAmount: Math.round(monthlyFeeAfterDiscount * perInvoiceRemainingFactor),
+      // HALF_NOW: 50% còn lại (cũng pro-rated). FULL/MONTHLY: 0
+      // Vd HALF_NOW, monthlyFee=200k, proration=0.2 → careServiceCost=20k,
+      // remainingAmount=20k. Tổng phải thu trong tháng = 40k = 200k * 6/30.
+      remainingAmount,
+      // Giữ giá gốc CẢ THÁNG (chưa pro-rate) để admin đối chiếu khi cần
       originalTotalAmount: perInvoiceOriginalGross,
       subTotal: perInvoiceGross,
+      // Proration metadata — giúp frontend hiển thị "tính theo X/Y ngày" cho admin
+      prorationDays: daysInPeriod,
+      prorationMonthDays: monthLength,
+      prorationRatio: Number(prorationRatio.toFixed(4)),
+      isPartialMonth,
       createdBy: admin._id?.toString(),
     };
 
@@ -392,6 +463,7 @@ const createContract = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'CREATE_CONTRACT',
+    displayAction: 'Tạo hợp đồng',
     module: 'contract',
     targetEntityType: 'Contract',
     targetEntityId: contract._id,
@@ -417,6 +489,10 @@ const createContract = async (admin, admissionId, body, req) => {
   return {
     message: 'Đã tạo hợp đồng thành công',
     contract,
+    invoiceCount,
+    invoiceNumbers: Array.from({ length: invoiceCount }, (_, idx) =>
+      `HD-${contract.contractNumber}-${String(idx + 1).padStart(3, '0')}`
+    ),
   };
 };
 
@@ -573,7 +649,7 @@ const getContractDetails = async (contractId, user) => {
   };
 };
 
-// ── UC-213: Renew Contract ────────────────────────────────────────────────────
+// ── UC-213: Renew / Extend Contract ───────────────────────────────────────────
 const renewContract = async (admin, contractId, body, req) => {
   const existingContract = await contractRepo.findById(contractId);
   if (!existingContract) {
@@ -587,7 +663,7 @@ const renewContract = async (admin, contractId, body, req) => {
   const { startDate, endDate, servicePackageId, durationMonths, discountPercent } = body;
 
   // Validate new dates
-  const newStartDate = startDate ? new Date(startDate) : new Date();
+  const newStartDate = startDate ? new Date(startDate) : existingContract.startDate;
   const newEndDate = endDate ? new Date(endDate) : null;
 
   if (newStartDate && Number.isNaN(newStartDate.getTime())) {
@@ -630,92 +706,172 @@ const renewContract = async (admin, contractId, body, req) => {
     servicePkg = await servicePackageRepo.findById(existingContract.servicePackageId);
   }
 
-  // Mark old contract as expired
-  await contractRepo.updateById(existingContract._id, {
-    status: 'expired',
-  });
+  const oldData = {
+    startDate: existingContract.startDate,
+    endDate: existingContract.endDate,
+    durationMonths: existingContract.durationMonths,
+    discountPercent: existingContract.discountPercent,
+    servicePackageId: existingContract.servicePackageId,
+    status: existingContract.status,
+  };
 
-  // Create new contract
-  const newContractNumber = generateContractNumber();
-  // Payment plan: gia hạn giữ nguyên hình thức thanh toán của HĐ cũ (hoặc cho phép override).
-  const renewPaymentPlanRaw = String(body?.paymentPlan || existingContract.paymentPlan || 'MONTHLY').toUpperCase();
-  const renewPaymentPlan = ['FULL', 'HALF_NOW', 'MONTHLY'].includes(renewPaymentPlanRaw)
-    ? renewPaymentPlanRaw
-    : (existingContract.paymentPlan || 'MONTHLY');
-
-  const newContract = await contractRepo.create({
-    contractNumber: newContractNumber,
-    admissionId: existingContract.admissionId,
-    residentId: existingContract.residentId,
-    familyAccountId: existingContract.familyAccountId,
-    servicePackageId: servicePackageId || existingContract.servicePackageId,
-    signedAt: new Date(),
+  // Update existing contract (1-to-1: extend, not create new)
+  const updateFields = {
     startDate: newStartDate,
     endDate: newEndDate,
-    durationMonths: newDurationMonths ? Math.floor(newDurationMonths) : existingContract.durationMonths,
+    durationMonths: newDurationMonths
+      ? Math.floor(newDurationMonths)
+      : existingContract.durationMonths,
     discountPercent: newDiscountPercent,
-    monthlyFee: servicePkg ? Number(servicePkg.monthlyPrice) || 0 : existingContract.monthlyFee,
-    paymentPlan: renewPaymentPlan,
-    terms: body?.terms?.trim() || existingContract.terms,
-    notes: body?.notes?.trim(),
     status: 'active',
-    previousContractId: existingContract._id,
-    isRenewal: true,
-    createdBy: admin._id,
-  });
+  };
+  if (servicePackageId) {
+    updateFields.servicePackageId = servicePkg._id;
+    updateFields.monthlyFee = Number(servicePkg.monthlyPrice) || 0;
+  }
+  if (body?.terms !== undefined) {
+    updateFields.terms = body.terms?.trim() || existingContract.terms;
+  }
+  if (body?.notes !== undefined) {
+    updateFields.notes = body.notes?.trim() || existingContract.notes;
+  }
 
-  // Update admission with new contract info.
-  // Cư dân đã được tiếp nhận trước đó, chỉ gia hạn hợp đồng → giữ 'checked_in'.
+  const updatedContract = await contractRepo.updateById(existingContract._id, updateFields);
+
+  // Cancel existing pending service invoices for this contract
+  const pendingInvoices = await invoiceRepo.findAll({
+    contractId: existingContract._id,
+    status: { $in: ['DRAFT', 'ISSUED'] },
+  });
+  for (const invoice of pendingInvoices) {
+    await invoiceRepo.updateById(invoice._id, {
+      status: 'CANCELLED',
+      cancellationReason: 'Hợp đồng đã được gia hạn.',
+    });
+  }
+
+  // Create new DRAFT invoices for the extended contract (same logic as createContract)
+  const monthlyFee = Number(updatedContract.monthlyFee) || 0;
+  const invoiceDurationMonths = updatedContract.durationMonths || 12;
+  const monthlyFeeAfterDiscount = monthlyFee * (1 - ((updatedContract.discountPercent || 0) / 100));
+  const paymentPlan = updatedContract.paymentPlan || 'MONTHLY';
+  const invoiceAmountFactor = paymentPlan === 'HALF_NOW' ? 0.5 : 1;
+  const perInvoiceRemainingFactor = paymentPlan === 'HALF_NOW' ? 0.5 : 0;
+  const fullMonthInvoiceGross = Math.round(monthlyFeeAfterDiscount * invoiceAmountFactor);
+  const fullMonthRemaining = Math.round(monthlyFeeAfterDiscount * perInvoiceRemainingFactor);
+  const perInvoiceOriginalGross = monthlyFee;
+
+  /**
+   * Số ngày inclusive trong [start, end] (cả 2 đầu). Vd: 25/09 00:00 → 30/09 23:59 = 6.
+   */
+  const daysBetweenInclusive = (start, end) => {
+    const ms = end.getTime() - start.getTime();
+    return Math.floor(ms / 86400000) + 1;
+  };
+
+  const createdInvoices = [];
+  for (let i = 0; i < invoiceDurationMonths; i++) {
+    const isLast = i === invoiceDurationMonths - 1;
+
+    // periodStart: tháng thứ i sau contract.startDate, bắt đầu từ ngày 1
+    const periodStart = new Date(updatedContract.startDate);
+    periodStart.setMonth(periodStart.getMonth() + i);
+    periodStart.setDate(1);
+    periodStart.setHours(0, 0, 0, 0);
+
+    // periodEnd: nếu là hóa đơn cuối VÀ contract có endDate → cắt theo endDate;
+    // ngược lại lấy cuối tháng.
+    let periodEnd;
+    if (isLast && updatedContract.endDate) {
+      periodEnd = new Date(updatedContract.endDate);
+      periodEnd.setHours(23, 59, 59, 999);
+    } else {
+      periodEnd = new Date(periodStart);
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      periodEnd.setDate(0); // last day of month
+      periodEnd.setHours(23, 59, 59, 999);
+    }
+
+    // ── Proration theo ngày ─────────────────────────────────────────
+    // Hóa đơn cuối (gia hạn tới giữa tháng) sẽ bị tính theo số ngày thực tế.
+    // Các hóa đơn trước đó cả tháng → ratio = 1 → amount = fullMonthInvoiceGross.
+    const monthLength = new Date(
+      periodStart.getFullYear(),
+      periodStart.getMonth() + 1,
+      0
+    ).getDate();
+    const daysInPeriod = daysBetweenInclusive(periodStart, periodEnd);
+    const prorationRatio = Math.min(1, Math.max(0, daysInPeriod / monthLength));
+    const isPartialMonth = prorationRatio < 1;
+    const perInvoiceGross = Math.round(fullMonthInvoiceGross * prorationRatio);
+    const remainingAmount = Math.round(fullMonthRemaining * prorationRatio);
+
+    const invoiceNumber = `HD-${updatedContract.contractNumber}-${String(i + 1).padStart(3, '0')}`;
+    const invoiceData = {
+      invoiceNumber,
+      residentId: updatedContract.residentId,
+      contractId: updatedContract._id,
+      admissionId: updatedContract.admissionId,
+      familyAccountId: updatedContract.familyAccountId,
+      type: 'SERVICE',
+      paymentPlan,
+      periodStart,
+      periodEnd,
+      careServiceCost: perInvoiceGross,
+      billingPeriodStart: periodStart,
+      billingPeriodEnd: periodEnd,
+      subTotal: perInvoiceGross,
+      tax: 0,
+      total: perInvoiceGross,
+      totalAmount: perInvoiceGross,
+      remainingAmount,
+      originalTotalAmount: perInvoiceOriginalGross,
+      status: 'DRAFT',
+      prorationDays: daysInPeriod,
+      prorationMonthDays: monthLength,
+      prorationRatio: Number(prorationRatio.toFixed(4)),
+      isPartialMonth,
+    };
+    const newInvoice = await invoiceRepo.create(invoiceData);
+    createdInvoices.push(newInvoice);
+  }
+
+  // Sync admission record
   await admissionRepo.updateAdmission(existingContract.admissionId, {
     status: 'checked_in',
-    contractNumber: newContract.contractNumber,
-    contractStartDate: newContract.startDate,
-    contractEndDate: newContract.endDate,
-    contractDurationMonths: newContract.durationMonths,
-    contractDiscountPercent: newContract.discountPercent,
+    contractStartDate: updatedContract.startDate,
+    contractEndDate: updatedContract.endDate,
+    contractDurationMonths: updatedContract.durationMonths,
+    contractDiscountPercent: updatedContract.discountPercent,
     contractStatus: 'active',
-    contractSignedAt: newContract.signedAt,
     servicePackageId: servicePackageId || existingContract.servicePackageId,
   });
 
-  // Audit log for old contract
+  // Audit log
   await createAuditLog({
     actorUserId: admin._id,
     actorRole: admin.role,
-    action: 'RENEW_CONTRACT',
+    action: 'EXTEND_CONTRACT',
+    displayAction: 'Gia hạn hợp đồng',
     module: 'contract',
     targetEntityType: 'Contract',
     targetEntityId: existingContract._id,
-    beforeData: { status: existingContract.status, endDate: existingContract.endDate },
-    afterData: { status: 'expired', replacedBy: newContract._id },
-    req,
-  });
-
-  // Audit log for new contract
-  await createAuditLog({
-    actorUserId: admin._id,
-    actorRole: admin.role,
-    action: 'CREATE_CONTRACT',
-    module: 'contract',
-    targetEntityType: 'Contract',
-    targetEntityId: newContract._id,
-    beforeData: { admissionId: existingContract.admissionId },
+    beforeData: oldData,
     afterData: {
-      contractNumber: newContract.contractNumber,
-      startDate: newContract.startDate,
-      endDate: newContract.endDate,
-      durationMonths: newContract.durationMonths,
-      discountPercent: newContract.discountPercent,
-      isRenewal: true,
-      previousContractId: existingContract._id,
+      startDate: updatedContract.startDate,
+      endDate: updatedContract.endDate,
+      durationMonths: updatedContract.durationMonths,
+      discountPercent: updatedContract.discountPercent,
+      servicePackageId: updatedContract.servicePackageId,
+      status: 'active',
     },
     req,
   });
 
   return {
     message: 'Đã gia hạn hợp đồng thành công',
-    oldContract: { _id: existingContract._id, status: 'expired' },
-    newContract,
+    contract: updatedContract,
+    invoices: createdInvoices,
   };
 };
 
@@ -735,6 +891,102 @@ const terminateContract = async (admin, contractId, body, req) => {
     throw new ServiceError('Vui lòng nhập lý do chấm dứt hợp đồng.', 400);
   }
 
+  // Get resident to find bed and room
+  const residentId = contract.residentId?._id || contract.residentId;
+  const resident = residentId ? await residentRepo.findById(residentId) : null;
+
+  // Capture roomId BEFORE releasing bed so we can decrement occupiedCount
+  const roomId = resident?.roomId?._id || resident?.roomId || null;
+
+  // Free the bed the resident is occupying
+  if (resident?.bedId) {
+    const bedId = resident.bedId?._id || resident.bedId;
+    if (bedId) {
+      await bedRepo.releaseBed(bedId, new Date());
+    }
+  }
+
+  // Decrement room.occupiedCount (if resident was assigned to a room)
+  if (roomId) {
+    try {
+      await roomRepo.adjustOccupiedCount(roomId, -1);
+    } catch (roomErr) {
+      console.error('[terminateContract] adjustOccupiedCount(-1) failed:', roomErr.message);
+      // Non-critical — occupiedCount will be corrected by syncAllRoomOccupancy later
+    }
+  }
+
+  // Unassign resident from room (clear room assignment)
+  if (resident) {
+    await residentRepo.updateById(residentId, {
+      roomId: null,
+      bedId: null,
+      residencyStatus: 'discharged',
+    });
+  }
+
+  // Cancel pending care tasks for this resident
+  const pendingTasks = await CareTask.find({
+    residentId: residentId,
+    status: { $in: ['pending', 'in_progress'] },
+  }).lean();
+  for (const task of pendingTasks) {
+    await careTaskRepo.updateById(task._id, {
+      status: 'cancelled',
+      notes: task.notes
+        ? `${task.notes}\n[Tự động] Đã hủy do chấm dứt hợp đồng cư dân.`
+        : '[Tự động] Đã hủy do chấm dứt hợp đồng cư dân.',
+    });
+  }
+
+  // Unassign resident from all staff profiles that currently have them in assignedResidentIds.
+  // Sau khi chấm dứt hợp đồng, cư dân đã xuất viện — nhân viên không nên còn thấy họ trong
+  // danh sách "Cư dân phụ trách" / "Theo dõi sức khỏe". Các CareTask pending đã bị huỷ ở trên
+  // nên an toàn để gỡ assignment ngay (không còn ràng buộc chặn).
+  let unassignedStaffCount = 0;
+  const unassignedStaffProfiles = residentId
+    ? await staffProfileRepo.findByAssignedResidentId(residentId)
+    : [];
+  for (const profile of unassignedStaffProfiles) {
+    try {
+      await staffProfileRepo.updateOne(
+        { _id: profile._id },
+        { $pull: { assignedResidentIds: residentId } }
+      );
+      unassignedStaffCount += 1;
+    } catch (err) {
+      console.error(
+        `[terminateContract] Failed to pull resident ${residentId} from staff ${profile._id}:`,
+        err
+      );
+    }
+  }
+
+  // Cancel all intake clinical appointments tied to this admission/resident so they no longer
+  // appear as "active" anywhere (doctor's queue, family schedule, etc.) after discharge.
+  // Hủy tất cả trạng thái trừ `cancelled` — bao gồm cả `completed` của chu kỳ cũ — để nếu sau
+  // đó gia đình gửi lại yêu cầu nhập viện và Admin duyệt, guard trong approveAdmission sẽ
+  // tự tạo appointment intake mới (không bị chặn bởi appointment cũ đã hoàn thành).
+  let cancelledIntakeAppointmentsCount = 0;
+  if (residentId || contract.admissionId) {
+    const intakeFilter = {
+      appointmentType: 'Khám lâm sàng đầu vào',
+      status: { $nin: ['cancelled'] },
+      $or: [],
+    };
+    if (contract.admissionId) intakeFilter.$or.push({ admissionId: contract.admissionId });
+    if (residentId) intakeFilter.$or.push({ residentId });
+    const cancelApptResult = await careAppointmentRepo.updateMany(intakeFilter, {
+      $set: {
+        status: 'cancelled',
+        notes:
+          '[Auto-cancelled] Hợp đồng của cư dân đã bị chấm dứt — lịch khám không còn hiệu lực.',
+      },
+    });
+    cancelledIntakeAppointmentsCount =
+      cancelApptResult?.modifiedCount || cancelApptResult?.nModified || 0;
+  }
+
   // Update contract status
   const updatedContract = await contractRepo.updateById(contract._id, {
     status: 'terminated',
@@ -743,12 +995,15 @@ const terminateContract = async (admin, contractId, body, req) => {
     cancelledBy: admin._id,
   });
 
-  // Update admission - reset to allow new contract
+  // Update admission - reset to allow new admission cycle (family resubmits via separate endpoint).
+  // Note: We DO reset eligibilityStatus to 'pending' here because the resident has been discharged
+  // and any future re-admission must go through doctor's clinical evaluation again from scratch.
   await admissionRepo.updateAdmission(contract.admissionId, {
-    status: 'new_request',
+    status: 'checked_in',
     contractStatus: 'cancelled',
     contractCancelledAt: new Date(),
     contractCancellationReason: cancellationReason,
+    eligibilityStatus: 'pending',
   });
 
   // Cancel pending invoices
@@ -768,17 +1023,24 @@ const terminateContract = async (admin, contractId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'TERMINATE_CONTRACT',
+    displayAction: 'Chấm dứt hợp đồng',
     module: 'contract',
     targetEntityType: 'Contract',
     targetEntityId: contract._id,
     beforeData: {
       contractNumber: contract.contractNumber,
       status: contract.status,
+      bedId: resident?.bedId || null,
     },
     afterData: {
       contractNumber: contract.contractNumber,
       status: 'terminated',
       cancellationReason,
+      bedFreed: Boolean(resident?.bedId),
+      roomOccupancyDecremented: Boolean(roomId),
+      tasksCancelled: pendingTasks.length,
+      staffUnassigned: unassignedStaffCount,
+      intakeAppointmentsCancelled: cancelledIntakeAppointmentsCount,
     },
     req,
   });
@@ -786,6 +1048,12 @@ const terminateContract = async (admin, contractId, body, req) => {
   return {
     message: 'Đã chấm dứt hợp đồng thành công',
     contract: updatedContract,
+    bedFreed: Boolean(resident?.bedId),
+    roomOccupancyDecremented: Boolean(roomId),
+    tasksCancelled: pendingTasks.length,
+    staffUnassigned: unassignedStaffCount,
+    intakeAppointmentsCancelled: cancelledIntakeAppointmentsCount,
+    eligibilityStatusReset: true,
   };
 };
 
@@ -858,6 +1126,7 @@ const issueInvoices = async (admin, contractId, body = {}, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'ISSUE_INVOICES',
+    displayAction: 'Xuất hóa đơn',
     module: 'contract',
     targetEntityType: 'Contract',
     targetEntityId: contract._id,
@@ -961,6 +1230,7 @@ const recalculateContractInvoices = async (admin, contractId, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'RECALCULATE_CONTRACT_INVOICES',
+    displayAction: 'Tính lại hóa đơn hợp đồng',
     module: 'contract',
     targetEntityType: 'Contract',
     targetEntityId: contract._id,
@@ -1092,6 +1362,7 @@ const updateDraftInvoicePrice = async (admin, invoiceId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'UPDATE_DRAFT_INVOICE',
+    displayAction: 'Cập nhật hóa đơn nháp',
     module: 'contract',
     targetEntityType: 'Invoice',
     targetEntityId: invoiceId,
@@ -1380,6 +1651,7 @@ const transitionInvoiceStatus = async (admin, invoiceId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'TRANSITION_INVOICE_STATUS',
+    displayAction: 'Thay đổi trạng thái hóa đơn',
     module: 'contract',
     targetEntityType: 'Invoice',
     targetEntityId: invoiceId,

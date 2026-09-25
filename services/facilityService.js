@@ -344,9 +344,21 @@ const createRoom = async (data, user, req) => {
   }
   if (Number.isNaN(capacity) || capacity < 1) throw Object.assign(new Error('capacity phải là số lớn hơn hoặc bằng 1'), { status: 400 });
 
+  console.log('[DEBUG createRoom] Received:', { buildingId, floorId, roomNumber });
   const floor = await floorRepo.findById(floorId);
+  console.log('[DEBUG createRoom] Floor found:', floor);
+  if (floor) {
+    // buildingId in DB could be ObjectId or populated object with _id
+    const floorBuildingId = floor.buildingId?._id || floor.buildingId;
+    console.log('[DEBUG createRoom] floorBuildingId (resolved):', floorBuildingId);
+    console.log('[DEBUG createRoom] param buildingId:', buildingId);
+    console.log('[DEBUG createRoom] Comparison:', String(floorBuildingId), '===', String(buildingId), '?', String(floorBuildingId) === String(buildingId));
+  }
   if (!floor) throw Object.assign(new Error('Không tìm thấy tầng'), { status: 404 });
-  if (String(floor.buildingId) !== String(buildingId)) {
+
+  // Handle buildingId being ObjectId or populated object
+  const floorBuildingId = floor.buildingId?._id || floor.buildingId;
+  if (String(floorBuildingId) !== String(buildingId)) {
     throw Object.assign(new Error('Tầng đã chọn không thuộc tòa nhà đã chọn'), { status: 400 });
   }
 

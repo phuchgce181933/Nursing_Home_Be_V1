@@ -227,6 +227,7 @@ const getAssignmentContext = async (workDateInput) => {
 };
 
 const assignCareTask = async (body, actorUserId, req = null) => {
+  console.log('[assignCareTask] Starting...', { body, actorUserId });
   const {
     staffProfileId: staffProfileIdInput,
     userId,
@@ -404,32 +405,38 @@ const assignCareTask = async (body, actorUserId, req = null) => {
     assignedBy: actorUserId,
     status: 'pending',
   });
+  console.log('[assignCareTask] Task created:', created._id);
 
   triggerReadinessSyncForWorkDate(workDateStr);
 
   const task = await careTaskRepo.findById(created._id);
+  console.log('[assignCareTask] Task fetched:', task?._id);
 
-  await createAuditLog({
-    actorUserId: actorUserId,
-    actorRole: req?.user?.role || actorUserId,
-    action: 'CREATE_CARE_TASK',
-    displayAction: 'Phân công nhiệm vụ chăm sóc',
-    module: 'careTask',
-    businessModule: 'careTask',
-    targetEntityType: 'CareTask',
-    targetEntityId: task._id,
-    targetName: task.taskType,
-    description: `Phân công nhiệm vụ chăm sóc cho cư dân vào lúc ${scheduledTimeTrimmed}`,
-    afterData: {
-      taskType: task.taskType,
-      careLevel: task.careLevel,
-      workDate: task.workDate,
-      scheduledTime: task.scheduledTime,
-      staffProfileId: task.staffProfileId,
-      residentId: task.residentId,
-    },
-    req,
-  });
+  try {
+    await createAuditLog({
+      actorUserId: actorUserId,
+      actorRole: req?.user?.role || undefined,
+      action: 'CREATE_CARE_TASK',
+      displayAction: 'Phân công nhiệm vụ chăm sóc',
+      module: 'careTask',
+      businessModule: 'careTask',
+      targetEntityType: 'CareTask',
+      targetEntityId: task._id,
+      targetName: task.taskType,
+      description: `Phân công nhiệm vụ chăm sóc cho cư dân vào lúc ${scheduledTimeTrimmed}`,
+      afterData: {
+        taskType: task.taskType,
+        careLevel: task.careLevel,
+        workDate: task.workDate,
+        scheduledTime: task.scheduledTime,
+        staffProfileId: task.staffProfileId,
+        residentId: task.residentId,
+      },
+      req,
+    });
+  } catch (auditErr) {
+    console.error('[assignCareTask] AuditLog failed:', auditErr.message);
+  }
 
   return { ...apiSuccess(SUCCESS.CARE_TASK_ASSIGNED), task };
 };

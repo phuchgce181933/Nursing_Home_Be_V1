@@ -21,6 +21,11 @@ const recordVitals = async (req, res) => {
       physicalExamination: parseJsonField(req.body.physicalExamination),
       selectedServices: parseJsonField(req.body.selectedServices),
     };
+    console.log('[medicalRecordController] parsed selectedServices:', {
+      type: Array.isArray(body.selectedServices) ? 'array' : typeof body.selectedServices,
+      count: Array.isArray(body.selectedServices) ? body.selectedServices.length : 0,
+      consentToPayment: body.consentToPayment,
+    });
 
     const result = await medicalRecordService.recordMedicalRecord(
       req.user,

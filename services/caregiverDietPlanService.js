@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { apiErr, CODES } = require('../utils/apiError');
+const SpecialDietDay = require('../models/specialDietDay');
 const specialDietEntryRepo = require('../repositories/specialDietEntryRepository');
 const assignedResidentService = require('./assignedResidentService');
 const mealTimeScheduleService = require('./mealTimeScheduleService');

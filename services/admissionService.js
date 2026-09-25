@@ -336,6 +336,16 @@ const submitAdmissionRequest = async (user, body, req) => {
       throw new ServiceError('Đã tồn tại yêu cầu nhập viện đang hoạt động cho cư dân này', 409);
     }
 
+    // Check for duplicate citizenId across all active admissions
+    if (resident.citizenId) {
+      const existingByCitizenId = await admissionRepo.findActiveAdmission({
+        'applicant.citizenId': resident.citizenId,
+      });
+      if (existingByCitizenId) {
+        throw new ServiceError('Số CCCD/Hộ chiếu này đã được sử dụng trong yêu cầu nhập viện khác đang chờ xử lý', 409);
+      }
+    }
+
     resolvedApplicant = buildApplicant(
       applicantCopy || {
         fullName: resident.fullName,
@@ -476,6 +486,16 @@ const createWalkInAdmission = async (admin, body, req) => {
 
   const resolvedApplicant = buildApplicant(applicant, relationshipToRequester);
 
+  // Check for duplicate citizenId across all active admissions
+  if (resolvedApplicant.citizenId) {
+    const existingByCitizenId = await admissionRepo.findActiveAdmission({
+      'applicant.citizenId': resolvedApplicant.citizenId,
+    });
+    if (existingByCitizenId) {
+      throw new ServiceError('Số CCCD/Hộ chiếu này đã được sử dụng trong yêu cầu nhập viện khác đang chờ xử lý', 409);
+    }
+  }
+
   const contactName = requestedByName?.trim();
   if (!contactName) {
     throw new ServiceError('requestedByName là bắt buộc (người thân liên hệ gửi yêu cầu nhập viện này)', 400);
@@ -599,6 +619,16 @@ const submitGuestAdmissionRequest = async (body, req) => {
   }
 
   const resolvedApplicant = buildApplicant(applicant, relationshipToRequester);
+
+  // Check for duplicate citizenId across all active admissions
+  if (resolvedApplicant.citizenId) {
+    const existingByCitizenId = await admissionRepo.findActiveAdmission({
+      'applicant.citizenId': resolvedApplicant.citizenId,
+    });
+    if (existingByCitizenId) {
+      throw new ServiceError('Số CCCD/Hộ chiếu này đã được sử dụng trong yêu cầu nhập viện khác đang chờ xử lý', 409);
+    }
+  }
 
   const contactName = requestedByName?.trim();
   if (!contactName) {
@@ -735,6 +765,37 @@ const submitGuestAdmissionRequest = async (body, req) => {
     message: 'Đã gửi yêu cầu nhập viện thành công. Thông tin đăng nhập đã được gửi qua email/số điện thoại của bạn.',
     admission: formatAdmission(admission),
   };
+};
+
+// ── Real-time check for duplicate citizenId ────────────────────────────────────
+const checkCitizenIdDuplicate = async (user, citizenId) => {
+  const cleanId = citizenId ? String(citizenId).trim() : '';
+
+  // Check if citizenId has valid format (for early return if empty/invalid)
+  if (!cleanId) {
+    return { duplicate: false, source: null };
+  }
+
+  // Check against active admissions
+  const existingAdmission = await admissionRepo.findActiveAdmission({
+    'applicant.citizenId': cleanId,
+  });
+  if (existingAdmission) {
+    return { duplicate: true, source: 'admission', requestCode: existingAdmission.requestCode };
+  }
+
+  // Check against existing residents
+  const existingResident = await residentRepo.findByCitizenId(cleanId);
+  if (existingResident) {
+    return {
+      duplicate: true,
+      source: 'resident',
+      residentCode: existingResident.residentCode,
+      residentName: existingResident.fullName,
+    };
+  }
+
+  return { duplicate: false, source: null };
 };
 
 const listAdmissionHistory = async (user, query) => {
@@ -886,6 +947,165 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
 
   return {
     message: 'Đã hủy yêu cầu nhập viện thành công',
+    admission: formatAdmission(updated),
+  };
+};
+
+// ── Re-submit a previous admission request (Family) ─────────────────────────────
+// Use case: Hợp đồng đã kết thúc (do cư dân xuất viện hoặc admin hủy hợp đồng).
+// Gia đình muốn nhập viện lại cho cùng cư dân sau một thời gian. Thay vì tạo yêu cầu
+// nhập viện mới (mất thông tin cư dân đã lưu), gia đình bấm "Gửi yêu cầu nhập viện lại"
+// trên admission cũ. Hệ thống reset workflow về 'new_request' và giữ nguyên residentId /
+// applicant / familyAccountId — sau đó đi lại từ đầu: Admin duyệt → Bác sĩ khám → Tạo HĐ.
+const resubmitAdmissionRequest = async (user, admissionId, body, req) => {
+  const admission = await admissionRepo.findByIdForFamily(admissionId, user._id);
+  if (!admission) {
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
+  }
+
+  // Chỉ cho phép gửi lại khi admission đã kết thúc (cư dân đã xuất viện / hợp đồng bị hủy).
+  // Nếu đang ở trạng thái active (new_request, consulting, assessing, contracting, checked_in)
+  // thì không cần gửi lại — gia đình đang xử lý admission này rồi.
+  const isContractEnded =
+    admission.contractStatus === 'cancelled' ||
+    admission.contractStatus === 'terminated' ||
+    admission.contractStatus === 'expired';
+  const isTerminal =
+    isContractEnded ||
+    admission.status === 'cancelled';
+
+  if (!isTerminal) {
+    throw new ServiceError(
+      `Không thể gửi lại yêu cầu đang trong quá trình xử lý (trạng thái hiện tại: ${admission.status}). Chỉ gửi lại được khi yêu cầu đã hủy hoặc hợp đồng đã kết thúc.`,
+      400
+    );
+  }
+
+  // Reset toàn bộ workflow để admission đi lại từ đầu: new_request → admin duyệt →
+  // bác sĩ khám → tạo hợp đồng. Giữ nguyên thông tin cư dân và gia đình.
+  const resetData = {
+    status: 'new_request',
+    eligibilityStatus: 'pending',
+    approvedAt: null,
+    approvedBy: null,
+    rejectedAt: null,
+    rejectedBy: null,
+    rejectionReason: null,
+    cancelledAt: null,
+    cancellationReason: null,
+    // Reset contract fields — hợp đồng cũ đã kết thúc, admission mới sẽ có HĐ mới sau khi admin tạo.
+    contractNumber: null,
+    contractStatus: null,
+    contractStartDate: null,
+    contractEndDate: null,
+    contractDurationMonths: null,
+    contractDiscountPercent: null,
+    contractTerms: null,
+    contractSignedAt: null,
+    contractCancelledAt: null,
+    contractCancellationReason: null,
+    // Reset medical assessment fields — bác sĩ phải khám lại cho lần nhập viện mới.
+    assessedAt: null,
+    assessedBy: null,
+    assessmentResult: null,
+    // Reset care appointment scheduling (giữ lại lịch cũ nếu còn scheduled là OK,
+    // nhưng an toàn nhất là reset các field liên quan đến admission cycle cũ).
+    initialAssessmentScheduledAt: null,
+    initialAssessmentNotes: null,
+    consultationScheduledAt: null,
+    consultationNotes: null,
+    consultedAt: null,
+    consultedBy: null,
+    consultantId: null,
+    assignServicePackageId: null,
+    checkInAt: null,
+    // Ghi lại thời điểm gửi lại (dùng requestedAt làm reference cho lần admission mới này).
+    resubmittedAt: new Date(),
+    resubmissionCount: (admission.resubmissionCount || 0) + 1,
+  };
+
+  // Lưu lý do gửi lại (optional) để admin theo dõi.
+  const resubmitReason = body?.reason?.trim() || '';
+  if (resubmitReason) {
+    assertMaxLength(resubmitReason, 'reason', 500);
+    resetData.resubmitReason = resubmitReason;
+  }
+
+  // Optional: gia đình có thể chọn ngày nhập viện mong muốn mới cho chu kỳ admission này.
+  // Nếu không truyền → reset về null để approveAdmission fallback về "ngày mai 8h".
+  let newPreferredDate = null;
+  if (body?.preferredAdmissionDate) {
+    const parsed = new Date(body.preferredAdmissionDate);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new ServiceError('preferredAdmissionDate không hợp lệ', 400);
+    }
+    newPreferredDate = parsed;
+  }
+  resetData.preferredAdmissionDate = newPreferredDate;
+
+  // Hủy TẤT CẢ Care Appointment "Khám lâm sàng đầu vào" cũ (của admission/resident này)
+  // bất kể trạng thái (scheduled, in_progress, pending, completed) để khi Admin duyệt
+  // lại, guard trong approveAdmission không chặn việc tạo appointment mới. Cần hủy cả
+  // `completed` vì guard hiện tại dùng `status: { $ne: 'cancelled' }` — appointment đã
+  // hoàn thành từ chu kỳ cũ vẫn sẽ chặn việc tạo appointment mới cho chu kỳ mới.
+  const intakeFilter = {
+    appointmentType: 'Khám lâm sàng đầu vào',
+    status: { $nin: ['cancelled'] },
+    $or: [{ admissionId: admission._id }],
+  };
+  if (admission.residentId) {
+    intakeFilter.$or.push({ residentId: admission.residentId });
+  }
+  const cancelResult = await careAppointmentRepo.updateMany(intakeFilter, {
+    $set: {
+      status: 'cancelled',
+      notes:
+        '[Auto-cancelled] Yêu cầu nhập viện đã được gia đình gửi lại — hệ thống sẽ tạo lịch khám mới khi Admin duyệt lại.',
+    },
+  });
+  const cancelledAppointmentsCount = cancelResult?.modifiedCount || cancelResult?.nModified || 0;
+
+  const updated = await admissionRepo.updateAdmission(admission._id, resetData);
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'RESUBMIT_ADMISSION_REQUEST',
+    displayAction: 'Gửi lại yêu cầu nhập viện',
+    module: 'admission',
+    businessModule: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${user.fullName || user.username || 'Người dùng'} đã gửi lại yêu cầu nhập viện ${admission.requestCode} cho cùng cư dân (lần thứ ${resetData.resubmissionCount})${resubmitReason ? ` — Lý do: ${resubmitReason}` : ''}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
+      contractStatus: admission.contractStatus,
+      applicantName: admission.applicant?.fullName,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      eligibilityStatus: updated.eligibilityStatus,
+      contractStatus: updated.contractStatus,
+      applicantName: updated.applicant?.fullName,
+      resubmissionCount: resetData.resubmissionCount,
+      resubmittedAt: resetData.resubmittedAt,
+    },
+    metadata: {
+      resubmittedBy: 'family',
+      previousContractStatus: admission.contractStatus,
+      previousContractCancelledAt: admission.contractCancelledAt,
+      cancelledIntakeAppointments: cancelledAppointmentsCount,
+      newPreferredAdmissionDate: newPreferredDate,
+    },
+    req,
+  });
+
+  return {
+    message: 'Đã gửi lại yêu cầu nhập viện. Yêu cầu sẽ được Admin xem xét và chuyển sang bác sĩ khám lại.',
     admission: formatAdmission(updated),
   };
 };
@@ -1094,10 +1314,12 @@ const approveAdmission = async (admin, admissionId, body, req) => {
   const updated = await admissionRepo.updateAdmission(admissionId, updateData);
 
   // Automatically create first Care Appointment at UC-12
-  // Guard: only create if no intake appointment already exists for this resident
+  // Guard: only skip if there is an ACTIVE intake appointment (scheduled / in_progress / pending)
+  // for this admission or resident. A `completed` appointment belongs to a previous admission
+  // cycle and must not block creating a fresh one for a re-admission (resubmit flow).
   const existingAppt = await careAppointmentRepo.findOneByFilter({
     $or: [{ admissionId: admission._id }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }],
-    status: { $ne: 'cancelled' },
+    status: { $in: ['scheduled', 'in_progress', 'pending'] },
   });
 
   if (!existingAppt) {
@@ -1485,13 +1707,21 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
   } else if (eligibilityStatus === 'eligible') {
     updateData.status = 'contracting';
 
-    // Auto-assign resident to the doctor/nurse's assignedResidentIds so they can monitor in "Theo dõi sức khỏe"
+    // [DISABLED 2026-09-25] Auto-assign resident to staff assignedResidentIds.
+    // Theo yêu cầu nghiệp vụ: việc duyệt admission KHÔNG được tự động gán
+    // cư dân vào danh sách "phụ trách" của bác sĩ đánh giá hay bác sĩ/y tá
+    // được chỉ định khám đầu vào. Việc gán phụ trách phải được thực hiện thủ
+    // công qua trang "Cư dân phụ trách" hoặc qua flow Phân phòng/giường.
+    // Nếu cần khôi phục, bỏ comment đoạn dưới và đảm bảo trùng khớp logic
+    // với FE (Nursing_Home_fe/src/pages/admin/appointments/index.jsx —
+    // xem `handleSaveAssignment`).
+    /*
     try {
       const residentId = admission.residentId?._id || admission.residentId;
       if (residentId) {
         const ridStr = residentId.toString();
         const staffProfileRepo = require('../repositories/staffProfileRepository');
-        
+
         const addResidentToStaff = async (profile) => {
           if (!profile) return;
           const currentIds = (profile.assignedResidentIds || []).map(id => id.toString());
@@ -1523,6 +1753,7 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     } catch (err) {
       console.error('Failed to automatically assign resident to staff assigned list:', err);
     }
+    */
   }
 
   if (body?.notes) updateData.notes = String(body.notes).trim();
@@ -1815,10 +2046,62 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
     req,
   });
 
-  return {
-    message: 'Đã tạo hợp đồng nhập viện thành công',
+  // ── Tạo Contract document + sinh hóa đơn nếu admission đủ điều kiện ───────────
+  // Drawer AdmissionDetailDrawer (cả family và admin) gọi endpoint PATCH này thay vì
+  // POST /admin/admission-contracts/from-admission/:id. Trước đây endpoint PATCH chỉ
+  // cập nhật metadata trên admission — KHÔNG tạo Contract doc và KHÔNG sinh hóa đơn,
+  // khiến sau khi hủy hợp đồng cũ và nhập viện lại, hợp đồng mới "trống rỗng" không
+  // có hóa đơn nào.
+  //
+  // Fix: sau khi update admission metadata, nếu admission đủ điều kiện (eligible) và
+  // có gói dịch vụ → delegate sang contractService.createContract để thực sự tạo
+  // Contract doc + sinh hóa đơn tự động. contractService sẽ validate eligibility /
+  // status / phòng giường và báo lỗi nếu có vấn đề — bắt và trả về thông báo rõ ràng.
+  let createdContract = null;
+  let invoiceCreationError = null;
+  if (updated.eligibilityStatus === 'eligible' && updated.servicePackageId) {
+    try {
+      const contractBody = {
+        contractNumber,
+        startDate: updated.contractStartDate || undefined,
+        endDate: updated.contractEndDate || undefined,
+        durationMonths: updated.contractDurationMonths || undefined,
+        discountPercent: updated.contractDiscountPercent || undefined,
+        // Không truyền paymentPlan/roomId/bedId từ PATCH — drawer không có field này;
+        // contractService sẽ fallback sang admission.assignedRoomId/BedId + mặc định 'MONTHLY'.
+      };
+      const contractResult = await contractService.createContract(admin, admissionId, contractBody, req);
+      createdContract = contractResult?.contract || null;
+    } catch (invErr) {
+      console.error(
+        `[createAdmissionContract] Failed to auto-create Contract doc + invoices for admission ${admissionId}:`,
+        invErr
+      );
+      invoiceCreationError = invErr?.message || 'Không thể tự động tạo hóa đơn cho hợp đồng.';
+      // Không throw — admission metadata đã được lưu thành công. Admin có thể tạo thủ
+      // công từ "Quản lý Hợp đồng" sau. Trả về warning trong response.
+    }
+  }
+
+  const responsePayload = {
+    message: createdContract
+      ? 'Đã tạo hợp đồng nhập viện và sinh hóa đơn thành công'
+      : 'Đã tạo hợp đồng nhập viện thành công',
     admission: formatAdmission(updated),
   };
+  if (createdContract) {
+    responsePayload.contract = {
+      _id: createdContract._id,
+      contractNumber: createdContract.contractNumber,
+      startDate: createdContract.startDate,
+      endDate: createdContract.endDate,
+      durationMonths: createdContract.durationMonths,
+    };
+  }
+  if (invoiceCreationError) {
+    responsePayload.invoiceWarning = invoiceCreationError;
+  }
+  return responsePayload;
 };
 
 const generateResidentCode = async () => {
@@ -2588,6 +2871,8 @@ module.exports = {
   listAdmissionHistory,
   getAdmissionRequest,
   cancelAdmissionRequest,
+  resubmitAdmissionRequest,
+  checkCitizenIdDuplicate,
   adminListAdmissions,
   adminGetAdmission,
   approveAdmission,

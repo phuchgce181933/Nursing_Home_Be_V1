@@ -200,13 +200,33 @@ const normalizeAssignedStaffIds = (assignedStaffIds) => {
   return [assignedStaffIds];
 };
 
+const extractObjectIdValue = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string' || value instanceof mongoose.Types.ObjectId) return String(value);
+  return value._id || value.id || value.staffProfile?._id || value.staffProfile?.id || value.userId?._id || value.userId?.id || value.userId || null;
+};
+
 const convertUserIdsToStaffProfileIds = async (userIds) => {
   if (!userIds || !Array.isArray(userIds) || userIds.length === 0) return [];
 
   try {
     const normalizedIds = userIds
-      .map((value) => value?._id || value?.id || value)
+      .map(extractObjectIdValue)
       .filter(Boolean);
+
+    const invalidId = normalizedIds.find((id) => !mongoose.Types.ObjectId.isValid(String(id)));
+    if (invalidId) {
+      throw new ServiceError('ID người xử lý không hợp lệ', 400);
+    }
+
+    if (normalizedIds.length !== userIds.length) {
+      throw new ServiceError('ID người xử lý không hợp lệ', 400);
+    }
+
+    const users = await userRepo.findByIdsWithSelect(normalizedIds.map(String), '_id role');
+    if (users.some((user) => String(user.role || '').toLowerCase() === 'family')) {
+      throw new ServiceError('Không thể chỉ định người có role gia đình xử lý sự cố', 400);
+    }
 
     const profiles = [];
     for (const id of normalizedIds) {
@@ -222,6 +242,7 @@ const convertUserIdsToStaffProfileIds = async (userIds) => {
     return uniqueProfiles.map((profile) => profile._id);
   } catch (err) {
     console.error('[ERROR] convertUserIdsToStaffProfileIds failed:', err.message);
+    if (err instanceof ServiceError) throw err;
     return [];
   }
 };
@@ -291,8 +312,13 @@ const getAssignmentConflictsForStaff = async ({ incidentAt, residentIds = [], st
   const incidentMinutes = incidentDate.getHours() * 60 + incidentDate.getMinutes();
   const residentIdList = normalizeResidentIds(residentIds).filter(Boolean);
   const residentObjectIds = residentIdList
-    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => id?._id || id?.id || id)
+    .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
     .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+  if (!mongoose.Types.ObjectId.isValid(String(staffProfileId))) {
+    throw new ServiceError('ID hồ sơ nhân viên xử lý không hợp lệ', 400);
+  }
 
   const careTasks = await careTaskRepo.findByFilter({
     staffProfileId: new mongoose.Types.ObjectId(String(staffProfileId)),
@@ -634,6 +660,7 @@ const createIncident = async (currentUser, payload, req = null) => {
   if (!payload?.incidentType?.trim()) throw new ServiceError('incidentType là bắt buộc', 400);
   if (!payload?.description?.trim()) throw new ServiceError('description là bắt buộc', 400);
   if (!payload?.incidentAt) throw new ServiceError('incidentAt là bắt buộc', 400);
+  if (!payload?.location?.trim()) throw new ServiceError('location là bắt buộc', 400);
 
   const incidentAtDate = new Date(payload.incidentAt);
   if (Number.isNaN(incidentAtDate.getTime())) {
@@ -713,7 +740,7 @@ const createIncident = async (currentUser, payload, req = null) => {
     incidentType: payload.incidentType.trim(),
     severity: payload.severity || 'medium',
     incidentAt: incidentAtDate,
-    location: payload.location?.trim() || '',
+    location: payload.location.trim(),
     description: payload.description.trim(),
     status: 'open',
     assignedStaffIds: assignedStaffProfileIds,
@@ -963,6 +990,12 @@ const assignHandlers = async (currentUser, id, payload, req = null) => {
   }
 
   const updated = await incidentRepo.updateById(id, { assignedStaffIds: staffProfileIds });
+  const assignedStaffNames = Array.isArray(updated.assignedStaffIds)
+    ? updated.assignedStaffIds
+        .map((entry) => entry?.userId?.fullName || entry?.userId?.email || entry?.fullName || entry?.email)
+        .filter(Boolean)
+        .join(', ')
+    : '';
 
   await createAuditLog({
     actorUserId: currentUser._id,

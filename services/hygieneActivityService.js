@@ -27,6 +27,17 @@ const CATEGORY_BY_TYPE = {
   linen_change: 'environment',
   laundry: 'environment',
 };
+const ACTIVITY_TYPE_LABELS = {
+  bathing: 'Tắm rửa',
+  oral_care: 'Vệ sinh răng miệng',
+  grooming: 'Chải chuốt',
+  toileting: 'Đi vệ sinh',
+  diaper_change: 'Thay tã',
+  room_tidy: 'Dọn phòng',
+  bathroom_clean: 'Vệ sinh phòng tắm',
+  linen_change: 'Thay ga giường',
+  laundry: 'Giặt đồ',
+};
 
 const parseWorkDateStrict = (workDate) => {
   const str = String(workDate || '').trim();
@@ -216,7 +227,7 @@ const createRecord = async (userId, body, req = null) => {
   validatePayload(body, false);
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
-  await assertResidentAssigned(profile, body.residentId);
+  const resident = await assertResidentAssigned(profile, body.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDate,
@@ -234,6 +245,7 @@ const createRecord = async (userId, body, req = null) => {
   }
 
   const activityCategory = CATEGORY_BY_TYPE[body.activityType];
+  const activityTypeLabel = ACTIVITY_TYPE_LABELS[body.activityType] || body.activityType;
   const record = await hygieneActivityRepo.create({
     residentId: body.residentId,
     workDate: workDateDate,
@@ -255,8 +267,10 @@ const createRecord = async (userId, body, req = null) => {
     module: 'hygieneActivity',
     targetEntityType: 'HygieneActivityRecord',
     targetEntityId: saved._id,
-    targetName: `Vệ sinh ${body.activityType} - ${workDate}`,
-    description: `Tạo bản ghi vệ sinh cá nhân cho cư dân ${body.residentId}, loại: ${body.activityType}`,
+    targetName: `${activityTypeLabel} - ${workDate}`,
+    description: `Tạo bản ghi vệ sinh cá nhân cho cư dân ${resident.fullName}, loại: ${activityTypeLabel}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
     afterData: saved,
     req,
   });
@@ -283,7 +297,7 @@ const updateRecord = async (userId, id, body, req = null) => {
   if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
-  await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  const resident = await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDateToVNString(record.workDate),
@@ -294,9 +308,11 @@ const updateRecord = async (userId, id, body, req = null) => {
   const update = {};
   if (body.completionStatus !== undefined) update.completionStatus = body.completionStatus;
   if (body.notes !== undefined) update.notes = body.notes?.trim() || undefined;
+  update.recordedAt = new Date();
 
   const beforeData = record.toObject ? record.toObject() : record;
   const updated = await hygieneActivityRepo.updateById(id, update);
+  const activityTypeLabel = ACTIVITY_TYPE_LABELS[record.activityType] || record.activityType;
 
   await createAuditLog({
     actorUserId: userId,
@@ -306,8 +322,10 @@ const updateRecord = async (userId, id, body, req = null) => {
     module: 'hygieneActivity',
     targetEntityType: 'HygieneActivityRecord',
     targetEntityId: id,
-    targetName: `Vệ sinh ${record.activityType} - ${workDateToVNString(record.workDate)}`,
-    description: `Cập nhật bản ghi vệ sinh cá nhân ID ${id}`,
+    targetName: `${activityTypeLabel} - ${workDateToVNString(record.workDate)}`,
+    description: `Cập nhật bản ghi vệ sinh cá nhân của cư dân ${resident.fullName}, loại: ${activityTypeLabel}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
     beforeData,
     afterData: updated,
     req,
@@ -321,7 +339,7 @@ const deleteRecord = async (userId, id, req = null) => {
   if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
-  await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  const resident = await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDateToVNString(record.workDate),
@@ -329,6 +347,7 @@ const deleteRecord = async (userId, id, req = null) => {
   );
 
   const beforeData = record.toObject ? record.toObject() : record;
+  const activityTypeLabel = ACTIVITY_TYPE_LABELS[record.activityType] || record.activityType;
   await hygieneActivityRepo.deleteById(id);
 
   await createAuditLog({
@@ -339,8 +358,10 @@ const deleteRecord = async (userId, id, req = null) => {
     module: 'hygieneActivity',
     targetEntityType: 'HygieneActivityRecord',
     targetEntityId: id,
-    targetName: `Vệ sinh ${record.activityType} - ${workDateToVNString(record.workDate)}`,
-    description: `Xóa bản ghi vệ sinh cá nhân ID ${id}`,
+    targetName: `${activityTypeLabel} - ${workDateToVNString(record.workDate)}`,
+    description: `Xóa bản ghi vệ sinh cá nhân của cư dân ${resident.fullName}, loại: ${activityTypeLabel}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
     beforeData,
     req,
   });

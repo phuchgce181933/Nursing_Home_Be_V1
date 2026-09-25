@@ -11,6 +11,10 @@ const { createAuditLog } = require('../utils/auditLog');
 const VALID_ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'left_early'];
 const VALID_PARTICIPATION_LEVELS = ['active', 'partial', 'passive'];
 const MANUAL_ACTIVITY_STATUSES = ['draft', 'scheduled', 'completed', 'cancelled'];
+const ALLOWED_CREATE_ACTIVITY_STATUSES = ['draft', 'scheduled'];
+const ALLOWED_BULK_STATUS_TARGETS = ['draft', 'scheduled'];
+const NON_DELETABLE_ACTIVITY_STATUSES = ['completed', 'ongoing'];
+const NON_EDITABLE_ACTIVITY_STATUSES = ['completed', 'ongoing'];
 const ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS = ['nurse', 'y tá', 'điều dưỡng', 'caregiver', 'hộ lý', 'doctor', 'bác sĩ'];
 const ALLOWED_ACTIVITY_CATEGORY_OPTIONS = [
   'Hoạt động chăm sóc cá nhân hằng ngày',
@@ -51,6 +55,48 @@ const normalizeActivityCategory = (body) => {
 const isAllowedActivityStaffRole = (role) => {
   const roleText = String(role || '').toLowerCase();
   return ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS.some((keyword) => roleText.includes(keyword));
+};
+
+const getScheduledAt = (activity) => {
+  if (!activity) return null;
+  const raw = activity.scheduledAt || activity.startAt;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const isActivityInPast = (activity) => {
+  const scheduledAt = getScheduledAt(activity);
+  if (!scheduledAt) return false;
+  return scheduledAt.getTime() < Date.now();
+};
+
+const assertActivityEditable = (activity) => {
+  if (!activity) return;
+  const status = String(activity.status || '').trim().toLowerCase();
+  if (NON_EDITABLE_ACTIVITY_STATUSES.includes(status)) {
+    throw new ServiceError(
+      `Không thể chỉnh sửa hoạt động đang ở trạng thái "${status}"`,
+      400,
+    );
+  }
+  if (isActivityInPast(activity)) {
+    throw new ServiceError(
+      'Không thể chỉnh sửa hoạt động đã diễn ra trong quá khứ',
+      400,
+    );
+  }
+};
+
+const assertActivityDeletable = (activity) => {
+  if (!activity) return;
+  const status = String(activity.status || '').trim().toLowerCase();
+  if (NON_DELETABLE_ACTIVITY_STATUSES.includes(status)) {
+    throw new ServiceError(
+      `Không thể xóa hoạt động đang ở trạng thái "${status}"`,
+      400,
+    );
+  }
 };
 
 const normalizeStaffIdList = (value) => {
@@ -102,52 +148,80 @@ const serializeForAuditLog = (value) => {
 
 const buildFilterFromQuery = (query) => {
   const filter = {};
+  const orBranches = [];
+
   if (query.status) filter.status = query.status;
   if (query.category) filter.category = query.category;
   if (query.organizerStaffId) filter.organizerStaffId = query.organizerStaffId;
   if (query.organizerStaffIds) filter.organizerStaffIds = { $in: [query.organizerStaffIds] };
   if (query.participantResidentIds) filter.participantResidentIds = { $in: query.participantResidentIds };
   else if (query.participantResidentId) filter.participantResidentIds = query.participantResidentId;
+
   if (query.search) {
     const search = query.search.trim();
-    filter.$or = [
-      { title: { $regex: search, $options: 'i' } },
-      { description: { $regex: search, $options: 'i' } },
-      { category: { $regex: search, $options: 'i' } },
-    ];
+    if (search) {
+      orBranches.push({
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } },
+          { category: { $regex: search, $options: 'i' } },
+        ],
+      });
+    }
   }
-  if (query.from || query.to) {
-    const from = query.from ? new Date(query.from) : null;
-    const to = query.to ? new Date(query.to) : null;
-    const conditions = [];
 
+  if (query.from || query.to) {
+    // Chấp nhận cả "YYYY-MM-DD" (coi như ngày VN ICT) và ISO đầy đủ.
+    const parseBound = (value, endOfDay) => {
+      if (!value) return null;
+      const str = String(value);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+        return new Date(endOfDay ? `${str}T23:59:59.999+07:00` : `${str}T00:00:00+07:00`);
+      }
+      const d = new Date(str);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    const from = parseBound(query.from, false);
+    const to = parseBound(query.to, true);
+    const conditions = [];
     if (from && to) {
-      conditions.push({ scheduledAt: { $gte: from, $lte: to } });
-      conditions.push({ endAt: { $gte: from, $lte: to } });
-      conditions.push({ $and: [{ scheduledAt: { $lte: from } }, { endAt: { $gte: to } }] });
+      conditions.push(
+        { scheduledAt: { $gte: from, $lte: to } },
+        { endAt: { $gte: from, $lte: to } },
+        { $and: [{ scheduledAt: { $lte: from } }, { endAt: { $gte: to } }] }
+      );
     } else if (from) {
-      conditions.push({ scheduledAt: { $gte: from } });
-      conditions.push({ endAt: { $gte: from } });
-      conditions.push({ scheduledAt: { $lte: from } });
+      // Hoạt động còn "sống" từ `from` trở đi:
+      //   - bắt đầu ở hoặc sau from, hoặc
+      //   - kết thúc ở hoặc sau from (nghĩa là đang diễn ra lúc from), hoặc
+      //   - đã bao trùm from (bắt đầu trước from và kết thúc sau from).
+      conditions.push(
+        { scheduledAt: { $gte: from } },
+        { endAt: { $gte: from } },
+        { $and: [{ scheduledAt: { $lte: from } }, { endAt: { $gte: from } }] }
+      );
     } else if (to) {
       conditions.push({ scheduledAt: { $lte: to } });
-      conditions.push({ endAt: { $lte: to } });
-      conditions.push({ endAt: { $gte: to } });
     }
-
     if (conditions.length) {
-      filter.$or = conditions;
+      orBranches.push({ $or: conditions });
     }
+  }
+
+  if (orBranches.length === 1) {
+    Object.assign(filter, orBranches[0]);
+  } else if (orBranches.length > 1) {
+    filter.$and = orBranches;
   }
   return filter;
 };
 
-const validateActivityTimeRange = (startDate, endDate) => {
+const validateActivityTimeRange = (startDate, endDate, { allowPastStart = false } = {}) => {
   const now = new Date();
   if (Number.isNaN(startDate.getTime())) {
     throw new ServiceError('startAt phải là ngày hợp lệ', 400);
   }
-  if (startDate < now) {
+  if (!allowPastStart && startDate < now) {
     throw new ServiceError('startAt không được ở trong quá khứ', 400);
   }
 
@@ -540,6 +614,12 @@ const createActivity = async (body, req) => {
   if (!ACTIVITY_STATUSES.includes(status)) {
     throw new ServiceError(`status phải thuộc một trong: ${ACTIVITY_STATUSES.join(', ')}`, 400);
   }
+  if (!ALLOWED_CREATE_ACTIVITY_STATUSES.includes(status)) {
+    throw new ServiceError(
+      `Khi tạo mới, trạng thái chỉ được là một trong: ${ALLOWED_CREATE_ACTIVITY_STATUSES.join(', ')}`,
+      400,
+    );
+  }
 
   if (shouldCreateRecurring) {
     const createdActivities = [];
@@ -676,7 +756,7 @@ const updateActivity = async (activityId, body, req) => {
   if (body.startAt !== undefined || body.scheduledAt !== undefined || body.endAt !== undefined) {
     const startDate = body.startAt ? new Date(body.startAt) : update.scheduledAt;
     const endDate = body.endAt ? new Date(body.endAt) : update.endAt;
-    validateActivityTimeRange(startDate, endDate);
+    validateActivityTimeRange(startDate, endDate, { allowPastStart: true });
     const computedDurationMinutes = calculateDurationMinutes(startDate, endDate);
     if (computedDurationMinutes === null) {
       throw new ServiceError('startAt và endAt phải là ngày hợp lệ', 400);
@@ -750,6 +830,8 @@ const updateActivity = async (activityId, body, req) => {
   if (body.participantResidentIds !== undefined) update.participantResidentIds = normalizeObjectIds(body.participantResidentIds);
 
   const previousActivity = await activityRepo.findById(activityId);
+  if (!previousActivity) throw new ServiceError('Không tìm thấy hoạt động', 404);
+  assertActivityEditable(previousActivity);
   const updated = await activityRepo.findByIdAndUpdate(activityId, update);
   if (!updated) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
@@ -835,6 +917,7 @@ const updateActivity = async (activityId, body, req) => {
 const bulkUpdateActivities = async (activityId, body, req) => {
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
+  assertActivityEditable(activity);
 
   const seriesId = activity.seriesId || activityId;
   if (!seriesId) throw new ServiceError('Hoạt động này không thuộc chuỗi hoạt động nào', 400);
@@ -885,6 +968,12 @@ const bulkUpdateActivities = async (activityId, body, req) => {
     if (!MANUAL_ACTIVITY_STATUSES.includes(rawUpdate.status)) {
       throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
     }
+    if (!ALLOWED_BULK_STATUS_TARGETS.includes(rawUpdate.status)) {
+      throw new ServiceError(
+        `Cập nhật chuỗi chỉ hỗ trợ chuyển sang: ${ALLOWED_BULK_STATUS_TARGETS.join(', ')}`,
+        400,
+      );
+    }
   }
 
   // Capture a representative activity's state BEFORE the bulk update so the audit
@@ -893,7 +982,18 @@ const bulkUpdateActivities = async (activityId, body, req) => {
   const seriesBefore = await activityRepo.findBySeriesId(seriesId);
   const beforeRepresentative = seriesBefore[0];
 
-  const updatedCountResult = await activityRepo.updateManyBySeries(seriesId, rawUpdate);
+  // Only update series members that are still in the future (and not in a
+  // terminal/auto state). Past, completed, or ongoing occurrences are left
+  // untouched so admins can't retroactively edit history.
+  const now = new Date();
+  const updatedCountResult = await activityRepo.updateMany(
+    {
+      seriesId,
+      scheduledAt: { $gte: now },
+      status: { $nin: NON_EDITABLE_ACTIVITY_STATUSES },
+    },
+    rawUpdate,
+  );
   // MongoDB returns an object like { acknowledged, modifiedCount, matchedCount, ... }.
   // Pull the integer out so it can be safely interpolated into a description string.
   const updatedCount = updatedCountResult?.modifiedCount ?? updatedCountResult?.n ?? 0;
@@ -965,6 +1065,10 @@ const bulkUpdateActivities = async (activityId, body, req) => {
 };
 
 const deleteActivity = async (activityId, req) => {
+  const existing = await activityRepo.findById(activityId);
+  if (!existing) throw new ServiceError('Không tìm thấy hoạt động', 404);
+  assertActivityDeletable(existing);
+
   const activity = await activityRepo.findByIdAndUpdate(activityId, { status: 'cancelled' });
   if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
@@ -1006,7 +1110,18 @@ const deleteActivity = async (activityId, req) => {
 };
 
 const bulkDeleteActivities = async (query = {}, req) => {
+  if (query.status && NON_DELETABLE_ACTIVITY_STATUSES.includes(String(query.status).toLowerCase())) {
+    throw new ServiceError(
+      `Không thể xóa hoạt động đang ở trạng thái "${String(query.status).toLowerCase()}"`,
+      400,
+    );
+  }
+
   const filter = buildFilterFromQuery(query);
+  // Always exclude completed/ongoing activities. Past activities are still
+  // deletable so admins can clean up old drafts.
+  filter.$and = filter.$and || [];
+  filter.$and.push({ status: { $nin: NON_DELETABLE_ACTIVITY_STATUSES } });
   const deleted = await activityRepo.deleteMany(filter);
 
   await createAuditLog({
@@ -1042,7 +1157,17 @@ const bulkUpdateActivityStatus = async (query = {}, status, req) => {
     throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
   }
 
+  if (!ALLOWED_BULK_STATUS_TARGETS.includes(status)) {
+    throw new ServiceError(
+      `Chuyển trạng thái hàng loạt chỉ hỗ trợ chuyển sang: ${ALLOWED_BULK_STATUS_TARGETS.join(', ')}`,
+      400,
+    );
+  }
+
   const filter = buildFilterFromQuery(query);
+  // Hoạt động trong quá khứ không được phép chuyển trạng thái.
+  filter.$and = filter.$and || [];
+  filter.$and.push({ scheduledAt: { $gte: new Date() } });
   const updated = await activityRepo.updateMany(filter, { status });
 
   await createAuditLog({

@@ -756,6 +756,7 @@ const createInvoice = async (user, residentId, body, req) => {
       totalAmount,
       originalTotalAmount,
       remainingAmount,
+      type: 'SERVICE',
       paymentPlan: body.paymentPlan || 'FULL',
       status: totalAmount === 0 ? 'PAID' : 'ISSUED',
       dueDate: body.dueDate ? new Date(body.dueDate) : end,

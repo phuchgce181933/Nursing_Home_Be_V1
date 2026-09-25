@@ -95,7 +95,12 @@ const payOneInvoice = async (user, invoice, amount, transactionRef) => {
   const invoiceId = String(invoice._id);
   const label = invoice.invoiceNumber ? `Thanh toán hóa đơn ${invoice.invoiceNumber}` : 'Thanh toán hóa đơn';
 
-  await walletService.deductFromWallet(user._id, amount, label, invoiceId);
+  // Lưu luôn `invoiceNumber` lấy từ chính hoá đơn đang trả (nguồn đúng duy nhất),
+  // để sổ giao dịch hiển thị số hoá đơn người đọc hiểu được thay vì chỉ có ObjectId.
+  // Mỗi lần gọi ở đây chỉ trả ĐÚNG MỘT hoá đơn nên số này không bao giờ nhập nhằng.
+  const extra = { invoiceNumber: invoice.invoiceNumber };
+
+  await walletService.deductFromWallet(user._id, amount, label, invoiceId, extra);
   try {
     return await paymentService.recordPayment(user, invoiceId, {
       paymentMethod: 'wallet',
@@ -105,7 +110,7 @@ const payOneInvoice = async (user, invoice, amount, transactionRef) => {
     });
   } catch (err) {
     await walletService
-      .refundToWallet(user._id, amount, `Hoàn tiền do thanh toán thất bại: ${label}`, invoiceId)
+      .refundToWallet(user._id, amount, `Hoàn tiền do thanh toán thất bại: ${label}`, invoiceId, extra)
       .catch((refundErr) => {
         console.error('[walletPayment] HOÀN TIỀN THẤT BẠI', { invoiceId, amount, error: refundErr?.message });
       });

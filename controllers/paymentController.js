@@ -103,6 +103,8 @@ const recordPayment = async (req, res, next) => {
         amount,
         `Thanh toán hóa đơn ${invoice.invoiceNumber}`,
         req.params.invoiceId,
+        // Một lần gọi = một hoá đơn, nên `invoiceNumber` ở đây là không nhập nhằng.
+        { invoiceNumber: invoice.invoiceNumber },
       );
       deductedFromWallet = true;
     }
@@ -164,6 +166,9 @@ const batchPayment = async (req, res, next) => {
     }
 
     if (walletPayment) {
+      // CỐ Ý không truyền `invoiceNumber`: một giao dịch ví ở đây gộp nhiều hoá đơn,
+      // `invoiceIds[0]` chỉ là mốc tham chiếu. Ghi số của hoá đơn đầu tiên sẽ khiến
+      // sổ giao dịch trông như thể cả khoản tiền thuộc về đúng một hoá đơn đó.
       await walletService.deductFromWallet(
         req.user._id,
         amount,

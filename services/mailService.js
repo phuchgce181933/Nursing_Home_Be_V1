@@ -8,6 +8,7 @@ const {
   heroIcon,
   infoRow,
   otpBoxes,
+  codeBlock,
   calloutBox,
   ctaButton,
   pill,
@@ -47,12 +48,20 @@ const spacer = (h) => `<tr><td style="padding-bottom:${h}px;line-height:1px;font
 
 /* ───────────────────────── 1. Reset Password ───────────────────────── */
 
-const sendResetPasswordEmail = async (to, resetUrl) => {
+/**
+ * Email đặt lại mật khẩu cho người dùng WEB: một nút bấm mở trang đặt lại trên
+ * trình duyệt. Đây là mẫu đã chạy từ trước, giữ nguyên hành vi.
+ *
+ * `resetUrl` do phía gọi dựng từ FRONTEND_URL đã cấu hình — không có localhost
+ * nào bị nhúng cứng ở đây. `expiresMinutes` cũng do phía gọi truyền xuống từ
+ * hằng số hết hạn thật, để chữ "hết hạn sau N phút" không lệch với hành vi thực.
+ */
+const sendWebPasswordResetEmail = async (to, resetUrl, { expiresMinutes = 10 } = {}) => {
   const bodyHtml = `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr><td align="center">${heroIcon('lock')}</td></tr>
-      ${cardTitle('Đặt lại mật khẩu của bạn')}
-      ${cardSubtitle('Chúng tôi vừa nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Nhấn nút bên dưới để tạo mật khẩu mới.')}
+      ${cardTitle('Đặt lại mật khẩu')}
+      ${cardSubtitle('Xin chào,<br/>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản An Nhiên của bạn. Nhấn nút bên dưới để tạo mật khẩu mới.')}
       <tr><td align="center">${ctaButton({ label: 'Đặt lại mật khẩu', href: resetUrl })}</td></tr>
       ${spacer(28)}
       <tr>
@@ -60,7 +69,7 @@ const sendResetPasswordEmail = async (to, resetUrl) => {
           iconName: 'shield',
           color: COLORS.warning,
           bg: COLORS.warningLight,
-          text: 'Liên kết này sẽ hết hạn sau <strong>10 phút</strong>. Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này hoặc liên hệ đội ngũ hỗ trợ nếu bạn nghi ngờ tài khoản của mình gặp rủi ro.',
+          text: `Liên kết sẽ hết hạn sau <strong>${expiresMinutes} phút</strong> và chỉ dùng được MỘT lần. Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này hoặc liên hệ đội ngũ hỗ trợ nếu bạn nghi ngờ tài khoản của mình gặp rủi ro.`,
         })}</td>
       </tr>
     </table>
@@ -70,8 +79,86 @@ const sendResetPasswordEmail = async (to, resetUrl) => {
     from: `"${BRAND.senderName}" <${process.env.MAIL_USER}>`,
     to,
     subject: 'Đặt lại mật khẩu của bạn',
-    html: renderEmailLayout({ preheader: 'Yêu cầu đặt lại mật khẩu — liên kết hết hạn sau 10 phút.', bodyHtml }),
-    text: `Đặt lại mật khẩu của bạn\n\nNhấn vào liên kết sau để đặt lại mật khẩu (hết hạn sau 10 phút):\n${resetUrl}\n\nNếu bạn không yêu cầu, vui lòng bỏ qua email này.`,
+    html: renderEmailLayout({
+      preheader: `Yêu cầu đặt lại mật khẩu — liên kết hết hạn sau ${expiresMinutes} phút.`,
+      bodyHtml,
+    }),
+    text: [
+      'Đặt lại mật khẩu',
+      '',
+      'Xin chào,',
+      'Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản An Nhiên.',
+      `Nhấn vào liên kết sau để tạo mật khẩu mới (hết hạn sau ${expiresMinutes} phút):`,
+      resetUrl,
+      '',
+      'Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này.',
+    ].join('\n'),
+    attachments: EMAIL_ATTACHMENTS,
+  });
+};
+
+/**
+ * Email đặt lại mật khẩu cho người dùng ỨNG DỤNG DI ĐỘNG: CHỈ có mã để copy.
+ *
+ * CỐ Ý không có `resetUrl`, không `ctaButton`, không bất kỳ liên kết nào dẫn sang
+ * Web. Người dùng Mobile bấm một liên kết Web sẽ bị đẩy ra trình duyệt và bỏ dở
+ * luồng trong app, nên mẫu này không cung cấp đường đó. Kiểm thử có assert rằng
+ * HTML không chứa '/reset-password'.
+ *
+ * `codeBlock` (không phải `otpBoxes`) vì mã cần COPY được thành một chuỗi liền:
+ * tách sáu ô thì bôi đen sẽ dính khoảng trắng giữa các chữ số.
+ */
+const sendMobilePasswordResetCodeEmail = async ({ to, code, expiresMinutes = 10 }) => {
+  if (!to) return;
+
+  const bodyHtml = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td align="center">${heroIcon('lock')}</td></tr>
+      ${cardTitle('Đặt lại mật khẩu')}
+      ${cardSubtitle('Chúng tôi nhận được yêu cầu đặt lại mật khẩu từ ứng dụng An Nhiên.')}
+      <tr>
+        <td align="center" style="font-family:${FONTS.body};font-size:14px;color:${COLORS.textMuted};padding-bottom:12px;">
+          Mã đặt lại mật khẩu của bạn:
+        </td>
+      </tr>
+      <tr><td>${codeBlock(code, { fontSize: 30, letterSpacing: 8 })}</td></tr>
+      ${spacer(20)}
+      <tr>
+        <td align="center" style="font-family:${FONTS.body};font-size:13.5px;line-height:1.65;color:${COLORS.textMuted};padding-bottom:24px;">
+          Sao chép mã này và nhập vào ứng dụng An Nhiên để tiếp tục.
+        </td>
+      </tr>
+      <tr>
+        <td>${calloutBox({
+          iconName: 'shield',
+          color: COLORS.warning,
+          bg: COLORS.warningLight,
+          text: `Mã có hiệu lực trong <strong>${expiresMinutes} phút</strong> và chỉ dùng được MỘT lần. Đừng chia sẻ mã với bất kỳ ai, kể cả nhân viên An Nhiên. Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này.`,
+        })}</td>
+      </tr>
+    </table>
+  `;
+
+  await transporter.sendMail({
+    from: `"${BRAND.senderName}" <${process.env.MAIL_USER}>`,
+    to,
+    subject: 'Mã đặt lại mật khẩu An Nhiên',
+    html: renderEmailLayout({
+      preheader: `Mã đặt lại mật khẩu — có hiệu lực trong ${expiresMinutes} phút.`,
+      bodyHtml,
+    }),
+    text: [
+      'An Nhiên — Đặt lại mật khẩu',
+      '',
+      'Chúng tôi nhận được yêu cầu đặt lại mật khẩu từ ứng dụng An Nhiên.',
+      '',
+      `Mã đặt lại mật khẩu của bạn: ${code}`,
+      '',
+      'Sao chép mã này và nhập vào ứng dụng An Nhiên để tiếp tục.',
+      `Mã có hiệu lực trong ${expiresMinutes} phút và chỉ dùng được một lần.`,
+      '',
+      'Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này.',
+    ].join('\n'),
     attachments: EMAIL_ATTACHMENTS,
   });
 };
@@ -467,7 +554,8 @@ const sendTextBeeSms = async ({ to, message }) => {
 };
 
 module.exports = {
-  sendResetPasswordEmail,
+  sendWebPasswordResetEmail,
+  sendMobilePasswordResetCodeEmail,
   sendIncidentNotificationEmail,
   sendStaffAccountCreatedEmail,
   sendFamilyAccountCreatedEmail,

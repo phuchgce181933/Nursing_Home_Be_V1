@@ -38,6 +38,29 @@ const maskEmail = (email) =>
 const maskPhone = (phone) => String(phone).replace(/.(?=.{4})/g, '*');
 
 /**
+ * Mục đích "đặt lại mật khẩu". Tách hằng số để không ai gõ sai chuỗi và để thấy
+ * rõ đây là một purpose RIÊNG BIỆT: mã đặt lại mật khẩu không bao giờ dùng được
+ * cho `wallet_payment`, `verify_email_change` hay `verify_phone_change`, vì
+ * `verifyOtp` chặn cứng lệch purpose (OTP_PURPOSE_MISMATCH).
+ */
+const PURPOSE_PASSWORD_RESET = 'password_reset';
+
+/**
+ * Chọn mẫu email theo purpose — TẬP TRUNG tại đúng một chỗ. Nhờ vậy các tầng
+ * khác (controller, authService) không phải rải if/else chọn template, và thêm
+ * một luồng OTP qua email mới chỉ là thêm một dòng ở đây.
+ * Purpose không có trong bảng thì dùng mẫu xác thực email như trước.
+ */
+const EMAIL_TEMPLATE_BY_PURPOSE = {
+  [PURPOSE_PASSWORD_RESET]: (args) => mailService.sendMobilePasswordResetCodeEmail(args),
+};
+
+const sendEmailCode = async ({ to, code, expiresMinutes, purpose }) => {
+  const send = EMAIL_TEMPLATE_BY_PURPOSE[purpose] || mailService.sendEmailVerificationOtp;
+  await send({ to, code, expiresMinutes });
+};
+
+/**
  * Tạo và gửi mã OTP.
  *
  * Chính sách gửi lại: mỗi (userId, purpose) chỉ có TỐI ĐA MỘT mã còn hiệu lực.
@@ -79,7 +102,7 @@ const createOtp = async ({ userId, phone, purpose = 'wallet_payment', meta = {},
 
   try {
     if (String(phone).includes('@')) {
-      await mailService.sendEmailVerificationOtp({ to: phone, code, expiresMinutes });
+      await sendEmailCode({ to: phone, code, expiresMinutes, purpose });
     } else {
       await sendSmsCode({ phone, code, expiresMinutes });
     }
@@ -123,22 +146,11 @@ const sendSmsCode = async ({ phone, code, expiresMinutes }) => {
 };
 
 /**
- * Xác thực mã. Mã dùng một lần: xác thực đúng là đánh dấu đã dùng ngay, nên
- * không thể phát lại cho giao dịch khác. `meta` trả về là dữ liệu đã được chốt
- * lúc tạo mã (hoá đơn + số tiền), nên mã cũ không thể dùng cho hoá đơn khác.
+ * Lõi xác thực dùng chung cho mọi cách tìm ra bản ghi OTP (theo `otpId` hoặc theo
+ * cặp người dùng + mục đích). Gom vào một hàm để chỉ tồn tại MỘT bản luật:
+ * hết hạn -> quá số lần -> so mã hằng thời gian -> tiêu thụ nguyên tử.
  */
-const verifyOtp = async ({ userId, otpId, code, purpose = 'wallet_payment' }) => {
-  let otp = null;
-  try {
-    otp = await otpRepo.findById(otpId);
-  } catch {
-    otp = null; // otpId sai định dạng ObjectId
-  }
-  if (!otp) throw apiErr(CODES.OTP_NOT_FOUND, { statusCode: 400 });
-  if (userId && otp.userId && String(otp.userId) !== String(userId)) {
-    throw apiErr(CODES.OTP_FORBIDDEN, { statusCode: 403 });
-  }
-  if (otp.purpose !== purpose) throw apiErr(CODES.OTP_PURPOSE_MISMATCH, { statusCode: 400 });
+const consumeIfCodeMatches = async (otp, code) => {
   if (otp.used) {
     throw apiErr(
       otp.consumedReason === 'attempts_exceeded' ? CODES.OTP_TOO_MANY_ATTEMPTS : CODES.OTP_ALREADY_USED,
@@ -172,9 +184,66 @@ const verifyOtp = async ({ userId, otpId, code, purpose = 'wallet_payment' }) =>
   });
 };
 
+/**
+ * Xác thực mã khi client ĐANG GIỮ `otpId` (luồng có màn hình chờ: ví, đổi email,
+ * đổi số điện thoại). Mã dùng một lần: xác thực đúng là đánh dấu đã dùng ngay, nên
+ * không thể phát lại cho giao dịch khác. `meta` trả về là dữ liệu đã được chốt
+ * lúc tạo mã (hoá đơn + số tiền), nên mã cũ không thể dùng cho hoá đơn khác.
+ */
+const verifyOtp = async ({ userId, otpId, code, purpose = 'wallet_payment' }) => {
+  let otp = null;
+  try {
+    otp = await otpRepo.findById(otpId);
+  } catch {
+    otp = null; // otpId sai định dạng ObjectId
+  }
+  if (!otp) throw apiErr(CODES.OTP_NOT_FOUND, { statusCode: 400 });
+  if (userId && otp.userId && String(otp.userId) !== String(userId)) {
+    throw apiErr(CODES.OTP_FORBIDDEN, { statusCode: 403 });
+  }
+  if (otp.purpose !== purpose) throw apiErr(CODES.OTP_PURPOSE_MISMATCH, { statusCode: 400 });
+  return consumeIfCodeMatches(otp, code);
+};
+
+/**
+ * Xác thực mã khi client KHÔNG có `otpId` — trường hợp đặt lại mật khẩu: người
+ * dùng chưa đăng nhập, rời app sang hộp thư rồi quay lại, và endpoint quên mật
+ * khẩu CỐ TÌNH không trả `otpId` (trả về sẽ tiết lộ email có tồn tại hay không).
+ *
+ * Vì `createOtp` bảo đảm mỗi (userId, purpose) chỉ có TỐI ĐA MỘT mã còn hiệu lực
+ * (mã cũ bị đánh 'superseded'), lấy bản ghi chưa dùng mới nhất là không nhập nhằng.
+ * Mã vẫn buộc theo đúng người dùng và đúng mục đích qua chính filter này.
+ */
+const verifyOtpByUser = async ({ userId, code, purpose }) => {
+  const [otp] = await otpRepo.findByFilter(
+    { userId, purpose, used: false },
+    { sort: { createdAt: -1 } },
+  );
+  // Không có mã nào đang chờ -> trả OTP_INVALID y như khi nhập sai mã, để không
+  // phân biệt được "email này chưa từng xin đặt lại" với "mã nhập sai".
+  if (!otp) throw apiErr(CODES.OTP_INVALID, { statusCode: 400 });
+  return consumeIfCodeMatches(otp, code);
+};
+
+/**
+ * Vô hiệu hoá mọi mã còn hiệu lực của một (người dùng, mục đích). Dùng sau khi
+ * đặt lại mật khẩu xong: mã chưa dùng còn sót lại phải chết theo, kể cả mã được
+ * phát cho client khác.
+ */
+const invalidateActiveOtps = async ({ userId, purpose, reason = 'superseded' }) => {
+  if (!userId || !purpose) return;
+  await otpRepo.updateMany(
+    { userId, purpose, used: false },
+    { $set: { used: true, consumedReason: reason, consumedAt: new Date() } },
+  );
+};
+
 module.exports = {
   createOtp,
   verifyOtp,
+  verifyOtpByUser,
+  invalidateActiveOtps,
+  PURPOSE_PASSWORD_RESET,
   MAX_ATTEMPTS,
   RESEND_COOLDOWN_SECONDS,
   DEFAULT_EXPIRY_MINUTES,

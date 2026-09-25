@@ -534,8 +534,63 @@ const changePassword = async (
 
   return apiSuccess(SUCCESS.AUTH_PASSWORD_CHANGED);
 };
+/**
+ * Thời hạn của credential đặt lại mật khẩu, tính bằng phút. Đặt ở MỘT chỗ duy
+ * nhất cho cả hai loại client: vừa dùng để tính `resetPasswordExpiresAt` (Web),
+ * vừa là `expiresMinutes` của mã OTP (Mobile), vừa truyền xuống email — nên câu
+ * "hết hạn sau N phút" trong email luôn đúng với hành vi kiểm tra thật.
+ */
+const RESET_TOKEN_TTL_MINUTES = 10;
+
+/**
+ * Hai loại client được phép yêu cầu đặt lại mật khẩu. Nguồn client là một TRƯỜNG
+ * TƯỜNG MINH trong body, KHÔNG suy diễn từ User-Agent / header / hostname: cùng
+ * một trình duyệt có thể là WebView trong app, và User-Agent thì client nào cũng
+ * giả được — suy diễn sẽ khiến người dùng nhận sai loại email.
+ */
+const RESET_CLIENTS = ['web', 'mobile'];
+
+/**
+ * Chuẩn hoá + kiểm tra `client` ở phía server.
+ *
+ * Mặc định 'web' cho tương thích ngược: Web bản cũ (và các script/integration đã
+ * tồn tại) gửi body chỉ có `email`. Mặc định này an toàn vì 'web' đúng là hành vi
+ * duy nhất tồn tại trước đây — không mở thêm quyền gì, không đổi credential, chỉ
+ * giữ nguyên luồng cũ. Giá trị lạ thì TỪ CHỐI thẳng thay vì âm thầm coi là 'web'.
+ */
+const normalizeResetClient = (client) => {
+  if (client === undefined || client === null || client === '') return 'web';
+  const value = String(client).toLowerCase().trim();
+  if (!RESET_CLIENTS.includes(value)) {
+    throw apiErr(CODES.AUTH_RESET_CLIENT_INVALID, { statusCode: 400 });
+  }
+  return value;
+};
+
+/**
+ * Phát credential Web: token ngẫu nhiên 32 byte (64 hex), chỉ lưu bản băm SHA-256
+ * trên document User. Trả về token gốc để dựng liên kết — token gốc không được
+ * lưu ở đâu và không được log.
+ */
+const issueWebResetToken = async (user) => {
+  const resetToken = crypto
+    .randomBytes(32)
+    .toString('hex');
+
+  const hashedToken = crypto
+    .createHash('sha256')
+    .update(resetToken)
+    .digest('hex');
+
+  user.resetPasswordTokenHash = hashedToken;
+  user.resetPasswordExpiresAt = Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000;
+  await userRepo.saveUser(user);
+
+  return resetToken;
+};
+
 // quên mk
-const forgotPassword = async ({ email }) => {
+const forgotPassword = async ({ email, client }) => {
   // Validate định dạng email ngay tại backend — khớp với regex frontend:
   // ^[^\s@]+@[^\s@]+\.[^\s@]{2,}$. Trả messageKey AUTH_INVALID_EMAIL đã có sẵn trong
   // bộ CODES. Luôn trả về message thân thiện, không leak thông tin.
@@ -544,6 +599,10 @@ const forgotPassword = async ({ email }) => {
     throw apiErr(CODES.AUTH_INVALID_EMAIL, { statusCode: 400 });
   }
 
+  // Kiểm tra `client` TRƯỚC khi tra cứu email: lỗi sai tham số phải giống nhau dù
+  // email có tồn tại hay không.
+  const resetClient = normalizeResetClient(client);
+
   const user = await userRepo.findByEmail(email);
 
   // Always respond the same way whether or not the email exists, so callers
@@ -551,56 +610,134 @@ const forgotPassword = async ({ email }) => {
   // Lưu ý: nếu email sai định dạng, ta đã throw ở trên — nếu email hợp lệ nhưng
   // không tồn tại, vẫn trả success để tránh account-enumeration.
   if (user) {
-    const resetToken = crypto
-      .randomBytes(32)
-      .toString('hex');
-
-    const hashedToken = crypto
-      .createHash('sha256')
-      .update(resetToken)
-      .digest('hex');
-
-    user.resetPasswordTokenHash = hashedToken;
-
-    user.resetPasswordExpiresAt =
-      Date.now() + 10 * 60 * 1000;
-
-    await userRepo.saveUser(user);
-
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
-
-    await mailService.sendResetPasswordEmail(
-      user.email,
-      resetUrl
-    );
+    // Chọn credential + mẫu email theo client. Đây là CHỖ DUY NHẤT phân nhánh
+    // theo client; các tầng dưới (otpService, mailService) không biết gì về nó.
+    if (resetClient === 'mobile') {
+      // Mã 6 số qua hạ tầng OTP đang dùng: crypto.randomInt, HMAC-SHA256 khi lưu,
+      // buộc theo userId + purpose, hết hạn, dùng một lần, tối đa 5 lần nhập sai,
+      // cooldown gửi lại 30s. `purpose` riêng nên mã này không dùng được cho ví.
+      // KHÔNG trả `otpId` ra ngoài: trả về sẽ tiết lộ email có tồn tại hay không.
+      try {
+        await otpService.createOtp({
+          userId: user._id,
+          phone: user.email, // `createOtp` nhận email làm người nhận, giống luồng đổi email
+          purpose: otpService.PURPOSE_PASSWORD_RESET,
+          expiresMinutes: RESET_TOKEN_TTL_MINUTES,
+        });
+      } catch (err) {
+        // Xin mã lại quá sớm (trong 30s) thì KHÔNG phát mã mới, nhưng vẫn trả về
+        // đúng câu trả lời chung như mọi trường hợp khác. Nếu để lỗi 429 này lọt
+        // ra ngoài, kẻ tấn công chỉ cần gửi hai request liên tiếp: nhận 429 nghĩa
+        // là email có thật, nhận 200 nghĩa là không — hỏng luôn cơ chế chống liệt
+        // kê tài khoản. Mã người dùng đang cầm vẫn còn hiệu lực nên không mất gì.
+        if (err?.errorCode !== CODES.OTP_RESEND_TOO_SOON) throw err;
+      }
+    } else {
+      const resetToken = await issueWebResetToken(user);
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+      await mailService.sendWebPasswordResetEmail(user.email, resetUrl, {
+        expiresMinutes: RESET_TOKEN_TTL_MINUTES,
+      });
+    }
   }
 
   return apiSuccess(SUCCESS.AUTH_RESET_EMAIL_SENT);
 };
-//rs mk
-const resetPassword = async ({
-  token,
-  newPassword,
-}) => {
-  if (!token) {
-    throw apiErr(CODES.AUTH_TOKEN_REQUIRED, { statusCode: 400 });
-  }
-  if (!newPassword || newPassword.length < 6) {
-    throw apiErr(CODES.AUTH_NEW_PASSWORD_TOO_SHORT, { statusCode: 400, params: { min: 6 } });
-  }
-
+/**
+ * Đường credential WEB: token opaque trong liên kết email.
+ * Chỉ TRA CỨU, chưa tiêu thụ — việc vô hiệu hoá nằm ở bước chung phía sau.
+ */
+const resolveUserByWebToken = async (token) => {
   const hashedToken = crypto
     .createHash('sha256')
     .update(token)
     .digest('hex');
 
-  const user = await userRepo.findOne({
+  return userRepo.findOne({
     resetPasswordTokenHash: hashedToken,
     resetPasswordExpiresAt: {
       $gt: Date.now(),
     },
   });
+};
+
+/**
+ * Đường credential MOBILE: email + mã 6 số nhận qua email.
+ *
+ * `verifyOtpByUser` TIÊU THỤ mã ngay khi đúng (nguyên tử), nên phải gọi sau khi
+ * đã kiểm tra độ dài mật khẩu mới — người dùng không đáng mất mã vì gõ mật khẩu
+ * quá ngắn. Email không tồn tại cũng đi qua đúng nhánh lỗi như mã sai (xem
+ * `resetPassword`), nên không suy ra được tài khoản có tồn tại hay không.
+ */
+const resolveUserByMobileCode = async (email, code) => {
+  const user = await userRepo.findByEmail(email);
+  if (!user) return null;
+
+  await otpService.verifyOtpByUser({
+    userId: user._id,
+    code,
+    purpose: otpService.PURPOSE_PASSWORD_RESET,
+  });
+
+  return user;
+};
+
+//rs mk
+/**
+ * MỘT luồng nghiệp vụ đặt lại mật khẩu duy nhất, hai đường xác thực credential:
+ *
+ *   Web    : { token, newPassword }
+ *   Mobile : { email, code, newPassword }
+ *
+ * Sau khi xác thực xong, phần còn lại (kiểm tra mật khẩu, băm bcrypt, lưu, vô
+ * hiệu hoá credential, ghi audit log) là CHUNG — không nhân bản logic đổi mật
+ * khẩu cho từng client.
+ *
+ * Không đường nào cho phép đổi mật khẩu bằng "email + mật khẩu mới": thiếu cả
+ * `token` và `code` là bị từ chối ngay ở dòng đầu.
+ */
+const resetPassword = async ({
+  token,
+  newPassword,
+  email,
+  code,
+}) => {
+  const hasWebToken = !!token;
+  const hasMobileCode = !!email && !!code;
+
+  if (!hasWebToken && !hasMobileCode) {
+    // Giữ nguyên AUTH_TOKEN_REQUIRED cho trường hợp Web cũ (chỉ thiếu token) để
+    // không đổi hợp đồng lỗi mà Web đang xử lý; thiếu hoàn toàn thông tin thì báo
+    // rõ là cần một trong hai loại credential.
+    throw apiErr(
+      email || code ? CODES.AUTH_RESET_CREDENTIAL_REQUIRED : CODES.AUTH_TOKEN_REQUIRED,
+      { statusCode: 400 },
+    );
+  }
+  if (!newPassword || newPassword.length < 6) {
+    throw apiErr(CODES.AUTH_NEW_PASSWORD_TOO_SHORT, { statusCode: 400, params: { min: 6 } });
+  }
+
+  let user = null;
+  if (hasWebToken) {
+    user = await resolveUserByWebToken(token);
+  } else {
+    try {
+      user = await resolveUserByMobileCode(email, code);
+    } catch (err) {
+      // Mọi lý do mã không dùng được (sai, hết hạn, đã dùng, quá số lần nhập, chưa
+      // từng xin mã) đều quy về MỘT lỗi giống hệt nhau. Nếu phân biệt, kẻ tấn công
+      // tự gửi yêu cầu quên mật khẩu cho một email rồi đoán mã: lỗi "sai mã, còn N
+      // lần" nghĩa là email có thật, lỗi "chưa có mã" nghĩa là không — đúng bằng
+      // một công cụ liệt kê tài khoản. Số lần nhập sai vẫn được đếm bên trong và
+      // mã vẫn bị đốt sau 5 lần, chỉ là không nói ra ngoài.
+      if (err?.errorCode && String(err.errorCode).startsWith('OTP_')) {
+        throw apiErr(CODES.AUTH_TOKEN_INVALID, { statusCode: 400 });
+      }
+      throw err;
+    }
+  }
 
   if (!user) {
     throw apiErr(CODES.AUTH_TOKEN_INVALID, { statusCode: 400 });
@@ -611,10 +748,17 @@ const resetPassword = async ({
     10
   );
 
+  // Vô hiệu hoá credential của CẢ HAI client, không chỉ cái vừa dùng: đổi mật khẩu
+  // xong thì liên kết Web còn sống và mã Mobile chưa dùng đều phải chết theo.
   user.resetPasswordTokenHash = undefined;
   user.resetPasswordExpiresAt = undefined;
 
   await userRepo.saveUser(user);
+
+  await otpService.invalidateActiveOtps({
+    userId: user._id,
+    purpose: otpService.PURPOSE_PASSWORD_RESET,
+  });
 
   await createAuditLog({
     actorUserId: user._id,

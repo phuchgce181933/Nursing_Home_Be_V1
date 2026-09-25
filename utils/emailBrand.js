@@ -29,6 +29,9 @@ const FONTS = {
   // remote CSS, e.g. Outlook desktop).
   heading: `'Times New Roman', Times, serif`,
   body: `'Times New Roman', Times, serif`,
+  // Chỉ dùng cho chuỗi cần copy chính xác từng ký tự (mã đặt lại mật khẩu):
+  // serif dễ gây nhầm 1/l và 0/O khi người dùng phải tự đối chiếu.
+  mono: `Consolas, 'Courier New', Courier, monospace`,
 };
 
 const BRAND = {
@@ -179,6 +182,27 @@ const infoRow = ({ iconName, label, value, isLast = false, iconColor, iconBg }) 
       </table>
     </td>
   </tr>
+`;
+
+/**
+ * Một khối chứa chuỗi bí mật để người dùng bôi đen và COPY (mã đặt lại mật khẩu).
+ * Khác `otpBoxes`: mã ở đây nằm liền một chuỗi, vì tách ra từng ô thì bôi đen sẽ
+ * dính khoảng trắng giữa các ký tự và người dùng dán vào app bị sai.
+ *
+ * - font monospace: người dùng phân biệt được 0/O, 1/l khi phải tự đối chiếu;
+ * - `word-break:break-all`: chuỗi dài tự xuống dòng thay vì phá vỡ khung email;
+ * - `user-select:all`: bấm một lần là chọn trọn mã trên client có hỗ trợ CSS.
+ */
+const codeBlock = (value, { fontSize = 13, letterSpacing = 0.5 } = {}) => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${COLORS.primaryLight};border:1px solid ${COLORS.border};border-radius:12px;">
+    <tr>
+      <td align="center" style="padding:16px 18px;">
+        <span style="font-family:${FONTS.mono};font-size:${fontSize}px;line-height:1.7;font-weight:700;color:${COLORS.text};word-break:break-all;-webkit-user-select:all;user-select:all;letter-spacing:${letterSpacing}px;">
+          ${escapeHtml(value)}
+        </span>
+      </td>
+    </tr>
+  </table>
 `;
 
 // Six individually-boxed OTP digits — the visual focus of the OTP email.
@@ -388,6 +412,7 @@ module.exports = {
   rowIcon,
   infoRow,
   otpBoxes,
+  codeBlock,
   calloutBox,
   ctaButton,
   pill,

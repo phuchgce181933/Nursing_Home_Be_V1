@@ -564,6 +564,13 @@ const listTransactions = async (user, query = {}) => {
     const wanted = String(query.status).split(',').map((s) => s.trim()).filter(Boolean);
     items = items.filter((tx) => wanted.includes(tx.status));
   }
+  // Lọc theo hướng dòng tiền (đã được presentTransaction chuẩn hoá): credit = tiền vào
+  // (nạp/hoàn), debit = tiền ra (thanh toán bằng ví). Thanh toán PayOS trực tiếp mang
+  // direction 'none' nên KHÔNG lọt vào credit/debit — chỉ hiện khi không lọc (Tất cả).
+  if (query.direction) {
+    const wanted = String(query.direction).split(',').map((s) => s.trim()).filter(Boolean);
+    items = items.filter((tx) => wanted.includes(tx.direction));
+  }
 
   items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 

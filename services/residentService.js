@@ -1364,6 +1364,16 @@ const adminCreateResident = async (user, body, req) => {
     const existing = await residentRepo.findByResidentCode(residentCode);
     if (existing) throw apiErr(CODES.RESIDENT_CODE_EXISTS, { statusCode: 409 });
   }
+
+  // Check for duplicate citizenId
+  const citizenId = body.citizenId ? String(body.citizenId).trim() : null;
+  if (citizenId) {
+    const existingByCitizenId = await residentRepo.findByCitizenId(citizenId);
+    if (existingByCitizenId) {
+      throw apiErr(CODES.RESIDENT_CITIZEN_ID_EXISTS, { statusCode: 409 });
+    }
+  }
+
   const dateOfBirth = parseOptionalDate(body.dateOfBirth, 'dateOfBirth');
   if (dateOfBirth) {
     const today = new Date();
@@ -1481,7 +1491,16 @@ const adminUpdatePersonalInfo = async (user, residentId, body, req) => {
     update.dateOfBirth = dob;
   }
   if (body.gender !== undefined) update.gender = body.gender;
-  if (body.citizenId !== undefined) update.citizenId = String(body.citizenId || '').trim() || undefined;
+  if (body.citizenId !== undefined) {
+    const newCitizenId = String(body.citizenId || '').trim() || undefined;
+    if (newCitizenId) {
+      const existing = await residentRepo.findByCitizenId(newCitizenId);
+      if (existing && String(existing._id) !== String(residentId)) {
+        throw apiErr(CODES.RESIDENT_CITIZEN_ID_EXISTS, { statusCode: 409 });
+      }
+    }
+    update.citizenId = newCitizenId;
+  }
   if (body.insuranceNumber !== undefined) update.insuranceNumber = String(body.insuranceNumber || '').trim() || undefined;
   if (body.bloodType !== undefined) update.bloodType = body.bloodType;
   if (body.personalAddress !== undefined) update.personalAddress = String(body.personalAddress || '').trim() || undefined;

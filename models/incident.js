@@ -27,7 +27,7 @@ const incidentSchema = new Schema(
     incidentType: { type: String, required: true, trim: true, index: true },
     severity: { type: String, enum: INCIDENT_SEVERITIES, default: 'medium', index: true },
     incidentAt: { type: Date, required: true, index: true },
-    location: { type: String, trim: true },
+    location: { type: String, required: true, trim: true },
     description: { type: String, required: true, trim: true },
     status: { type: String, enum: INCIDENT_STATUSES, default: 'open', index: true },
     residentIds: [{ type: Types.ObjectId, ref: 'Resident', index: true }],

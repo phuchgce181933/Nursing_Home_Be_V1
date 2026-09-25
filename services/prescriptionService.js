@@ -62,29 +62,52 @@ const resolveMedicationsFromDB = async (items) => {
 const findOutOfStockMedications = async (items) => {
   const medicationIds = [...new Set(items.map((item) => String(item.medicationId)))];
   const medicationObjectIds = medicationIds.map((id) => new Types.ObjectId(id));
-  const [stockTotals, dispenseTotals] = await Promise.all([
+  const [stockTotals, dispenseTotals, activePrescriptions] = await Promise.all([
     medicationStockRepo.sumQuantitiesByMedicationIds(medicationObjectIds),
     medicationDispenseRepo.sumQuantitiesByMedicationIds(medicationObjectIds),
+    prescriptionRepo.findByFilter(
+      { status: 'ACTIVE', 'items.medicationId': { $in: medicationObjectIds } },
+      { select: 'items.medicationId items.quantity items.isActive' }
+    ),
   ]);
   const stockMap = new Map(stockTotals.map((row) => [String(row._id), row.total || 0]));
   const dispenseMap = new Map(dispenseTotals.map((row) => [String(row._id), row.total || 0]));
+  const reservedMap = new Map();
+  activePrescriptions.forEach((prescription) => {
+    (prescription.items || []).forEach((item) => {
+      if (item.isActive === false) return;
+      const medicationId = String(item.medicationId);
+      reservedMap.set(
+        medicationId,
+        (reservedMap.get(medicationId) || 0) + (Number(item.quantity) || 0)
+      );
+    });
+  });
 
   const availability = medicationIds
-    .map((id) => ({
-      id,
-      stockTotal: stockMap.get(id) || 0,
-      dispensedTotal: dispenseMap.get(id) || 0,
-    }))
+    .map((id) => {
+      const requestedQuantity = items
+        .filter((item) => String(item.medicationId) === id)
+        .reduce((total, item) => total + (Number(item.quantity) || 0), 0);
+      return {
+        id,
+        requestedQuantity,
+        stockTotal: stockMap.get(id) || 0,
+        dispensedTotal: dispenseMap.get(id) || 0,
+        reservedQuantity: reservedMap.get(id) || 0,
+      };
+    })
     .map((entry) => ({
       ...entry,
-      available: entry.stockTotal - entry.dispensedTotal,
+      available: entry.stockTotal - entry.dispensedTotal - entry.reservedQuantity,
     }))
-    .filter((entry) => entry.available <= 0);
+    .filter((entry) => entry.available < entry.requestedQuantity);
 
   console.log('[PRESCRIPTION_DEBUG] stock availability', {
     requestedMedicationIds: medicationIds,
     stockTotals: Object.fromEntries(stockMap),
     dispensedTotals: Object.fromEntries(dispenseMap),
+    reservedTotals: Object.fromEntries(reservedMap),
     availability,
   });
 
@@ -124,6 +147,8 @@ const createPrescription = async ({ body, user, req }) => {
   if (!resident) {
     throw new ServiceError('Không tìm thấy cư dân', 404);
   }
+  const residentFullName = resident.fullName || resident.profile?.fullName || resident.profile?.fullname || String(residentId);
+
   if (resident.residencyStatus !== 'admitted') {
     throw new ServiceError('Cư dân hiện chưa được tiếp nhận', 400);
   }
@@ -132,9 +157,9 @@ const createPrescription = async ({ body, user, req }) => {
   const outOfStockMedications = await findOutOfStockMedications(items);
   if (outOfStockMedications.length) {
     const details = outOfStockMedications
-      .map((entry) => `${medMap.get(entry.id)?.name || entry.id} (nhập ${entry.stockTotal}, đã cấp ${entry.dispensedTotal}, còn ${Math.max(0, entry.available)})`)
+      .map((entry) => `${medMap.get(entry.id)?.name || entry.id} (cần ${entry.requestedQuantity}, còn ${Math.max(0, entry.available)})`)
       .join('; ');
-    throw new ServiceError(`Không thể kê đơn vì thuốc đã hết tồn kho: ${details}`, 400);
+    throw new ServiceError(`Không thể kê đơn vì số lượng thuốc vượt quá tồn kho: ${details}`, 400);
   }
   const drugNames = items.map((i) => medMap.get(String(i.medicationId)).name);
 
@@ -272,6 +297,8 @@ const createPrescription = async ({ body, user, req }) => {
     await generateSchedules(prescription);
   }
 
+  const medicationSummary = prescription.items.map((item) => `${item.medicationName} (${item.dosage}${item.unit ? ' ' + item.unit : ''})`).join(', ');
+
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
@@ -279,11 +306,13 @@ const createPrescription = async ({ body, user, req }) => {
     module: 'prescription',
     targetEntityType: 'Prescription',
     targetEntityId: prescription._id,
+    targetName: `Đơn thuốc cho ${residentFullName} - ${medicationSummary}`,
     afterData: {
       status: initialStatus,
       diagnosisNote: prescription.diagnosisNote,
       validUntil: prescription.validUntil,
       residentId: String(prescription.residentId),
+      residentName: residentFullName,
       items: prescription.items.map((item) => ({
         medicationName: item.medicationName,
         dosage: item.dosage,
@@ -296,7 +325,7 @@ const createPrescription = async ({ body, user, req }) => {
         isPRN: item.isPRN,
       })),
     },
-    description: `Tạo đơn thuốc "${initialStatus}" cho cư dân với ${items.length} loại thuốc`,
+    description: `Tạo đơn thuốc "${initialStatus}" cho cư dân "${residentFullName}" - ${items.length} loại thuốc: ${medicationSummary}`,
     req,
   });
 
@@ -869,6 +898,15 @@ const suspendPrescription = async ({ id, reason, user, req }) => {
     throw new ServiceError('Cư dân không được phân công cho bạn', 403);
   }
 
+  // Load resident for audit log detail
+  const resident = await residentRepo.findById(prescription.residentId);
+  const residentFullName = resident
+    ? (resident.fullName || resident.profile?.fullName || resident.profile?.fullname || String(prescription.residentId))
+    : String(prescription.residentId);
+  const medicationSummary = prescription.items
+    .map((item) => `${item.medicationName} (${item.dosage}${item.unit ? ' ' + item.unit : ''})`)
+    .join(', ');
+
   prescription.status = 'SUSPENDED';
   prescription.suspendedAt = new Date();
   prescription.suspendedBy = user._id;
@@ -893,8 +931,19 @@ const suspendPrescription = async ({ id, reason, user, req }) => {
     module: 'prescription',
     targetEntityType: 'Prescription',
     targetEntityId: prescription._id,
-    afterData: { status: 'SUSPENDED', reason: reason.trim() },
-    description: `Tạm ngưng đơn thuốc - Lý do: ${reason.trim()}`,
+    targetName: `Tạm ngưng đơn thuốc cho ${residentFullName} - ${medicationSummary}`,
+    afterData: {
+      status: 'SUSPENDED',
+      reason: reason.trim(),
+      residentId: String(prescription.residentId),
+      residentName: residentFullName,
+      items: prescription.items.map((item) => ({
+        medicationName: item.medicationName,
+        dosage: item.dosage,
+        unit: item.unit,
+      })),
+    },
+    description: `Tạm ngưng đơn thuốc cho cư dân "${residentFullName}" - Lý do: ${reason.trim()}`,
     req,
   });
 
@@ -925,6 +974,15 @@ const resumePrescription = async ({ id, user, req }) => {
     throw new ServiceError('Cư dân không được phân công cho bạn', 403);
   }
 
+  // Load resident for audit log detail
+  const resident = await residentRepo.findById(prescription.residentId);
+  const residentFullName = resident
+    ? (resident.fullName || resident.profile?.fullName || resident.profile?.fullname || String(prescription.residentId))
+    : String(prescription.residentId);
+  const medicationSummary = prescription.items
+    .map((item) => `${item.medicationName} (${item.dosage}${item.unit ? ' ' + item.unit : ''})`)
+    .join(', ');
+
   prescription.status = 'ACTIVE';
   prescription.suspendedAt = undefined;
   prescription.suspendedBy = undefined;
@@ -951,8 +1009,18 @@ const resumePrescription = async ({ id, user, req }) => {
     module: 'prescription',
     targetEntityType: 'Prescription',
     targetEntityId: prescription._id,
-    afterData: { status: 'ACTIVE' },
-    description: 'Tiếp tục đơn thuốc đang tạm ngưng',
+    targetName: `Tiếp tục đơn thuốc cho ${residentFullName} - ${medicationSummary}`,
+    afterData: {
+      status: 'ACTIVE',
+      residentId: String(prescription.residentId),
+      residentName: residentFullName,
+      items: prescription.items.map((item) => ({
+        medicationName: item.medicationName,
+        dosage: item.dosage,
+        unit: item.unit,
+      })),
+    },
+    description: `Tiếp tục đơn thuốc cho cư dân "${residentFullName}"`,
     req,
   });
 

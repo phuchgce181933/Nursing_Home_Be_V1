@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiError');
+const User = require('../models/user');
 const mealTimeScheduleDayRepo = require('../repositories/mealTimeScheduleDayRepository');
 const mealTimeScheduleEntryRepo = require('../repositories/mealTimeScheduleEntryRepository');
 const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = require('./assignedResidentService');
@@ -148,7 +149,17 @@ const assertEntryTimesFromNow = (entries, workDateStr) => {
 const hydrateSchedule = async (day) => {
   if (!day) return null;
   const entries = await mealTimeScheduleEntryRepo.findByDayId(day._id);
-  return { ...day.toObject(), entries };
+  const dayObj = day.toObject ? day.toObject() : day;
+
+  // Replace populated user objects with just the name for audit readability
+  if (dayObj.createdBy && typeof dayObj.createdBy === 'object') {
+    dayObj.createdBy = dayObj.createdBy.fullName || dayObj.createdBy._id?.toString() || String(dayObj.createdBy);
+  }
+  if (dayObj.publishedBy && typeof dayObj.publishedBy === 'object') {
+    dayObj.publishedBy = dayObj.publishedBy.fullName || dayObj.publishedBy._id?.toString() || String(dayObj.publishedBy);
+  }
+
+  return { ...dayObj, entries };
 };
 
 const getTemplates = async () => ({
@@ -288,16 +299,23 @@ const createDraft = async (body, actorUserId, req = null) => {
 
   const saved = await mealTimeScheduleDayRepo.findById(createdId);
   const hydrated = await hydrateSchedule(saved);
+  const entriesSummary = entries.map((entry) => {
+    const resident = hydrated.entries.find((item) => String(item.residentId?._id || item.residentId) === String(entry.residentId));
+    const residentName = resident?.residentId?.fullName || 'Cư dân';
+    return `${residentName}: Sáng ${entry.breakfastTime}, Trưa ${entry.lunchTime}, Tối ${entry.dinnerTime}`;
+  });
 
   await createAuditLog({
     actorUserId,
+    performedBy: req?.user?.fullName,
     action: 'CREATE',
     displayAction: 'Tạo nháp lịch giờ ăn',
     module: 'mealTimeSchedule',
     targetEntityType: 'MealTimeScheduleDay',
     targetEntityId: createdId,
     targetName: saved.title,
-    description: `Tạo nháp lịch giờ ăn ngày ${workDate}, ${entries.length} mục`,
+    description: `Tạo nháp lịch giờ ăn ngày ${workDate}: ${entriesSummary.join('; ')}`,
+    metadata: { createdByName: req?.user?.fullName, entriesSummary },
     afterData: hydrated,
     req,
   });
@@ -323,6 +341,10 @@ const updateDraft = async (id, body, actorUserId, req = null) => {
   const hasEntries = Array.isArray(body.entries);
   const normalizedEntries = hasEntries ? body.entries.map((entry, index) => validateEntry(entry, index)) : null;
   if (hasEntries && !normalizedEntries.length) throw apiErr(CODES.MEAL_ENTRIES_EMPTY, { statusCode: 400 });
+  const changeSummary = [];
+  if (body.workDate !== undefined) changeSummary.push(`ngày làm việc: ${body.workDate}`);
+  if (body.title !== undefined) changeSummary.push('tiêu đề lịch');
+  if (hasEntries) changeSummary.push(`danh sách giờ ăn: ${normalizedEntries.length} mục`);
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
@@ -357,17 +379,28 @@ const updateDraft = async (id, body, actorUserId, req = null) => {
   const saved = await mealTimeScheduleDayRepo.findById(id);
   const hydrated = await hydrateSchedule(saved);
 
+  // Resolve creator name for audit metadata
+  let creatorName = '—';
+  try {
+    if (beforeData.createdBy) {
+      const creator = await User.findById(beforeData.createdBy).select('fullName').lean();
+      if (creator?.fullName) creatorName = creator.fullName;
+    }
+  } catch (_) {}
+
   await createAuditLog({
     actorUserId,
+    performedBy: req?.user?.fullName,
     action: 'UPDATE',
     displayAction: 'Cập nhật nháp lịch giờ ăn',
     module: 'mealTimeSchedule',
     targetEntityType: 'MealTimeScheduleDay',
     targetEntityId: id,
     targetName: saved.title,
-    description: `Cập nhật nháp lịch giờ ăn ID ${id}`,
+    description: `Cập nhật nháp lịch giờ ăn: ${saved.title}${changeSummary.length ? `; thay đổi ${changeSummary.join(', ')}` : ''}`,
     beforeData,
     afterData: hydrated,
+    metadata: { createdByName: creatorName },
     req,
   });
 
@@ -423,16 +456,27 @@ const deleteDraft = async (id, req = null) => {
     await mealTimeScheduleDayRepo.deleteById(id, dbOpts);
   });
 
+  // Resolve creator name for audit metadata
+  let creatorName = '—';
+  try {
+    if (beforeData.createdBy) {
+      const creator = await User.findById(beforeData.createdBy).select('fullName').lean();
+      if (creator?.fullName) creatorName = creator.fullName;
+    }
+  } catch (_) {}
+
   await createAuditLog({
     actorUserId: req?.user?._id,
+    performedBy: req?.user?.fullName,
     action: 'DELETE',
     displayAction: 'Xóa nháp lịch giờ ăn',
     module: 'mealTimeSchedule',
     targetEntityType: 'MealTimeScheduleDay',
     targetEntityId: id,
     targetName: day.title,
-    description: `Xóa nháp lịch giờ ăn ID ${id}`,
+    description: `Xóa nháp lịch giờ ăn: ${day.title}`,
     beforeData,
+    metadata: { createdByName: creatorName },
     req,
   });
 
@@ -499,13 +543,14 @@ const publishSchedule = async (id, actorUserId, req = null) => {
 
   await createAuditLog({
     actorUserId,
+    performedBy: req?.user?.fullName,
     action: 'UPDATE',
     displayAction: 'Xuất bản lịch giờ ăn',
     module: 'mealTimeSchedule',
     targetEntityType: 'MealTimeScheduleDay',
     targetEntityId: id,
     targetName: saved.title,
-    description: `Xuất bản lịch giờ ăn ID ${id}, ngày ${workDate}`,
+    description: `Xuất bản lịch giờ ăn ngày ${workDate}`,
     beforeData,
     afterData: hydrated,
     req,

@@ -84,7 +84,7 @@ const listResidentsAvailableForStaff = async (req, res) => {
 
 const listAssignedResidents = async (req, res) => {
   try {
-    const result = await staffService.listAssignedResidents(req.params.id);
+    const result = await staffService.listAssignedResidents(req.params.id, req.query);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);

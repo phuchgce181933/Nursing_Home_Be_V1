@@ -11,8 +11,14 @@ const getAssignmentContext = (req, res) =>
 const assignCareTask = (req, res) =>
   svc
     .assignCareTask(req.body, req.user._id, req)
-    .then((result) => res.status(201).json({ success: true, ...result }))
-    .catch((err) => sendApiError(res, err));
+    .then((result) => {
+      console.log('[assignCareTask] Success, task:', result?.task?._id);
+      res.status(201).json({ success: true, ...result });
+    })
+    .catch((err) => {
+      console.error('[assignCareTask] Error:', err?.message, err?.stack);
+      sendApiError(res, err);
+    });
 
 // Admin thấy toàn bộ; nhân viên (nurse/doctor/caregiver) chỉ thấy nhiệm vụ của chính mình.
 // Dùng lại caregiverCareTaskService.listMyCareTasks: nó đã ép staffProfileId và

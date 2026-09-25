@@ -85,7 +85,7 @@ const submitLeaveRequest = async (currentUser, body, req) => {
   // Check leave balance warning
   let balanceWarning = null;
   const profile = await staffProfileRepo.findByUserId(currentUser._id);
-  if (profile && profile.leaveBalance && type !== 'unpaid') {
+  if (profile && profile.leaveBalance && !['unpaid', 'other'].includes(type)) {
     const balance = profile.leaveBalance[type] ?? 0;
     if (daysRequested > balance) {
       balanceWarning = `Requested ${daysRequested} day(s) but only ${balance} day(s) remain for type '${type}'`;
@@ -122,7 +122,7 @@ const submitLeaveRequest = async (currentUser, body, req) => {
     targetEntityType: 'LeaveRequest',
     targetEntityId: request._id,
     description: `Gửi đơn xin nghỉ phép loại "${type}" từ ngày ${start.toISOString().slice(0,10)} đến ${end.toISOString().slice(0,10)}`,
-    afterData: { type, startDate: start, endDate: end, daysRequested, status: 'pending' },
+    afterData: { leaveType: type, startDate: start, endDate: end, daysRequested, status: 'pending', reason },
     req,
   });
 
@@ -405,7 +405,15 @@ const approveLeaveRequest = async (
     targetEntityId: finalRequest._id,
     description: `Phê duyệt đơn nghỉ phép "${finalRequest.type}" của nhân viên`,
     beforeData: { status: 'pending' },
-    afterData: { status: 'approved', reviewNote: reviewNote?.trim() || null, replacementStaffProfileId },
+    afterData: {
+      leaveType: finalRequest.type,
+      startDate: finalRequest.startDate,
+      endDate: finalRequest.endDate,
+      daysRequested: finalRequest.daysRequested,
+      status: 'approved',
+      reviewNote: reviewNote?.trim() || null,
+      replacementStaffProfileId,
+    },
     req,
   });
 
@@ -454,7 +462,14 @@ const rejectLeaveRequest = async (currentUser, id, body, req) => {
     targetEntityId: updated._id,
     description: `Từ chối đơn nghỉ phép`,
     beforeData: { status: 'pending' },
-    afterData: { status: 'rejected', reviewNote: reviewNote.trim() },
+    afterData: {
+      leaveType: request.type,
+      startDate: request.startDate,
+      endDate: request.endDate,
+      daysRequested: request.daysRequested,
+      status: 'rejected',
+      reviewNote: reviewNote.trim(),
+    },
     req,
   });
 
@@ -484,7 +499,13 @@ const cancelLeaveRequest = async (currentUser, id, req) => {
     targetEntityId: request._id,
     description: `Hủy đơn nghỉ phép`,
     beforeData: { status: 'pending' },
-    afterData: { status: 'cancelled' },
+    afterData: {
+      leaveType: request.type,
+      startDate: request.startDate,
+      endDate: request.endDate,
+      daysRequested: request.daysRequested,
+      status: 'cancelled',
+    },
     req,
   });
 

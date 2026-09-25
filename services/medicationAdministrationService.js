@@ -3,6 +3,7 @@ const ServiceError = require('./serviceError');
 const medicationScheduleRepo = require('../repositories/medicationScheduleRepository');
 const prescriptionRepo = require('../repositories/prescriptionRepository');
 const medicationRepo = require('../repositories/medicationRepository');
+const medicationStockRepo = require('../repositories/medicationStockRepository');
 const { getResidentScope, isInScope } = require('./residentScopeHelper');
 const { generateSchedulesForItem } = require('./scheduleGeneratorService');
 const notificationService = require('./notificationService');
@@ -169,7 +170,44 @@ const getAvailableMedications = async ({ query }) => {
     medicationRepo.countAll(filter),
   ]);
 
-  return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) || 1 };
+  const medicationIds = data.map((medication) => medication._id);
+  const [stockTotals, dispenseTotals, activePrescriptions] = await Promise.all([
+    medicationStockRepo.sumQuantitiesByMedicationIds(medicationIds),
+    medicationDispenseRepo.sumQuantitiesByMedicationIds(medicationIds),
+    prescriptionRepo.findByFilter(
+      { status: 'ACTIVE', 'items.medicationId': { $in: medicationIds } },
+      { select: 'items.medicationId items.quantity items.isActive' }
+    ),
+  ]);
+  const stockMap = new Map(stockTotals.map((row) => [String(row._id), row.total || 0]));
+  const dispenseMap = new Map(dispenseTotals.map((row) => [String(row._id), row.total || 0]));
+  const reservedMap = new Map();
+  activePrescriptions.forEach((prescription) => {
+    (prescription.items || []).forEach((item) => {
+      if (item.isActive === false) return;
+      const medicationId = String(item.medicationId);
+      reservedMap.set(
+        medicationId,
+        (reservedMap.get(medicationId) || 0) + (Number(item.quantity) || 0)
+      );
+    });
+  });
+
+  return {
+    data: data.map((medication) => ({
+      ...(medication.toObject ? medication.toObject() : medication),
+      availableQuantity: Math.max(
+        0,
+        (stockMap.get(String(medication._id)) || 0) -
+        (dispenseMap.get(String(medication._id)) || 0) -
+        (reservedMap.get(String(medication._id)) || 0)
+      ),
+    })),
+    total,
+    page: pageNum,
+    limit: limitNum,
+    totalPages: Math.ceil(total / limitNum) || 1,
+  };
 };
 
 // ── getCurrentMedications ────────────────────────────────────────────────────
@@ -333,6 +371,7 @@ const setMedicationSchedule = async ({ body, user, req }) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'SET_MEDICATION_SCHEDULE',
     displayAction: 'Đặt lịch thuốc',
     module: 'medication',
@@ -500,6 +539,7 @@ const markTaken = async ({ id, body, user, req }) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'MARK_MEDICATION_TAKEN',
     displayAction: 'Đánh dấu đã dùng thuốc',
     module: 'medication',
@@ -553,6 +593,7 @@ const markMissed = async ({ id, body, user, req }) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'MARK_MEDICATION_MISSED',
     displayAction: 'Đánh dấu bỏ lỡ thuốc',
     module: 'medication',
@@ -605,6 +646,7 @@ const markRefused = async ({ id, body, user, req }) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'MARK_MEDICATION_REFUSED',
     displayAction: 'Đánh dấu từ chối thuốc',
     module: 'medication',
@@ -657,6 +699,7 @@ const markHeld = async ({ id, body, user, req }) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'MARK_MEDICATION_HELD',
     displayAction: 'Giữ lại thuốc',
     module: 'medication',
@@ -709,6 +752,7 @@ const markNotAvailable = async ({ id, body, user, req }) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'MARK_MEDICATION_NOT_AVAILABLE',
     displayAction: 'Đánh dấu thuốc không có sẵn',
     module: 'medication',
@@ -795,6 +839,7 @@ const administerPRN = async ({ body, user, req }) => {
   await createAuditLog({
     actorUserId: user._id,
     actorRole: user.role,
+    performedBy: user.fullName,
     action: 'ADMINISTER_PRN',
     displayAction: 'Cho dùng thuốc PRN',
     module: 'medication',

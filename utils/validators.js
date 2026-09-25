@@ -1,5 +1,6 @@
-// Regex cho phép chữ cái Latin, chữ cái có dấu tiếng Việt, khoảng trắng, dấu gạch nối
-const FULLNAME_REGEX = /^[\p{L}\s'\-\.]+$/u;
+// Allow Unicode letters/combining marks (including Vietnamese), whitespace, and
+// punctuation commonly used in personal names.
+const FULLNAME_REGEX = /^[\p{L}\p{M}\s'’\-\.]+$/u;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const PHONE_REGEX = /^0\d{9}$/;
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
@@ -7,9 +8,10 @@ const PASSWORD_MIN = 8;
 
 const validateFullName = (name) => {
   if (!name || !name.trim()) return 'fullName is required';
-  if (name.trim().length < 2) return 'fullName must be at least 2 characters';
-  if (name.trim().length > 100) return 'fullName must be at most 100 characters';
-  if (!FULLNAME_REGEX.test(name.trim())) return 'fullName must not contain special characters';
+  const normalizedName = name.normalize('NFKC').trim();
+  if (normalizedName.length < 2) return 'fullName must be at least 2 characters';
+  if (normalizedName.length > 100) return 'fullName must be at most 100 characters';
+  if (!FULLNAME_REGEX.test(normalizedName)) return 'fullName must not contain special characters';
   return null;
 };
 

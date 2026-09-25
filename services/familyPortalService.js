@@ -408,7 +408,21 @@ const getPrescriptions = async (user, residentId, query) => {
     }
     filter.status = query.status;
   }
-  return familyPortalRepo.findPrescriptions(filter, { sort: { prescriptionDate: -1 } });
+  const prescriptions = await familyPortalRepo.findPrescriptions(filter, { sort: { prescriptionDate: -1 } });
+
+  // Cổng hiển thị: người thân CHỈ thấy một đơn thuốc sau khi Quản trị viên đã phát hành
+  // hoá đơn thuốc hợp lệ (status ∈ ISSUED/PARTIALLY_PAID/PAID) cho đơn đó. Ranh giới bảo
+  // mật nằm ở backend (endpoint này là nguồn dữ liệu đơn thuốc duy nhất cho cả Mobile lẫn
+  // Web), dựa trên quan hệ có cấu trúc invoice.prescriptionId — không suy đoán từ trạng
+  // thái đơn thuốc, giá, lịch dùng hay UI. Đây là "đã được phát hành hợp lệ", không phải
+  // "chưa thanh toán": đơn vẫn nằm trong lịch sử sau khi thanh toán. DRAFT và CANCELLED
+  // (hoá đơn thuốc bị Dừng khi còn nháp) đều bị ẩn vì chưa từng được phát hành hợp lệ.
+  // Dữ liệu lâm sàng cho Bác sĩ/Điều dưỡng/Dược sĩ/QTV không bị ảnh hưởng — dùng service riêng.
+  const issuedIds = await familyPortalRepo.findIssuedPrescriptionIds(
+    prescriptions.map((rx) => rx._id)
+  );
+  const issuedSet = new Set(issuedIds.map((id) => String(id)));
+  return prescriptions.filter((rx) => issuedSet.has(String(rx._id)));
 };
 
 // ISO week key in local time: "YYYY-Www" (mirrors scheduleController's isoWeekKey)

@@ -5,6 +5,7 @@ const {
   getResident,
   getResidentBillingSummary,
   getResidentInvoices,
+  getPaymentHistory,
   getInvoicePaymentUrl,
   getInvoiceDetail,
   getWalletBalance,
@@ -115,6 +116,30 @@ router.get('/residents/:residentId', getResident);
  *         description: Resident not found
  */
 router.get('/residents/:residentId/billing-summary', getResidentBillingSummary);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/payment-history:
+ *   get:
+ *     summary: Get payment history for a resident — wallet topups and paid invoices
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Payment history with wallet topups and invoice payments
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/residents/:residentId/payment-history', getPaymentHistory);
 
 /**
  * @swagger

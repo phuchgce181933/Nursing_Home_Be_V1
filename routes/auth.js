@@ -23,7 +23,7 @@ const { uploadAvatar, uploadAvatarAndCertifications } = require('../middleware/u
 const rateLimit = require('express-rate-limit');
 
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 1 * 60 * 1000, // 1 minute
   max: 10, // limit each IP to 10 login/forgot-password attempts per windowMs
   message: { message: 'Quá nhiều lần thử từ địa chỉ IP này, vui lòng thử lại sau' },
 });

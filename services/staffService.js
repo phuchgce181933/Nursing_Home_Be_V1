@@ -751,7 +751,7 @@ const listResidentsAvailableForStaff = async (userId, { search, status } = {}) =
 
 const listAssignedResidents = async (userId) => {
   const profile = await staffProfileRepo.findOnePopulated({ userId }, [
-    { path: 'assignedResidentIds', select: 'fullName residentCode roomId residencyStatus', populate: { path: 'roomId', select: 'roomNumber floorId' } },
+    { path: 'assignedResidentIds', select: 'fullName residentCode roomId residencyStatus gender', populate: { path: 'roomId', select: 'roomNumber floorId' } },
   ]);
 
   if (!profile) throw apiErr(CODES.STAFF_PROFILE_NOT_FOUND, { statusCode: 404 });
@@ -764,7 +764,7 @@ const listAssignedResidents = async (userId) => {
 
   if (!data.length) {
     result.message =
-      'No residents assigned to this staff. Assign residents in the Residents tab before creating care tasks.';
+      'Chưa có cư dân nào được giao cho nhân viên này. Hãy gán cư dân trong tab Cư dân trước khi tạo nhiệm vụ chăm sóc.';
   }
 
   return result;

@@ -454,7 +454,8 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
     }
   }
 
-  // Selected clinical services always generate charges and an invoice.
+  // Selected clinical services should create charges only; invoice generation is done later
+  // from admin/medical-charges when the admin explicitly clicks "Create Invoice".
   if (normalizedSelectedServices.length > 0) {
     console.log('[medicalRecordService] Creating charges for resident:', residentId, 'Services:', normalizedSelectedServices.length);
     const createdCharges = [];
@@ -484,26 +485,9 @@ const recordMedicalRecord = async (user, residentId, body, req) => {
       }
     }
     console.log('[medicalRecordService] Total charges created:', createdCharges.length);
-
-    const items = createdCharges.map((c) => ({
-      chargeId: c._id,
-      description: c.serviceName || c.serviceCode,
-      amount: c.totalPrice || ((c.unitPrice || 0) * (c.quantity || 1)),
-      category: 'SERVICE',
-    }));
-
-    if (items.length) {
-      const invoice = await paymentService.createInvoice(user, residentId, {
-        items,
-        paymentMethod,
-        paymentPlan: 'FULL',
-      }, req);
-      invoiceId = invoice?._id || null;
-      if (invoiceId) {
-        record.invoiceId = invoiceId;
-        await record.save();
-      }
-      console.log(`[medicalRecordService] Created invoice ${invoiceId} for ${items.length} clinical service charge(s).`);
+    if (createdCharges.length) {
+      record.invoiceId = null;
+      await record.save();
     }
   }
 

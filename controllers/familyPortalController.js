@@ -38,6 +38,15 @@ const getResidentInvoices = async (req, res) => {
   }
 };
 
+const getPaymentHistory = async (req, res) => {
+  try {
+    const result = await familyPortalService.getPaymentHistory(req.user, req.params.residentId);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 const getInvoicePaymentUrl = async (req, res) => {
   try {
     const result = await familyPortalService.getInvoicePaymentUrl(req.user, req.params.residentId, req.params.invoiceId, req);
@@ -341,6 +350,7 @@ module.exports = {
   getResident,
   getResidentBillingSummary,
   getResidentInvoices,
+  getPaymentHistory,
   getInvoicePaymentUrl,
   getInvoiceDetail,
   getWalletBalance,

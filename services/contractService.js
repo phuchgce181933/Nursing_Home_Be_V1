@@ -11,6 +11,7 @@ const careTaskRepo = require('../repositories/careTaskRepository');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const careAppointmentRepo = require('../repositories/careAppointmentRepository');
 const CareTask = require('../models/careTask');
+const Admission = require('../models/admission');
 const walletService = require('./walletService');
 const { createAuditLog } = require('../utils/auditLog');
 
@@ -623,9 +624,17 @@ const listContracts = async (query, user) => {
 
 // ── UC-212: View Contract Details ─────────────────────────────────────────────
 const getContractDetails = async (contractId, user) => {
-  const contract = await contractRepo.findById(contractId);
+  const contract = await contractRepo.findByIdLean(contractId);
   if (!contract) {
     throw new ServiceError('Không tìm thấy hợp đồng', 404);
+  }
+  if (contract.admissionId) {
+    // Populate admission (lấy emergencyContacts, requestedBy*, applicant) để
+    // frontend hiển thị đúng số liên hệ khẩn cấp trong modal chi tiết.
+    const admission = await Admission.findById(contract.admissionId).lean();
+    if (admission) {
+      contract.admissionId = { ...admission };
+    }
   }
 
   // Get related invoices
@@ -1071,6 +1080,42 @@ const getContractHistory = async (admissionId, query) => {
   return {
     contracts,
     invoices,
+  };
+};
+
+/**
+ * Lấy tất cả hợp đồng của một cư dân (gồm cả hợp đồng cũ đã chấm dứt/hết hạn).
+ * Admin dùng để hiển thị lịch sử hợp đồng khi xem chi tiết 1 hợp đồng bất kỳ
+ * của cư dân đó.
+ *
+ * - Lấy theo residentId (không phải admissionId) để gom đúng cư dân qua nhiều
+ *   chu kỳ nhập viện/xuất viện.
+ * - Populate admissionId (lấy status + applicant) + servicePackageId (tên gói,
+ *   monthlyPrice) để frontend hiển thị ngay không cần fetch thêm.
+ * - Sort theo createdAt desc — hợp đồng mới nhất trước.
+ * - Trả về mảng plain (không pagination) vì số lượng hợp đồng/resident thường
+ *   rất nhỏ (1–5 hợp đồng trong nhiều năm).
+ */
+const getContractsByResident = async (residentId, user) => {
+  if (!residentId || !Types.ObjectId.isValid(residentId)) {
+    throw new ServiceError('residentId không hợp lệ', 400);
+  }
+
+  const contracts = await contractRepo.findAll(
+    { residentId: new Types.ObjectId(residentId) },
+    {
+      sort: { createdAt: -1 },
+      lean: true,
+      populate: [
+        { path: 'admissionId', select: '_id status applicant' },
+        { path: 'servicePackageId', select: '_id name monthlyPrice tier' },
+      ],
+    }
+  );
+
+  return {
+    data: contracts,
+    total: contracts.length,
   };
 };
 
@@ -1675,6 +1720,7 @@ module.exports = {
   renewContract,
   terminateContract,
   getContractHistory,
+  getContractsByResident,
   issueInvoices,
   recalculateContractInvoices,
   updateDraftInvoicePrice,

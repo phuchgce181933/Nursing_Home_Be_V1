@@ -1070,9 +1070,13 @@ const recordPayment = async (user, invoiceId, body) => {
     actorUserId: user._id,
     actorRole: user.role,
     action: 'RECORD_PAYMENT',
+    displayAction: 'Ghi nhận thanh toán',
     module: 'billing',
+    businessModule: 'billingPayment',
     targetEntityType: 'Payment',
     targetEntityId: payment._id,
+    targetName: invoice.invoiceNumber || invoice._id?.toString(),
+    description: `${user.fullName || user.email || 'Người dùng'} đã thanh toán hóa đơn ${invoice.invoiceNumber || invoice._id} số tiền ${amount.toLocaleString('vi-VN')} VND`,
     afterData: payment.toObject(),
   });
 
@@ -1253,9 +1257,13 @@ const batchPayment = async (user, residentId, invoiceIds, body, req) => {
         actorUserId: user._id,
         actorRole: user.role,
         action: 'BATCH_PAYMENT',
+        displayAction: 'Thanh toán nhiều hóa đơn',
         module: 'billing',
+        businessModule: 'billingPayment',
         targetEntityType: 'Payment',
         targetEntityId: payment._id,
+        targetName: invoice.invoiceNumber || invoice._id?.toString(),
+        description: `${user.fullName || user.email || 'Người dùng'} đã thanh toán hóa đơn ${invoice.invoiceNumber || invoice._id} số tiền ${invoiceAmount.toLocaleString('vi-VN')} VND trong đợt thanh toán nhiều hóa đơn`,
         afterData: payment.toObject(),
       });
     }

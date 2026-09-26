@@ -2,6 +2,9 @@ const ServiceError = require('./serviceError');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 const paymentService = require('./paymentService');
+const FamilyWallet = require('../models/familyWallet');
+const Payment = require('../models/payment');
+const Invoice = require('../models/invoice');
 const { CARE_NOTE_TYPES } = require('../models/enums');
 
 const parsePagination = (query) => {
@@ -76,6 +79,109 @@ const getResidentInvoices = async (user, residentId, query) => {
     familyPortalRepo.countInvoicesByResidentId(residentId),
   ]);
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
+};
+
+/**
+ * Lịch sử giao dịch thanh toán cho family portal.
+ * Gồm 2 phần:
+ *   1. Lịch sử nạp tiền ví — từ FamilyWallet.transactions (type: 'topup')
+ *   2. Lịch sử hóa đơn đã thanh toán — từ Payment model + Invoice
+ */
+const getPaymentHistory = async (user, residentId) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
+  }
+
+  const resident = await familyPortalRepo.getResidentById(residentId);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+
+  // 1. Lịch sử nạp tiền ví của tài khoản family này
+  const wallet = await FamilyWallet.findOne({ userId: user._id }).lean();
+  const topupTransactions = wallet
+    ? (wallet.transactions || [])
+        .filter((tx) => tx.type === 'topup' && tx.status === 'completed')
+        .map((tx) => ({
+          _id: tx._id || tx.paymentId,
+          type: 'topup',
+          amount: tx.amount,
+          description: tx.description || 'Nạp tiền vào ví',
+          status: tx.status,
+          createdAt: tx.createdAt,
+          paymentId: tx.paymentId || null,
+        }))
+    : [];
+
+  // 2. Lịch sử hóa đơn đã thanh toán của cư dân này (bằng ví hoặc PayOS)
+  const payments = await Payment.find({ invoiceId: { $exists: true } })
+    .populate({
+      path: 'invoiceId',
+      select: 'invoiceNumber type totalAmount periodStart periodEnd issuedAt billingPeriodStart billingPeriodEnd',
+    })
+    .sort({ paidAt: -1 })
+    .lean();
+
+  // Lọc: chỉ giữ lại payment mà invoice thuộc resident này
+  const paidInvoices = payments
+    .filter((p) => {
+      if (!p.invoiceId) return false;
+      const invResidentId = p.invoiceId.residentId ? String(p.invoiceId.residentId) : null;
+      return invResidentId === String(residentId);
+    })
+    .map((p) => ({
+      _id: p._id,
+      type: 'payment',
+      paymentMethod: p.paymentMethod,
+      amount: p.amount,
+      transactionRef: p.transactionRef || null,
+      status: p.paymentStatus,
+      paidAt: p.paidAt || p.confirmedAt,
+      invoiceId: p.invoiceId?._id || null,
+      invoiceNumber: p.invoiceId?.invoiceNumber || null,
+      invoiceType: p.invoiceId?.type || null,
+      invoiceTotal: p.invoiceId?.totalAmount || p.amount,
+      periodLabel: buildPeriodLabel(p.invoiceId),
+    }));
+
+  // 3. Gộp và sắp xếp theo thời gian giảm dần
+  const allTransactions = [
+    ...topupTransactions.map((tx) => ({ ...tx, transactionType: 'topup' })),
+    ...paidInvoices.map((tx) => ({ ...tx, transactionType: 'payment' })),
+  ].sort((a, b) => {
+    const dateA = new Date(a.createdAt || a.paidAt || 0);
+    const dateB = new Date(b.createdAt || b.paidAt || 0);
+    return dateB - dateA;
+  });
+
+  // Tổng hợp
+  const totalTopup = topupTransactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const totalPaid = paidInvoices.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+
+  return {
+    residentId,
+    residentName: resident.fullName,
+    summary: {
+      totalTopupTransactions: topupTransactions.length,
+      totalPaidInvoices: paidInvoices.length,
+      totalTopupAmount: totalTopup,
+      totalPaidAmount: totalPaid,
+    },
+    transactions: allTransactions,
+  };
+};
+
+/** Build human-readable period label from invoice billing period */
+const buildPeriodLabel = (invoice) => {
+  if (!invoice) return null;
+  const periodDate = invoice.billingPeriodStart || invoice.periodStart || invoice.issuedAt;
+  if (!periodDate) return null;
+  const d = new Date(periodDate);
+  if (isNaN(d.getTime())) return null;
+  const month = d.getMonth() + 1;
+  const year = d.getFullYear();
+
+  const invoiceType = String(invoice.type || '').toUpperCase();
+  let prefix = invoiceType === 'MEDICATION' ? 'Thuốc' : invoiceType === 'SERVICE' ? 'Dịch vụ' : 'Hóa đơn';
+  return `${prefix} tháng ${month}/${year}`;
 };
 
 const getInvoicePaymentUrl = async (user, residentId, invoiceId, req) => {
@@ -770,6 +876,7 @@ module.exports = {
   getResident,
   getResidentBillingSummary,
   getResidentInvoices,
+  getPaymentHistory,
   getInvoicePaymentUrl,
   getInvoiceDetail,
   getVitals,

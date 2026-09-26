@@ -7,6 +7,7 @@ const {
   renewContract,
   terminateContract,
   getContractHistory,
+  getContractsByResident,
   issueInvoices,
   recalculateContractInvoices,
   updateDraftInvoicePrice,
@@ -244,6 +245,33 @@ router.post('/:contractId/create-invoice', protect, authorize('admin'), createIn
  *         description: All contracts and invoices for the admission
  */
 router.get('/history/:admissionId', protect, authorize('admin'), getContractHistory);
+
+/**
+ * @swagger
+ * /api/admin/contracts/by-resident/{residentId}:
+ *   get:
+ *     summary: Lấy tất cả hợp đồng của một cư dân (gồm cả hợp đồng cũ đã chấm dứt/hết hạn)
+ *     description: |
+ *       Trả về danh sách đầy đủ hợp đồng của một cư dân (resident) — gồm cả
+ *       hợp đồng đang active lẫn các hợp đồng cũ đã bị chấm dứt (terminated),
+ *       hết hạn (expired) hoặc hủy (cancelled). Dùng để hiển thị lịch sử hợp
+ *       đồng trong modal chi tiết.
+ *     tags: [Admin - Contract Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Mảng hợp đồng (sắp xếp theo createdAt desc — hợp đồng mới nhất trước)
+ *       400:
+ *         description: residentId không hợp lệ
+ */
+router.get('/by-resident/:residentId', protect, authorize('admin', 'doctor', 'nurse'), getContractsByResident);
 
 /**
  * @swagger

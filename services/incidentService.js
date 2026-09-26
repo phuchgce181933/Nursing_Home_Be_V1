@@ -1083,8 +1083,19 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
 
   // immediateActions may come as comma-separated string or array
   if (payload.immediateActions) {
-    if (Array.isArray(payload.immediateActions)) resolution.immediateActions = payload.immediateActions;
-    else resolution.immediateActions = String(payload.immediateActions).split(',').map((s) => s.trim()).filter(Boolean);
+    if (Array.isArray(payload.immediateActions)) {
+      resolution.immediateActions = payload.immediateActions;
+    } else {
+      const rawImmediateActions = String(payload.immediateActions).trim();
+      try {
+        const parsedImmediateActions = JSON.parse(rawImmediateActions);
+        resolution.immediateActions = Array.isArray(parsedImmediateActions)
+          ? parsedImmediateActions.map((item) => String(item).trim()).filter(Boolean)
+          : rawImmediateActions.split(',').map((s) => s.trim()).filter(Boolean);
+      } catch {
+        resolution.immediateActions = rawImmediateActions.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
   }
 
   // medical medications may be JSON encoded

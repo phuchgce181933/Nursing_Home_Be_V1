@@ -8,6 +8,7 @@ const {
   heroIcon,
   infoRow,
   otpBoxes,
+  codeBlock,
   calloutBox,
   ctaButton,
   pill,
@@ -15,9 +16,9 @@ const {
   renderEmailLayout,
 } = require('../utils/emailBrand');
 
+// Cổng SMS TextBee. KHÔNG đặt api key / device id mặc định ở đây: credential chỉ
+// được lấy từ biến môi trường (.env), giống cách PayOS đã được xử lý trước đó.
 const DEFAULT_TEXTBEE_BASE_URL = 'https://api.textbee.dev';
-const DEFAULT_TEXTBEE_DEVICE_ID = '68747523c430dcc62c1ef2fa';
-const DEFAULT_TEXTBEE_API_KEY = 'a91dbad8-8208-4661-aebc-70afa9ecf388';
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -47,12 +48,20 @@ const spacer = (h) => `<tr><td style="padding-bottom:${h}px;line-height:1px;font
 
 /* ───────────────────────── 1. Reset Password ───────────────────────── */
 
-const sendResetPasswordEmail = async (to, resetUrl) => {
+/**
+ * Email đặt lại mật khẩu cho người dùng WEB: một nút bấm mở trang đặt lại trên
+ * trình duyệt. Đây là mẫu đã chạy từ trước, giữ nguyên hành vi.
+ *
+ * `resetUrl` do phía gọi dựng từ FRONTEND_URL đã cấu hình — không có localhost
+ * nào bị nhúng cứng ở đây. `expiresMinutes` cũng do phía gọi truyền xuống từ
+ * hằng số hết hạn thật, để chữ "hết hạn sau N phút" không lệch với hành vi thực.
+ */
+const sendWebPasswordResetEmail = async (to, resetUrl, { expiresMinutes = 10 } = {}) => {
   const bodyHtml = `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr><td align="center">${heroIcon('lock')}</td></tr>
-      ${cardTitle('Đặt lại mật khẩu của bạn')}
-      ${cardSubtitle('Chúng tôi vừa nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Nhấn nút bên dưới để tạo mật khẩu mới.')}
+      ${cardTitle('Đặt lại mật khẩu')}
+      ${cardSubtitle('Xin chào,<br/>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản An Nhiên của bạn. Nhấn nút bên dưới để tạo mật khẩu mới.')}
       <tr><td align="center">${ctaButton({ label: 'Đặt lại mật khẩu', href: resetUrl })}</td></tr>
       ${spacer(28)}
       <tr>
@@ -60,7 +69,7 @@ const sendResetPasswordEmail = async (to, resetUrl) => {
           iconName: 'shield',
           color: COLORS.warning,
           bg: COLORS.warningLight,
-          text: 'Liên kết này sẽ hết hạn sau <strong>10 phút</strong>. Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này hoặc liên hệ đội ngũ hỗ trợ nếu bạn nghi ngờ tài khoản của mình gặp rủi ro.',
+          text: `Liên kết sẽ hết hạn sau <strong>${expiresMinutes} phút</strong> và chỉ dùng được MỘT lần. Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này hoặc liên hệ đội ngũ hỗ trợ nếu bạn nghi ngờ tài khoản của mình gặp rủi ro.`,
         })}</td>
       </tr>
     </table>
@@ -70,8 +79,86 @@ const sendResetPasswordEmail = async (to, resetUrl) => {
     from: `"${BRAND.senderName}" <${process.env.MAIL_USER}>`,
     to,
     subject: 'Đặt lại mật khẩu của bạn',
-    html: renderEmailLayout({ preheader: 'Yêu cầu đặt lại mật khẩu — liên kết hết hạn sau 10 phút.', bodyHtml }),
-    text: `Đặt lại mật khẩu của bạn\n\nNhấn vào liên kết sau để đặt lại mật khẩu (hết hạn sau 10 phút):\n${resetUrl}\n\nNếu bạn không yêu cầu, vui lòng bỏ qua email này.`,
+    html: renderEmailLayout({
+      preheader: `Yêu cầu đặt lại mật khẩu — liên kết hết hạn sau ${expiresMinutes} phút.`,
+      bodyHtml,
+    }),
+    text: [
+      'Đặt lại mật khẩu',
+      '',
+      'Xin chào,',
+      'Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản An Nhiên.',
+      `Nhấn vào liên kết sau để tạo mật khẩu mới (hết hạn sau ${expiresMinutes} phút):`,
+      resetUrl,
+      '',
+      'Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này.',
+    ].join('\n'),
+    attachments: EMAIL_ATTACHMENTS,
+  });
+};
+
+/**
+ * Email đặt lại mật khẩu cho người dùng ỨNG DỤNG DI ĐỘNG: CHỈ có mã để copy.
+ *
+ * CỐ Ý không có `resetUrl`, không `ctaButton`, không bất kỳ liên kết nào dẫn sang
+ * Web. Người dùng Mobile bấm một liên kết Web sẽ bị đẩy ra trình duyệt và bỏ dở
+ * luồng trong app, nên mẫu này không cung cấp đường đó. Kiểm thử có assert rằng
+ * HTML không chứa '/reset-password'.
+ *
+ * `codeBlock` (không phải `otpBoxes`) vì mã cần COPY được thành một chuỗi liền:
+ * tách sáu ô thì bôi đen sẽ dính khoảng trắng giữa các chữ số.
+ */
+const sendMobilePasswordResetCodeEmail = async ({ to, code, expiresMinutes = 10 }) => {
+  if (!to) return;
+
+  const bodyHtml = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td align="center">${heroIcon('lock')}</td></tr>
+      ${cardTitle('Đặt lại mật khẩu')}
+      ${cardSubtitle('Chúng tôi nhận được yêu cầu đặt lại mật khẩu từ ứng dụng An Nhiên.')}
+      <tr>
+        <td align="center" style="font-family:${FONTS.body};font-size:14px;color:${COLORS.textMuted};padding-bottom:12px;">
+          Mã đặt lại mật khẩu của bạn:
+        </td>
+      </tr>
+      <tr><td>${codeBlock(code, { fontSize: 30, letterSpacing: 8 })}</td></tr>
+      ${spacer(20)}
+      <tr>
+        <td align="center" style="font-family:${FONTS.body};font-size:13.5px;line-height:1.65;color:${COLORS.textMuted};padding-bottom:24px;">
+          Sao chép mã này và nhập vào ứng dụng An Nhiên để tiếp tục.
+        </td>
+      </tr>
+      <tr>
+        <td>${calloutBox({
+          iconName: 'shield',
+          color: COLORS.warning,
+          bg: COLORS.warningLight,
+          text: `Mã có hiệu lực trong <strong>${expiresMinutes} phút</strong> và chỉ dùng được MỘT lần. Đừng chia sẻ mã với bất kỳ ai, kể cả nhân viên An Nhiên. Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này.`,
+        })}</td>
+      </tr>
+    </table>
+  `;
+
+  await transporter.sendMail({
+    from: `"${BRAND.senderName}" <${process.env.MAIL_USER}>`,
+    to,
+    subject: 'Mã đặt lại mật khẩu An Nhiên',
+    html: renderEmailLayout({
+      preheader: `Mã đặt lại mật khẩu — có hiệu lực trong ${expiresMinutes} phút.`,
+      bodyHtml,
+    }),
+    text: [
+      'An Nhiên — Đặt lại mật khẩu',
+      '',
+      'Chúng tôi nhận được yêu cầu đặt lại mật khẩu từ ứng dụng An Nhiên.',
+      '',
+      `Mã đặt lại mật khẩu của bạn: ${code}`,
+      '',
+      'Sao chép mã này và nhập vào ứng dụng An Nhiên để tiếp tục.',
+      `Mã có hiệu lực trong ${expiresMinutes} phút và chỉ dùng được một lần.`,
+      '',
+      'Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này.',
+    ].join('\n'),
     attachments: EMAIL_ATTACHMENTS,
   });
 };
@@ -406,21 +493,34 @@ const sendFamilyAccountCreatedEmail = async ({
 
 /* ───────────────────────── SMS (unchanged) ───────────────────────── */
 
+/** Che số điện thoại trước khi ghi log: chỉ giữ 4 số cuối. */
+const maskPhone = (phone) => String(phone || '').replace(/.(?=.{4})/g, '*');
+
 const sendTextBeeSms = async ({ to, message }) => {
   if (!to) return;
 
-  const apiKey =
-    process.env.TEXTBEE_API_KEY || DEFAULT_TEXTBEE_API_KEY;
+  const apiKey = process.env.TEXTBEE_API_KEY;
+  const deviceId = process.env.TEXTBEE_DEVICE_ID;
+  const baseUrl = process.env.TEXTBEE_BASE_URL || DEFAULT_TEXTBEE_BASE_URL;
 
-  const deviceId =
-    process.env.TEXTBEE_DEVICE_ID || DEFAULT_TEXTBEE_DEVICE_ID;
+  if (!apiKey || !deviceId) {
+    // Thà báo lỗi rõ ràng còn hơn im lặng coi như đã gửi được SMS.
+    throw new Error('Chưa cấu hình TEXTBEE_API_KEY / TEXTBEE_DEVICE_ID trong .env');
+  }
 
-  const normalizedPhone = to.startsWith('0')
-    ? `+84${to.slice(1)}`
-    : to;
+  // TextBee yêu cầu số ở định dạng quốc tế (E.164). Số VN nội địa bắt đầu bằng 0
+  // → đổi thành +84…; số đã có +84 hoặc 84 thì giữ/chuẩn hoá lại.
+  const digits = String(to).trim().replace(/[\s.()-]/g, '');
+  const normalizedPhone = digits.startsWith('+')
+    ? digits
+    : digits.startsWith('0')
+      ? `+84${digits.slice(1)}`
+      : digits.startsWith('84')
+        ? `+${digits}`
+        : digits;
 
-  const endpoint =
-    `https://api.textbee.dev/api/v1/gateway/devices/${deviceId}/send-sms`;
+  // Giữ nguyên endpoint gắn thiết bị như trước (đã chạy đúng), chỉ đưa credential ra .env.
+  const endpoint = `${baseUrl}/api/v1/gateway/devices/${deviceId}/send-sms`;
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -434,20 +534,28 @@ const sendTextBeeSms = async ({ to, message }) => {
     }),
   });
 
-  const data = await response.text();
-
-  console.log('TEXTBEE STATUS:', response.status);
-  console.log('TEXTBEE RESPONSE:', data);
+  const raw = await response.text();
+  let payload = null;
+  try { payload = JSON.parse(raw); } catch { payload = null; }
 
   if (!response.ok) {
-    throw new Error(data || `TextBee returned ${response.status}`);
+    // Không log nội dung `message` (có thể chứa mã OTP) và không log api key.
+    console.error(`[TextBee] Gửi tới ${maskPhone(normalizedPhone)} thất bại — HTTP ${response.status}: ${raw.slice(0, 300)}`);
+    throw new Error(raw || `TextBee returned ${response.status}`);
   }
 
-  return data;
+  const result = payload?.data ?? {};
+  // "Đã nhận vào hàng đợi" KHÔNG phải là "đã gửi tới máy" — ghi đúng mức độ.
+  console.log(
+    `[TextBee] Đã nhận yêu cầu gửi tới ${maskPhone(normalizedPhone)} | batch=${result.smsBatchId || '-'} | recipients=${result.recipientCount ?? '-'} (chưa phải xác nhận đã giao)`,
+  );
+
+  return payload ?? raw;
 };
 
 module.exports = {
-  sendResetPasswordEmail,
+  sendWebPasswordResetEmail,
+  sendMobilePasswordResetCodeEmail,
   sendIncidentNotificationEmail,
   sendStaffAccountCreatedEmail,
   sendFamilyAccountCreatedEmail,

@@ -28,6 +28,14 @@ const loginLimiter = rateLimit({
   message: { message: 'Quá nhiều lần thử từ địa chỉ IP này, vui lòng thử lại sau' },
 });
 
+// Rate limit riêng cho /reset-password: token là 64 hex ký tự nên về lý thuyết brute-force
+// rất khó, nhưng vẫn cần giới hạn để giảm thiểu việc dò token đã rò rỉ qua log, history, v.v.
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { message: 'Quá nhiều lần thử từ địa chỉ IP này, vui lòng thử lại sau' },
+});
+
 /**
  * @swagger
  * /api/auth/login:
@@ -347,7 +355,12 @@ router.put('/change-password', protect, changePassword);
  * @swagger
  * /api/auth/forgot-password:
  *   post:
- *     summary: Send reset password email
+ *     summary: Send reset password email (Web link or Mobile code, chosen by `client`)
+ *     description: >
+ *       `client` quyết định loại email được gửi. `web` -> email có liên kết đặt lại;
+ *       `mobile` -> email chỉ có mã 6 số để copy, không chứa liên kết Web.
+ *       Bỏ trống thì mặc định `web` (tương thích ngược). Luôn trả về cùng một
+ *       phản hồi dù email có tồn tại hay không, để chống liệt kê tài khoản.
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -360,19 +373,29 @@ router.put('/change-password', protect, changePassword);
  *             properties:
  *               email:
  *                 type: string
+ *               client:
+ *                 type: string
+ *                 enum: [web, mobile]
+ *                 default: web
  *     responses:
  *       200:
- *         description: Reset password email sent
- *       404:
- *         description: Email not found
+ *         description: Generic response — reset instructions sent if the account exists
+ *       400:
+ *         description: Invalid email format or invalid `client` value
  */
 router.post('/forgot-password', loginLimiter, forgotPassword);
-// reset mk
+// reset mk — áp dụng resetLimiter (10 req / 15 min) để giảm brute-force:
+// token Web 64 hex thì khó dò, nhưng mã Mobile chỉ 6 số nên giới hạn theo IP ở đây
+// là lớp phòng vệ thứ hai, bên cạnh trần 5 lần nhập sai cho mỗi mã (otpService).
 /**
  * @swagger
  * /api/auth/reset-password:
  *   post:
- *     summary: Reset password using token
+ *     summary: Reset password using a Web token or a Mobile reset code
+ *     description: >
+ *       Hai đường xác thực, một luồng nghiệp vụ. Web gửi `{ token, newPassword }`;
+ *       ứng dụng di động gửi `{ email, code, newPassword }`. Bắt buộc phải có một
+ *       trong hai loại credential — email kèm mật khẩu mới là KHÔNG đủ.
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -381,20 +404,26 @@ router.post('/forgot-password', loginLimiter, forgotPassword);
  *           schema:
  *             type: object
  *             required:
- *               - token
  *               - newPassword
  *             properties:
  *               token:
  *                 type: string
+ *                 description: Credential của Web, lấy từ liên kết trong email
+ *               email:
+ *                 type: string
+ *                 description: Bắt buộc khi dùng mã của ứng dụng di động
+ *               code:
+ *                 type: string
+ *                 description: Mã 6 số trong email gửi cho ứng dụng di động
  *               newPassword:
  *                 type: string
  *     responses:
  *       200:
  *         description: Password reset successfully
  *       400:
- *         description: Invalid or expired token
+ *         description: Missing credential, weak password, or invalid/expired token/code
  */
-router.post('/reset-password', resetPassword);
+router.post('/reset-password', resetLimiter, resetPassword);
 
 // update user by admin
 /**

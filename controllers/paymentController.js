@@ -1,6 +1,19 @@
 const paymentService = require('../services/paymentService');
 const walletService = require('../services/walletService');
 const ServiceError = require('../services/serviceError');
+const { apiErr, CODES } = require('../utils/apiError');
+
+/**
+ * Người nhà chỉ được trừ ví qua luồng có xác thực OTP
+ * (`/api/family/wallet/payments/initiate` + `/verify`). Hai endpoint ghi nhận
+ * thanh toán dưới đây vẫn dành cho nhân viên ghi nhận tiền mặt/chuyển khoản và
+ * cho PayOS, nên chỉ chặn đúng trường hợp `family` + `wallet`.
+ */
+const assertWalletPaymentNeedsOtp = (user, paymentMethod) => {
+  if (paymentMethod === 'wallet' && user?.role === 'family') {
+    throw apiErr(CODES.WALLET_PAYMENT_OTP_REQUIRED, { statusCode: 403 });
+  }
+};
 
 const createInvoice = async (req, res, next) => {
   try {
@@ -76,6 +89,8 @@ const recordPayment = async (req, res, next) => {
   let deductedFromWallet = false;
 
   try {
+    assertWalletPaymentNeedsOtp(req.user, paymentMethod);
+
     const invoice = await paymentService.findInvoiceById(req.user, req.params.invoiceId);
     const amount = Number(requestedAmount != null ? requestedAmount : invoice.totalAmount) || 0;
     if (amount <= 0) {
@@ -88,6 +103,8 @@ const recordPayment = async (req, res, next) => {
         amount,
         `Thanh toán hóa đơn ${invoice.invoiceNumber}`,
         req.params.invoiceId,
+        // Một lần gọi = một hoá đơn, nên `invoiceNumber` ở đây là không nhập nhằng.
+        { invoiceNumber: invoice.invoiceNumber },
       );
       deductedFromWallet = true;
     }
@@ -134,6 +151,8 @@ const batchPayment = async (req, res, next) => {
   let deductedFromWallet = false;
 
   try {
+    assertWalletPaymentNeedsOtp(req.user, paymentMethod);
+
     // Calculate total amount for validation
     let totalAmount = 0;
     for (const invoiceId of invoiceIds) {
@@ -147,6 +166,9 @@ const batchPayment = async (req, res, next) => {
     }
 
     if (walletPayment) {
+      // CỐ Ý không truyền `invoiceNumber`: một giao dịch ví ở đây gộp nhiều hoá đơn,
+      // `invoiceIds[0]` chỉ là mốc tham chiếu. Ghi số của hoá đơn đầu tiên sẽ khiến
+      // sổ giao dịch trông như thể cả khoản tiền thuộc về đúng một hoá đơn đó.
       await walletService.deductFromWallet(
         req.user._id,
         amount,

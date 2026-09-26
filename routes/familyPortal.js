@@ -7,8 +7,12 @@ const {
   getResidentInvoices,
   getPaymentHistory,
   getInvoicePaymentUrl,
+  createInvoicePayosCheckout,
+  verifyInvoicePayos,
   getInvoiceDetail,
   getWalletBalance,
+  getWalletTransactions,
+  getWalletTransactionDetail,
   generateWalletTopupUrl,
   confirmWalletTopup,
   verifyWalletTopup,
@@ -29,6 +33,7 @@ const {
   downloadReport,
 } = require('../controllers/familyPortalController');
 const { initiateWalletPayment, verifyWalletPayment } = require('../controllers/familyPaymentController');
+const { listPhotosForFamily } = require('../controllers/residentPhotoController');
 const { protect, authorize } = require('../middleware/auth');
 
 // Public checkout endpoints (no auth required - use checksum verification instead)
@@ -204,6 +209,10 @@ router.get('/residents/:residentId/invoices', getResidentInvoices);
  */
 router.get('/residents/:residentId/invoices/:invoiceId/payment-url', getInvoicePaymentUrl);
 
+// PayOS QR trong app (song song với nạp ví): tạo checkout JSON + xác thực server-to-server.
+router.post('/residents/:residentId/invoices/:invoiceId/payos', createInvoicePayosCheckout);
+router.post('/residents/:residentId/invoices/:invoiceId/payos/verify', verifyInvoicePayos);
+
 /**
  * @swagger
  * /api/family/residents/{residentId}/invoices/{invoiceId}:
@@ -315,6 +324,40 @@ router.post('/wallet/topup/confirm', confirmWalletTopup);
 router.post('/wallet/topup/verify', verifyWalletTopup);
 
 /**
+ * @swagger
+ * /api/family/wallet/transactions:
+ *   get:
+ *     summary: Unified financial transaction history for the logged-in family account
+ *     description: >
+ *       Returns every financial movement belonging to the authenticated family account:
+ *       PayOS wallet top-ups, wallet invoice payments, refunds, and invoices settled
+ *       directly through PayOS. Scope comes from the session user only — no userId
+ *       parameter is accepted, so one family can never read another family's ledger.
+ *     tags: [Family Portal]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema: { type: string }
+ *         description: Comma-separated subset of topup,payment,refund
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *         description: Comma-separated subset of pending,completed,failed
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20, maximum: 100 }
+ *     responses:
+ *       200:
+ *         description: Paginated ledger plus a wallet summary
+ */
+router.get('/wallet/transactions', getWalletTransactions);
+router.get('/wallet/transactions/:transactionId', getWalletTransactionDetail);
+
+/**
  * Wallet payment with OTP
  */
 router.post('/wallet/payments/initiate', initiateWalletPayment);
@@ -341,6 +384,28 @@ router.post('/wallet/payments/verify', verifyWalletPayment);
  *         description: Access denied
  */
 router.get('/residents/:residentId/vitals', getVitals);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/photos:
+ *   get:
+ *     summary: List photos uploaded by caregivers for a resident
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Photo list
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/photos', listPhotosForFamily);
 
 /**
  * @swagger

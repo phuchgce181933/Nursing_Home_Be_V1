@@ -15,7 +15,7 @@ const userRepo = require('../repositories/userRepository');
 // each of `recipientUserIds`, skipping users who have doNotDisturb on or who excluded this
 // category via their notification settings. Best-effort: failures are logged, never thrown —
 // push delivery must never block the (already-persisted) in-app notification it accompanies.
-const sendPushToUsers = async (recipientUserIds, { title, body, data = {}, category } = {}) => {
+const sendPushToUsers = async (recipientUserIds, { title, body, data = {}, category, channelId } = {}) => {
   try {
     const ExpoClass = await initExpo();
     const expo = new ExpoClass();
@@ -48,6 +48,9 @@ const sendPushToUsers = async (recipientUserIds, { title, body, data = {}, categ
         title: title || 'Thông báo',
         body: body || '',
         data,
+        // Android channel (client đã tạo sẵn 'default' và 'medication', đều importance HIGH). Bỏ
+        // qua trên iOS. Cho phép nhắc thuốc hiện heads-up theo kênh riêng (PART 4/12/14).
+        ...(channelId ? { channelId } : {}),
       });
     }
     if (!messages.length) return;

@@ -102,6 +102,35 @@ const findPrescriptions = async (filter, { sort = { prescriptionDate: -1 }, skip
     .skip(skip)
     .limit(limit);
 
+// Danh sách trạng thái hoá đơn ĐƯỢC COI LÀ "đã phát hành hợp lệ cho người thân".
+// Dùng allow-list tường minh trên đúng các giá trị enum của Invoice thay vì điều kiện
+// phủ định (`$ne: 'DRAFT'`), vì:
+//   • ISSUED / PARTIALLY_PAID / PAID = đã xuất cho người thân → HIỂN THỊ (vẫn hiển thị
+//     sau khi thanh toán — cổng là "đã phát hành", không phải "đang nợ").
+//   • DRAFT = bản nháp của admin, chưa xuất → ẨN.
+//   • CANCELLED = với hoá đơn THUỐC, con đường DUY NHẤT tới CANCELLED là bị "Dừng"
+//     (soft-delete) khi còn DRAFT (contractService.softDeleteDraftInvoice chỉ cho phép
+//     DRAFT) → tức là CHƯA BAO GIỜ được phát hành hợp lệ → ẨN. Không có luồng nào huỷ
+//     một hoá đơn thuốc đã ISSUED (các luồng huỷ hợp đồng/đổi gói chỉ chạm SERVICE/
+//     COMBINED, không chạm MEDICATION), nên loại CANCELLED khỏi allow-list là an toàn.
+const FAMILY_VISIBLE_INVOICE_STATUSES = ['ISSUED', 'PARTIALLY_PAID', 'PAID'];
+
+// Trong số các đơn thuốc truyền vào, trả về những đơn ĐÃ được phát hành hoá đơn thuốc
+// hợp lệ cho người thân — tồn tại một Invoice liên kết bằng prescriptionId (quan hệ có
+// cấu trúc, KHÔNG dò theo tên/số tiền), trạng thái nằm trong allow-list ở trên và chưa
+// bị soft-delete (deletedAt = null, phòng vệ theo lớp — soft-delete luôn kèm CANCELLED).
+const findIssuedPrescriptionIds = async (prescriptionIds) => {
+  if (!Array.isArray(prescriptionIds) || prescriptionIds.length === 0) return [];
+  const invoices = await Invoice.find({
+    prescriptionId: { $in: prescriptionIds },
+    status: { $in: FAMILY_VISIBLE_INVOICE_STATUSES },
+    deletedAt: null,
+  })
+    .select('prescriptionId')
+    .lean();
+  return invoices.map((inv) => inv.prescriptionId).filter(Boolean);
+};
+
 const findActivities = async (filter, { sort = { scheduledAt: 1 }, skip = 0, limit = 100 } = {}) =>
   Activity.find(filter).sort(sort).skip(skip).limit(limit);
 
@@ -167,6 +196,7 @@ module.exports = {
   countMedicationSchedules,
   findMedicationSchedulesUnpaged,
   findPrescriptions,
+  findIssuedPrescriptionIds,
   findActivities,
   findCareAppointments,
   findCareTasks,

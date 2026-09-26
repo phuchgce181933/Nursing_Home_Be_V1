@@ -52,20 +52,38 @@ const handleWebhook = async (req, res, next) => {
     const amount = Number(data.amount);
     const description = String(data.description || '');
     const reference = String(data.reference || data.transactionDateTime || Date.now());
+    const orderCode = data.orderCode ? Number(data.orderCode) : null;
 
-    if (description.includes('TOPUP') || description.startsWith(TOPUP_DESCRIPTION_PREFIX.slice(0, 20))) {
-      // Wallet top-up payment
+    // PayOS có thể gửi LẠI cùng một webhook nhiều lần. Mọi nhánh dưới đây phải
+    // định danh giao dịch bằng `orderCode` — khoá ổn định, duy nhất cho từng link
+    // thanh toán — chứ KHÔNG bằng số tiền. Dò theo số tiền từng khiến webhook lần
+    // hai chốt nhầm sang một yêu cầu nạp khác cùng mệnh giá (kể cả của người khác).
+    if (!orderCode) {
+      console.warn('[PayOS Webhook] Thiếu orderCode — không thể đối soát an toàn, bỏ qua');
+      return res.status(200).json({ success: true });
+    }
+
+    const looksLikeTopup =
+      description.includes('TOPUP') || description.startsWith(TOPUP_DESCRIPTION_PREFIX.slice(0, 20));
+
+    if (looksLikeTopup) {
       try {
-        await walletService.confirmPendingTopupByAmount(amount, reference);
-        console.log('[PayOS Webhook] Topup confirmed for amount:', amount);
+        const result = await walletService.completePendingTopup({ orderCode, reference });
+        if (result.alreadyProcessed) {
+          console.log('[PayOS Webhook] Nạp tiền đã được xử lý trước đó, bỏ qua:', orderCode);
+        } else if (result.notFound) {
+          console.warn('[PayOS Webhook] Không tìm thấy yêu cầu nạp tiền cho orderCode:', orderCode);
+        } else {
+          console.log('[PayOS Webhook] Đã cộng ví cho orderCode:', orderCode, 'số tiền:', amount);
+        }
       } catch (err) {
         console.warn('[PayOS Webhook] Could not confirm topup:', err.message);
       }
-    } else if (data.orderCode) {
+    } else {
       // Invoice payment — match against the orderCode we persisted when the checkout was created.
       try {
-        const paidInvoices = await paymentService.confirmInvoicesByOrderCode(data.orderCode);
-        console.log('[PayOS Webhook] Invoices confirmed paid via orderCode:', data.orderCode, paidInvoices.length);
+        const paidInvoices = await paymentService.confirmInvoicesByOrderCode(orderCode, reference);
+        console.log('[PayOS Webhook] Invoices confirmed paid via orderCode:', orderCode, paidInvoices.length);
       } catch (err) {
         console.warn('[PayOS Webhook] Could not confirm invoice by orderCode:', err.message);
       }

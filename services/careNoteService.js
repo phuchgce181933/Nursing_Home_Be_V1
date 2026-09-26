@@ -223,11 +223,45 @@ const createNote = async (user, body, req) => {
   return careNoteRepo.findByIdWithPopulate(note._id);
 };
 
-const listNotes = async (query) => {
+/**
+ * Phạm vi cư dân mà người gọi được phép đọc ghi chú.
+ *
+ * `admin` / `nurse` giữ nguyên hành vi cũ: không giới hạn (trả về null).
+ * `caregiver` chỉ đọc được ghi chú của những cư dân trong
+ * `StaffProfile.assignedResidentIds` của chính họ — đúng phạm vi mà Web mô tả
+ * (pages/shared/CareNotesPage.jsx: mọi vai trò khác `nurse` chỉ được xem).
+ * Phạm vi này lấy từ `req.user` ở server, KHÔNG lấy từ tham số client gửi lên,
+ * nên hộ lý A không thể đọc dữ liệu ngoài phạm vi của hộ lý B.
+ */
+const SCOPED_TO_ASSIGNED_RESIDENTS_ROLES = ['caregiver'];
+
+const getReadableResidentIds = async (actor) => {
+  if (!actor || !SCOPED_TO_ASSIGNED_RESIDENTS_ROLES.includes(actor.role)) return null;
+  const staffProfile = await staffProfileRepo.findByUserId(actor._id);
+  if (!staffProfile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 400);
+  return (staffProfile.assignedResidentIds || []).map((r) => String(r._id || r));
+};
+
+/** Chặn truy cập một cư dân nằm ngoài phạm vi được phân công. */
+const assertResidentReadable = (allowedIds, residentId) => {
+  if (allowedIds === null) return;
+  if (!allowedIds.includes(String(residentId))) {
+    throw new ServiceError('Cư dân này không thuộc danh sách bạn được phân công', 403);
+  }
+};
+
+const listNotes = async (query, actor) => {
   const filter = {};
+  const allowedResidentIds = await getReadableResidentIds(actor);
+
   if (query.residentId) {
     if (!isValidId(query.residentId)) throw new ServiceError('residentId không phải là ID hợp lệ', 400);
+    assertResidentReadable(allowedResidentIds, query.residentId);
     filter.residentId = query.residentId;
+  } else if (allowedResidentIds !== null) {
+    // Danh sách rỗng -> `$in: []` không khớp document nào, đúng ý nghĩa
+    // "chưa được phân công cư dân nào" thay vì lộ toàn bộ ghi chú.
+    filter.residentId = { $in: allowedResidentIds };
   }
   if (query.noteType) {
     if (!CARE_NOTE_TYPES.includes(query.noteType)) {
@@ -254,8 +288,9 @@ const listNotes = async (query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
-const getNoteHistory = async (residentId, query) => {
+const getNoteHistory = async (residentId, query, actor) => {
   if (!isValidId(residentId)) throw new ServiceError('residentId không phải là ID hợp lệ', 400);
+  assertResidentReadable(await getReadableResidentIds(actor), residentId);
 
   const filter = { residentId };
   if (query.noteType) {
@@ -278,10 +313,11 @@ const getNoteHistory = async (residentId, query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
-const getNote = async (id) => {
+const getNote = async (id, actor) => {
   if (!isValidId(id)) throw new ServiceError('ID ghi chú chăm sóc không hợp lệ', 400);
   const note = await careNoteRepo.findByIdWithPopulate(id);
   if (!note) throw new ServiceError('Không tìm thấy ghi chú chăm sóc', 404);
+  assertResidentReadable(await getReadableResidentIds(actor), note.residentId?._id || note.residentId);
   return note;
 };
 
@@ -429,7 +465,7 @@ const deleteNote = async (user, id, req) => {
 const getMyNotes = async (user, query) => {
   const staffProfile = await staffProfileRepo.findByUserId(user._id);
   if (!staffProfile) throw new ServiceError('Không tìm thấy hồ sơ nhân viên', 400);
-  return listNotes({ ...query, authorStaffId: staffProfile._id.toString() });
+  return listNotes({ ...query, authorStaffId: staffProfile._id.toString() }, user);
 };
 
 module.exports = { createNote, listNotes, getNoteHistory, getNote, getNoteAuditHistory, updateNote, deleteNote, getMyNotes };

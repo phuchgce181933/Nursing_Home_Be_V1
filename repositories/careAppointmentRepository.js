@@ -46,6 +46,8 @@ const findByFilterLean = async (filter, { select } = {}) => {
   return q.lean();
 };
 
+const updateMany = async (filter, update) => CareAppointment.updateMany(filter, update);
+
 const findOneByFilter = async (filter, { populate } = {}) => {
   let q = CareAppointment.findOne(filter);
   if (populate) q = q.populate(populate);
@@ -80,4 +82,5 @@ module.exports = {
   findOneByFilter,
   findAppointmentsNeedingReminder,
   markReminderSent,
+  updateMany,
 };

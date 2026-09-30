@@ -125,6 +125,9 @@ const findByIdWithRoom = async (id) =>
 const findByResidentCode = async (residentCode) =>
   Resident.findOne({ residentCode: residentCode.toUpperCase().trim() });
 
+const findByCitizenId = async (citizenId) =>
+  Resident.findOne({ citizenId: String(citizenId).trim() });
+
 const createResident = async (data) => Resident.create(data);
 
 const findAll = async (filter, { sort, skip, limit }) =>
@@ -701,6 +704,7 @@ module.exports = {
   findByIdWithFamily,
   findById,
   findByResidentCode,
+  findByCitizenId,
   createResident,
   findAll,
   countAll,

@@ -48,7 +48,7 @@ const applyPaymentPlanToAmount = (amount, paymentPlan) => {
 
 const isUnpaidInvoice = (invoice) => ['DRAFT', 'ISSUED', 'PARTIALLY_PAID'].includes(invoice?.status);
 
-const markInvoiceAsPaid = async (invoiceId) => {
+const markInvoiceAsPaid = async (invoiceId, actor = null, req = null) => {
   const invoice = await invoiceRepo.findById(invoiceId);
   if (!invoice) {
     throw new ServiceError('Không tìm thấy hóa đơn', 404);
@@ -58,6 +58,7 @@ const markInvoiceAsPaid = async (invoiceId) => {
     return invoice;
   }
 
+  const previousStatus = invoice.status;
   const updatedInvoice = await invoiceRepo.updateById(invoiceId, { status: 'PAID' });
   const chargeIds = (invoice.items || [])
     .map((it) => it.chargeId)
@@ -114,6 +115,31 @@ const markInvoiceAsPaid = async (invoiceId) => {
   } catch (err) {
     console.error('Error during auto-dispense on invoice payment:', err.message || err);
   }
+
+  await createAuditLog({
+    actorUserId: actor?._id || null,
+    actorRole: actor?.role || 'system',
+    action: 'MARK_INVOICE_PAID',
+    displayAction: 'Đánh dấu hóa đơn đã thanh toán',
+    module: 'billing',
+    businessModule: 'billingPayment',
+    targetEntityType: 'Invoice',
+    targetEntityId: updatedInvoice._id,
+    performedBy: actor?.fullName || actor?.email,
+    targetName: updatedInvoice.invoiceNumber || updatedInvoice._id?.toString(),
+    description: actor
+      ? `${actor.fullName || actor.email || 'Người dùng'} đã đánh dấu hóa đơn ${updatedInvoice.invoiceNumber || updatedInvoice._id} đã thanh toán`
+      : `Hệ thống tự động đánh dấu hóa đơn ${updatedInvoice.invoiceNumber || updatedInvoice._id} đã thanh toán`,
+    beforeData: { status: previousStatus },
+    afterData: { status: 'PAID' },
+    metadata: {
+      totalAmount: updatedInvoice.totalAmount,
+      chargeCount: chargeIds.length,
+      source: actor ? 'admin' : 'system-webhook',
+    },
+    req,
+  });
+
   return updatedInvoice;
 };
 
@@ -125,16 +151,88 @@ const storeInvoicePayosOrderCode = async (invoiceId, orderCode) => {
   await Promise.all(ids.map((id) => invoiceRepo.updateById(id, { payosOrderCode: Number(orderCode) })));
 };
 
+/**
+ * Ghi nhận đầy đủ một hoá đơn được trả THẲNG qua PayOS (tiền KHÔNG đi qua ví).
+ *
+ * Trước đây luồng này chỉ đổi `status` của hoá đơn thành PAID: không có bản ghi
+ * `Payment`, không có dòng nào trong lịch sử tài chính của người nhà — tiền vào
+ * mà sổ sách trắng trơn. Hàm này bù đủ cả hai, và IDEMPOTENT theo
+ * `transactionRef = PAYOS-<orderCode>-<invoiceId>` nên webhook gửi lại bao nhiêu
+ * lần cũng chỉ sinh đúng một Payment và một dòng lịch sử.
+ *
+ * Số dư ví KHÔNG được đụng tới ở đây — tiền chưa bao giờ nằm trong ví.
+ */
+const recordPayosInvoiceSettlement = async (invoice, orderCode, reference) => {
+  const walletService = require('./walletService'); // nạp trễ: tránh vòng lặp require
+  const invoiceId = String(invoice._id);
+  const amount = normalizeCost(invoice.totalAmount);
+  const transactionRef = `PAYOS-${orderCode}-${invoiceId}`;
+
+  let payment = await paymentRepo.findByTransactionRef(transactionRef);
+  if (!payment && invoice.familyAccountId && amount > 0) {
+    try {
+      payment = await paymentRepo.create({
+        invoiceId,
+        paidByFamilyAccountId: invoice.familyAccountId,
+        // PayOS là cổng chuyển khoản ngân hàng — dùng đúng giá trị enum đã có,
+        // KHÔNG thêm giá trị enum mới chỉ để hiển thị.
+        paymentMethod: 'bank_transfer',
+        transactionRef,
+        amount,
+        paymentStatus: 'confirmed',
+        paidAt: new Date(),
+        confirmedAt: new Date(),
+        note: `Thanh toán qua PayOS (orderCode ${orderCode})`,
+      });
+    } catch (err) {
+      // Chạy song song hai webhook: bản ghi kia đã tạo trước -> đọc lại, không nhân đôi.
+      payment = await paymentRepo.findByTransactionRef(transactionRef);
+      if (!payment) console.error('[PayOS] Không ghi được Payment:', err.message || err);
+    }
+  }
+
+  if (invoice.familyAccountId && amount > 0) {
+    await walletService
+      .recordExternalInvoicePayment({
+        userId: invoice.familyAccountId,
+        amount,
+        invoiceId,
+        invoiceNumber: invoice.invoiceNumber,
+        orderCode,
+        reference,
+      })
+      .catch((err) => console.error('[PayOS] Không ghi được lịch sử giao dịch:', err.message || err));
+  }
+
+  await createAuditLog({
+    actorUserId: invoice.familyAccountId || null,
+    actorRole: 'family',
+    action: 'INVOICE_PAID_PAYOS',
+    module: 'billing',
+    targetEntityType: 'Invoice',
+    targetEntityId: invoice._id,
+    // Chỉ lưu tham chiếu đối soát — không bao giờ lưu chữ ký/secret của PayOS.
+    afterData: { invoiceNumber: invoice.invoiceNumber, amount, orderCode, paymentMethod: 'payos' },
+  }).catch(() => {});
+
+  return payment;
+};
+
 // Called from the (signature-verified) PayOS webhook: the webhook payload itself already IS the
 // verified confirmation, so this looks invoices up by the orderCode PayOS reports and marks them
 // paid directly, without a further PayOS API round-trip.
-const confirmInvoicesByOrderCode = async (orderCode) => {
+const confirmInvoicesByOrderCode = async (orderCode, reference) => {
   const invoices = await invoiceRepo.findByPayosOrderCode(orderCode);
   const paid = [];
   for (const invoice of invoices) {
-    if (invoice.status === 'PAID') continue;
-    const updated = await markInvoiceAsPaid(invoice._id);
-    paid.push(updated);
+    // Hoá đơn đã PAID: bỏ qua việc đổi trạng thái, nhưng VẪN chạy phần ghi sổ —
+    // hàm ghi sổ tự chống trùng, nên đây là chỗ vá cho các hoá đơn đã được đánh
+    // dấu PAID từ trước mà chưa có Payment/lịch sử.
+    if (invoice.status !== 'PAID') {
+      await markInvoiceAsPaid(invoice._id);
+    }
+    await recordPayosInvoiceSettlement(invoice, orderCode, reference);
+    paid.push(invoice);
   }
   return paid;
 };
@@ -163,6 +261,12 @@ const verifyAndMarkInvoicePaid = async (invoiceId) => {
   const payosStatus = String(paymentData.status || 'PENDING').toUpperCase();
   if (payosStatus === 'PAID') {
     const updated = await markInvoiceAsPaid(invoiceId);
+    // Ghi sổ đầy đủ: Payment + lịch sử tài chính. Idempotent nên chạy lại vô hại.
+    await recordPayosInvoiceSettlement(
+      invoice,
+      invoice.payosOrderCode,
+      paymentData?.transactions?.[0]?.reference,
+    );
     return { status: 'PAID', invoice: updated };
   }
   return { status: payosStatus };
@@ -544,7 +648,97 @@ const estimateMedicationCostForPrescription = async (prescriptionId, residentId)
   return await estimateMedicationCostFromPrescription(prescription);
 };
 
-const createInvoice = async (user, residentId, body) => {
+/**
+ * Lấy danh sách thuốc / line item của hóa đơn kèm tổng tiền để ghi vào audit log.
+ * Trả về:
+ *   - items: mảng các dòng thuốc, mỗi dòng gồm stt, tên thuốc, đơn vị, số lượng,
+ *     đơn giá, thành tiền chưa thuế, thuế suất, tiền thuế, thành tiền (sau thuế).
+ *   - totals: { subTotal, taxAmount, total }.
+ *   - prescriptionCode: mã đơn thuốc gốc (nếu có).
+ *
+ * Lưu ý: hàm này chỉ dùng để bổ sung metadata cho audit log, không thay thế
+ * afterData vốn đã có sẵn toàn bộ thông tin hóa đơn.
+ */
+const buildInvoiceBreakdownForAudit = async ({ invoice, prescriptionId, resident }) => {
+  if (!invoice) return { items: [], totals: { subTotal: 0, taxAmount: 0, total: 0 } };
+  const invoiceObj = typeof invoice.toObject === 'function' ? invoice.toObject() : { ...invoice };
+
+  const items = [];
+  let prescriptionCode = null;
+
+  // Hóa đơn MEDICATION: lấy chi tiết từ đơn thuốc
+  if (prescriptionId) {
+    const prescription = await prescriptionRepo.findByIdListPopulated
+      ? await prescriptionRepo.findByIdListPopulated(prescriptionId)
+      : await prescriptionRepo.findByIdPopulated(prescriptionId);
+    if (prescription) {
+      const presObj = typeof prescription.toObject === 'function' ? prescription.toObject() : prescription;
+      prescriptionCode = presObj.prescriptionCode || null;
+      const sourceItems = Array.isArray(presObj.items) ? presObj.items : [];
+      let runningStt = 1;
+      for (const it of sourceItems) {
+        if (it.isActive === false) continue;
+        const quantity = Number(it.quantity || 0);
+        const unitPrice = Number(it.price || 0);
+        const taxRate = Number(it.taxRate || 0);
+        const subtotalExclTax = Number(
+          it.subtotalExclTax != null ? it.subtotalExclTax : quantity * unitPrice
+        );
+        const taxAmount = Number(
+          it.taxAmount != null ? it.taxAmount : Math.round(subtotalExclTax * taxRate)
+        );
+        const subtotalInclTax = Number(
+          it.subtotalInclTax != null ? it.subtotalInclTax : subtotalExclTax + taxAmount
+        );
+        items.push({
+          stt: runningStt++,
+          medicationName: it.medicationName || it.medicationId?.name || null,
+          unit: it.unit || it.medicationId?.unit || null,
+          quantity,
+          unitPrice,
+          subtotalExclTax,
+          taxRate,
+          taxAmount,
+          subtotalInclTax,
+        });
+      }
+    }
+  }
+
+  // Hóa đơn SERVICE / khác có items[] (medical charges)
+  if (items.length === 0 && Array.isArray(invoiceObj.items) && invoiceObj.items.length > 0) {
+    let runningStt = 1;
+    for (const it of invoiceObj.items) {
+      const amount = Number(it.amount || 0);
+      const taxRate = Number(it.taxRate || 0);
+      const taxAmount = taxRate > 0 ? Math.round(amount * taxRate / (1 + taxRate)) : 0;
+      const subtotalExclTax = amount - taxAmount;
+      items.push({
+        stt: runningStt++,
+        medicationName: it.description || null,
+        unit: it.unit || null,
+        quantity: Number(it.quantity || 1),
+        unitPrice: Number(it.unitPrice || 0),
+        subtotalExclTax,
+        taxRate,
+        taxAmount,
+        subtotalInclTax: amount,
+      });
+    }
+  }
+
+  const total = Number(invoiceObj.totalAmount ?? invoiceObj.total ?? 0);
+  const taxAmount = Number(invoiceObj.tax || 0);
+  const subTotal = total - taxAmount;
+
+  return {
+    items,
+    totals: { subTotal, taxAmount, total },
+    prescriptionCode,
+  };
+};
+
+const createInvoice = async (user, residentId, body, req) => {
   const resident = await residentRepo.findById(residentId);
   if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
 
@@ -640,6 +834,7 @@ const createInvoice = async (user, residentId, body) => {
       totalAmount,
       originalTotalAmount,
       remainingAmount,
+      type: 'SERVICE',
       paymentPlan: body.paymentPlan || 'FULL',
       status: totalAmount === 0 ? 'PAID' : 'ISSUED',
       dueDate: body.dueDate ? new Date(body.dueDate) : end,
@@ -663,14 +858,37 @@ const createInvoice = async (user, residentId, body) => {
       );
     }
 
+    const breakdown = await buildInvoiceBreakdownForAudit({ invoice, prescriptionId, resident });
     await createAuditLog({
       actorUserId: user._id,
       actorRole: user.role,
       action: 'CREATE_INVOICE',
+      displayAction: invoice.type === 'MEDICATION'
+        ? 'Tạo hóa đơn thuốc'
+        : invoice.type === 'SERVICE'
+          ? 'Tạo hóa đơn dịch vụ'
+          : 'Tạo hóa đơn',
       module: 'billing',
+      businessModule: invoice.type === 'MEDICATION' ? 'contract' : 'billing',
       targetEntityType: 'Invoice',
       targetEntityId: invoice._id,
-      afterData: invoice.toObject(),
+      targetName: invoice.invoiceNumber || invoice._id?.toString(),
+      performedBy: user.fullName,
+      description: `${user.fullName || user.email || 'Quản trị viên'} đã tạo hóa đơn ${invoice.invoiceNumber}${invoice.type ? ` (${invoice.type})` : ''} cho cư dân ${resident.fullName}${breakdown?.items?.length ? ` — gồm ${breakdown.items.length} mục, tổng ${Number(breakdown.totals?.total || 0).toLocaleString('vi-VN')} VND` : ''}.`,
+      afterData: (() => {
+        const d = invoice.toObject();
+        delete d.roomCost;
+        delete d.medicationCost;
+        delete d.careServiceCost;
+        delete d.otherCost;
+        delete d.remainingAmount;
+        delete d.originalTotalAmount;
+        delete d.type;
+        d.residentName = resident.fullName;
+        return d;
+      })(),
+      metadata: breakdown || null,
+      req,
     });
     return invoice;
   }
@@ -780,14 +998,26 @@ const createInvoice = async (user, residentId, body) => {
 
   // Log audit for all created invoices
   for (const invoice of createdInvoices) {
+    const breakdown = await buildInvoiceBreakdownForAudit({ invoice, prescriptionId, resident });
     await createAuditLog({
       actorUserId: user._id,
       actorRole: user.role,
       action: 'CREATE_INVOICE',
+      displayAction: invoice.type === 'MEDICATION'
+        ? 'Tạo hóa đơn thuốc'
+        : invoice.type === 'SERVICE'
+          ? 'Tạo hóa đơn dịch vụ'
+          : 'Tạo hóa đơn',
       module: 'billing',
+      businessModule: invoice.type === 'MEDICATION' ? 'contract' : 'billing',
       targetEntityType: 'Invoice',
       targetEntityId: invoice._id,
+      targetName: invoice.invoiceNumber || invoice._id?.toString(),
+      performedBy: user.fullName,
+      description: `${user.fullName || user.email || 'Quản trị viên'} đã tạo hóa đơn ${invoice.invoiceNumber}${invoice.type ? ` (${invoice.type})` : ''} cho cư dân ${resident.fullName}${breakdown?.items?.length ? ` — gồm ${breakdown.items.length} mục, tổng ${Number(breakdown.totals?.total || 0).toLocaleString('vi-VN')} VND` : ''}.`,
       afterData: invoice.toObject(),
+      metadata: breakdown || null,
+      req,
     });
   }
 
@@ -918,9 +1148,13 @@ const recordPayment = async (user, invoiceId, body) => {
     actorUserId: user._id,
     actorRole: user.role,
     action: 'RECORD_PAYMENT',
+    displayAction: 'Ghi nhận thanh toán',
     module: 'billing',
+    businessModule: 'billingPayment',
     targetEntityType: 'Payment',
     targetEntityId: payment._id,
+    targetName: invoice.invoiceNumber || invoice._id?.toString(),
+    description: `${user.fullName || user.email || 'Người dùng'} đã thanh toán hóa đơn ${invoice.invoiceNumber || invoice._id} số tiền ${amount.toLocaleString('vi-VN')} VND`,
     afterData: payment.toObject(),
   });
 
@@ -1101,9 +1335,13 @@ const batchPayment = async (user, residentId, invoiceIds, body, req) => {
         actorUserId: user._id,
         actorRole: user.role,
         action: 'BATCH_PAYMENT',
+        displayAction: 'Thanh toán nhiều hóa đơn',
         module: 'billing',
+        businessModule: 'billingPayment',
         targetEntityType: 'Payment',
         targetEntityId: payment._id,
+        targetName: invoice.invoiceNumber || invoice._id?.toString(),
+        description: `${user.fullName || user.email || 'Người dùng'} đã thanh toán hóa đơn ${invoice.invoiceNumber || invoice._id} số tiền ${invoiceAmount.toLocaleString('vi-VN')} VND trong đợt thanh toán nhiều hóa đơn`,
         afterData: payment.toObject(),
       });
     }
@@ -1136,4 +1374,5 @@ module.exports = {
   storeInvoicePayosOrderCode,
   verifyAndMarkInvoicePaid,
   confirmInvoicesByOrderCode,
+  recordPayosInvoiceSettlement,
 };

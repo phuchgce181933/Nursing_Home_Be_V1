@@ -15,6 +15,7 @@ const {
   recordParticipationResult,
   getActivityStatistics,
   getActivityStatisticsById,
+  bulkUpdateActivities,
 } = require('../controllers/activityController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -184,6 +185,36 @@ router.get('/statistics', protect, authorize('admin'), getActivityStatistics);
  */
 router.delete('/bulk', protect, authorize('admin'), bulkDeleteActivities);
 router.patch('/bulk/status', protect, authorize('admin'), bulkUpdateActivityStatus);
+/**
+ * @swagger
+ * /api/admin/activities/:activityId/bulk:
+ *   patch:
+ *     summary: Bulk update all activities in a series (Admin only)
+ *     tags: [Admin - Activity Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: activityId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [updateSeries]
+ *             properties:
+ *               updateSeries:
+ *                 type: object
+ *                 description: Fields to update across all activities in the series
+ *     responses:
+ *       200:
+ *         description: Bulk update result
+ */
+router.patch('/:activityId/bulk', protect, authorize('admin'), bulkUpdateActivities);
 
 router.get('/:activityId', protect, authorize('admin', 'doctor', 'nurse', 'caregiver', 'family'), getActivity);
 
@@ -456,6 +487,6 @@ router.post('/:activityId/unregister', protect, authorize('admin', 'family'), un
  *       404:
  *         description: Activity not found
  */
-router.post('/:activityId/record-result', protect, authorize('admin', 'nurse'), recordParticipationResult);
+router.post('/:activityId/record-result', protect, authorize('admin', 'doctor', 'nurse', 'caregiver'), recordParticipationResult);
 
 module.exports = router;

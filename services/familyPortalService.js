@@ -2,6 +2,9 @@ const ServiceError = require('./serviceError');
 const familyPortalRepo = require('../repositories/familyPortalRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 const paymentService = require('./paymentService');
+const FamilyWallet = require('../models/familyWallet');
+const Payment = require('../models/payment');
+const Invoice = require('../models/invoice');
 const { CARE_NOTE_TYPES } = require('../models/enums');
 
 const parsePagination = (query) => {
@@ -78,6 +81,109 @@ const getResidentInvoices = async (user, residentId, query) => {
   return { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) };
 };
 
+/**
+ * Lịch sử giao dịch thanh toán cho family portal.
+ * Gồm 2 phần:
+ *   1. Lịch sử nạp tiền ví — từ FamilyWallet.transactions (type: 'topup')
+ *   2. Lịch sử hóa đơn đã thanh toán — từ Payment model + Invoice
+ */
+const getPaymentHistory = async (user, residentId) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
+  }
+
+  const resident = await familyPortalRepo.getResidentById(residentId);
+  if (!resident) throw new ServiceError('Không tìm thấy cư dân', 404);
+
+  // 1. Lịch sử nạp tiền ví của tài khoản family này
+  const wallet = await FamilyWallet.findOne({ userId: user._id }).lean();
+  const topupTransactions = wallet
+    ? (wallet.transactions || [])
+        .filter((tx) => tx.type === 'topup' && tx.status === 'completed')
+        .map((tx) => ({
+          _id: tx._id || tx.paymentId,
+          type: 'topup',
+          amount: tx.amount,
+          description: tx.description || 'Nạp tiền vào ví',
+          status: tx.status,
+          createdAt: tx.createdAt,
+          paymentId: tx.paymentId || null,
+        }))
+    : [];
+
+  // 2. Lịch sử hóa đơn đã thanh toán của cư dân này (bằng ví hoặc PayOS)
+  const payments = await Payment.find({ invoiceId: { $exists: true } })
+    .populate({
+      path: 'invoiceId',
+      select: 'invoiceNumber type totalAmount periodStart periodEnd issuedAt billingPeriodStart billingPeriodEnd',
+    })
+    .sort({ paidAt: -1 })
+    .lean();
+
+  // Lọc: chỉ giữ lại payment mà invoice thuộc resident này
+  const paidInvoices = payments
+    .filter((p) => {
+      if (!p.invoiceId) return false;
+      const invResidentId = p.invoiceId.residentId ? String(p.invoiceId.residentId) : null;
+      return invResidentId === String(residentId);
+    })
+    .map((p) => ({
+      _id: p._id,
+      type: 'payment',
+      paymentMethod: p.paymentMethod,
+      amount: p.amount,
+      transactionRef: p.transactionRef || null,
+      status: p.paymentStatus,
+      paidAt: p.paidAt || p.confirmedAt,
+      invoiceId: p.invoiceId?._id || null,
+      invoiceNumber: p.invoiceId?.invoiceNumber || null,
+      invoiceType: p.invoiceId?.type || null,
+      invoiceTotal: p.invoiceId?.totalAmount || p.amount,
+      periodLabel: buildPeriodLabel(p.invoiceId),
+    }));
+
+  // 3. Gộp và sắp xếp theo thời gian giảm dần
+  const allTransactions = [
+    ...topupTransactions.map((tx) => ({ ...tx, transactionType: 'topup' })),
+    ...paidInvoices.map((tx) => ({ ...tx, transactionType: 'payment' })),
+  ].sort((a, b) => {
+    const dateA = new Date(a.createdAt || a.paidAt || 0);
+    const dateB = new Date(b.createdAt || b.paidAt || 0);
+    return dateB - dateA;
+  });
+
+  // Tổng hợp
+  const totalTopup = topupTransactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const totalPaid = paidInvoices.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+
+  return {
+    residentId,
+    residentName: resident.fullName,
+    summary: {
+      totalTopupTransactions: topupTransactions.length,
+      totalPaidInvoices: paidInvoices.length,
+      totalTopupAmount: totalTopup,
+      totalPaidAmount: totalPaid,
+    },
+    transactions: allTransactions,
+  };
+};
+
+/** Build human-readable period label from invoice billing period */
+const buildPeriodLabel = (invoice) => {
+  if (!invoice) return null;
+  const periodDate = invoice.billingPeriodStart || invoice.periodStart || invoice.issuedAt;
+  if (!periodDate) return null;
+  const d = new Date(periodDate);
+  if (isNaN(d.getTime())) return null;
+  const month = d.getMonth() + 1;
+  const year = d.getFullYear();
+
+  const invoiceType = String(invoice.type || '').toUpperCase();
+  let prefix = invoiceType === 'MEDICATION' ? 'Thuốc' : invoiceType === 'SERVICE' ? 'Dịch vụ' : 'Hóa đơn';
+  return `${prefix} tháng ${month}/${year}`;
+};
+
 const getInvoicePaymentUrl = async (user, residentId, invoiceId, req) => {
   if (!(await assertResidentAccess(user._id, residentId))) {
     throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
@@ -90,6 +196,66 @@ const getInvoicePaymentUrl = async (user, residentId, invoiceId, req) => {
   // Use paymentService to generate the checkout URL with checksum
   const paymentUrl = paymentService.buildPayosCheckoutUrl(req, foundInvoice);
   return { paymentUrl };
+};
+
+/**
+ * Tạo checkout PayOS (dạng JSON) cho MỘT hoá đơn — song song với luồng nạp ví
+ * (`walletService.generateTopupPaymentUrl`) để app di động vẽ QR NGAY TRONG app
+ * thay vì chỉ mở trang thanh toán ngoài.
+ *
+ * Toàn bộ dữ liệu (qrCode/checkoutUrl/orderCode/thông tin ngân hàng) là dữ liệu
+ * THẬT do PayOS trả về — không bịa. orderCode được lưu vào hoá đơn để sau này
+ * xác thực server-to-server; tạo checkout KHÔNG hề đánh dấu hoá đơn đã trả.
+ */
+const createInvoicePayosCheckout = async (user, residentId, invoiceId, req) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
+  }
+
+  const invoice = await familyPortalRepo.findInvoiceByIdAndResident(invoiceId, residentId);
+  if (!invoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
+  if (invoice.status === 'PAID') throw new ServiceError('Hóa đơn đã được thanh toán đầy đủ', 400);
+  if (invoice.status === 'CANCELLED') throw new ServiceError('Không thể thanh toán hóa đơn đã bị hủy.', 400);
+
+  const payosData = await paymentService.createPayosPaymentRequest({ invoice, req });
+  if (payosData.orderCode) {
+    await paymentService.storeInvoicePayosOrderCode(invoice._id, payosData.orderCode);
+  }
+  if (!payosData.qrCode && !payosData.checkoutUrl) {
+    throw new ServiceError('Không nhận được thông tin thanh toán từ PayOS', 502);
+  }
+
+  return {
+    invoiceId: String(invoice._id),
+    invoiceNumber: invoice.invoiceNumber,
+    amount: Math.round(invoice.totalAmount || 0),
+    // qrCode là chuỗi VietQR thật của PayOS — client tự vẽ QR, không phải PNG bịa.
+    qrCode: payosData.qrCode || null,
+    checkoutUrl: payosData.checkoutUrl || null,
+    orderCode: payosData.orderCode || null,
+    bankBin: payosData.bin || null,
+    bankAccountNumber: payosData.accountNumber || null,
+    bankAccountName: payosData.accountName || null,
+    description: payosData.description || null,
+    payerName: user.fullName || null,
+    createdAt: new Date().toISOString(),
+  };
+};
+
+/**
+ * Hỏi PayOS trạng thái THẬT của hoá đơn (server-to-server) rồi mới đánh dấu đã
+ * trả. Idempotent — dùng cho polling từ app di động. Không bao giờ tin trạng thái
+ * do client báo về.
+ */
+const verifyInvoicePayos = async (user, residentId, invoiceId) => {
+  if (!(await assertResidentAccess(user._id, residentId))) {
+    throw new ServiceError('Truy cập bị từ chối: đây không phải người thân của bạn', 403);
+  }
+  const invoice = await familyPortalRepo.findInvoiceByIdAndResident(invoiceId, residentId);
+  if (!invoice) throw new ServiceError('Không tìm thấy hóa đơn', 404);
+
+  const result = await paymentService.verifyAndMarkInvoicePaid(invoiceId);
+  return { status: result.status };
 };
 
 const getInvoiceDetail = async (user, residentId, invoiceId) => {
@@ -348,7 +514,21 @@ const getPrescriptions = async (user, residentId, query) => {
     }
     filter.status = query.status;
   }
-  return familyPortalRepo.findPrescriptions(filter, { sort: { prescriptionDate: -1 } });
+  const prescriptions = await familyPortalRepo.findPrescriptions(filter, { sort: { prescriptionDate: -1 } });
+
+  // Cổng hiển thị: người thân CHỈ thấy một đơn thuốc sau khi Quản trị viên đã phát hành
+  // hoá đơn thuốc hợp lệ (status ∈ ISSUED/PARTIALLY_PAID/PAID) cho đơn đó. Ranh giới bảo
+  // mật nằm ở backend (endpoint này là nguồn dữ liệu đơn thuốc duy nhất cho cả Mobile lẫn
+  // Web), dựa trên quan hệ có cấu trúc invoice.prescriptionId — không suy đoán từ trạng
+  // thái đơn thuốc, giá, lịch dùng hay UI. Đây là "đã được phát hành hợp lệ", không phải
+  // "chưa thanh toán": đơn vẫn nằm trong lịch sử sau khi thanh toán. DRAFT và CANCELLED
+  // (hoá đơn thuốc bị Dừng khi còn nháp) đều bị ẩn vì chưa từng được phát hành hợp lệ.
+  // Dữ liệu lâm sàng cho Bác sĩ/Điều dưỡng/Dược sĩ/QTV không bị ảnh hưởng — dùng service riêng.
+  const issuedIds = await familyPortalRepo.findIssuedPrescriptionIds(
+    prescriptions.map((rx) => rx._id)
+  );
+  const issuedSet = new Set(issuedIds.map((id) => String(id)));
+  return prescriptions.filter((rx) => issuedSet.has(String(rx._id)));
 };
 
 // ISO week key in local time: "YYYY-Www" (mirrors scheduleController's isoWeekKey)
@@ -770,7 +950,10 @@ module.exports = {
   getResident,
   getResidentBillingSummary,
   getResidentInvoices,
+  getPaymentHistory,
   getInvoicePaymentUrl,
+  createInvoicePayosCheckout,
+  verifyInvoicePayos,
   getInvoiceDetail,
   getVitals,
   getHealthHistory,

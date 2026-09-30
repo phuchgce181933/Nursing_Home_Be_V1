@@ -1,6 +1,86 @@
 const { Types } = require('mongoose');
 const auditLogRepo = require('../repositories/auditLogRepository');
+const StaffProfile = require('../models/staffProfile');
+const User = require('../models/user');
+const Resident = require('../models/resident');
 const ServiceError = require('./serviceError');
+
+const enrichMealIntakeActorNames = async (logs) => {
+  const caregiverRecordLogs = logs.filter((log) =>
+    ['mealIntake', 'hygieneActivity', 'dailyBehavior'].includes(log.module) ||
+    ['mealIntake', 'hygieneActivity', 'dailyBehavior'].includes(log.businessModule)
+  );
+  const staffIds = caregiverRecordLogs
+    .flatMap((log) => [log.beforeData?.recordedByStaffId, log.afterData?.recordedByStaffId])
+    .map((value) => (value && typeof value === 'object' ? value._id : value))
+    .filter((value) => value && Types.ObjectId.isValid(String(value)))
+    .map(String);
+
+  if (!staffIds.length) return logs;
+
+  const profiles = await StaffProfile.find({ _id: { $in: [...new Set(staffIds)] } })
+    .populate('userId', 'fullName')
+    .select('_id userId')
+    .lean();
+  const namesByStaffId = new Map(
+    profiles
+      .filter((profile) => profile.userId?.fullName)
+      .map((profile) => [String(profile._id), profile.userId.fullName])
+  );
+
+  caregiverRecordLogs.forEach((log) => {
+    const values = [log.beforeData?.recordedByStaffId, log.afterData?.recordedByStaffId];
+    const staffId = values
+      .map((value) => (value && typeof value === 'object' ? value._id : value))
+      .find((value) => value && namesByStaffId.has(String(value)));
+    const name = staffId ? namesByStaffId.get(String(staffId)) : null;
+    if (name) log.metadata = { ...(log.metadata || {}), recordedByName: name };
+  });
+
+  return logs;
+};
+
+const enrichMealPlanActorNames = async (logs) => {
+  const mealPlanLogs = logs.filter((log) =>
+    ['mealPlan', 'mealTimeSchedule'].includes(log.module) ||
+    ['mealPlan', 'mealTimeSchedule'].includes(log.businessModule)
+  );
+  const actorIds = mealPlanLogs
+    .map((log) => log.actorUserId)
+    .filter((value) => value && Types.ObjectId.isValid(String(value)))
+    .map(String);
+  if (!actorIds.length) return logs;
+
+  const users = await User.find({ _id: { $in: [...new Set(actorIds)] } }).select('_id fullName').lean();
+  const namesByUserId = new Map(users.map((user) => [String(user._id), user.fullName]));
+  const scheduleLogs = mealPlanLogs.filter((log) => log.module === 'mealTimeSchedule' || log.businessModule === 'mealTimeSchedule');
+  const residentIds = scheduleLogs
+    .flatMap((log) => [log.beforeData?.entries, log.afterData?.entries])
+    .filter(Array.isArray)
+    .flat()
+    .map((entry) => entry?.residentId && typeof entry.residentId === 'object' ? entry.residentId._id : entry?.residentId)
+    .filter((value) => value && Types.ObjectId.isValid(String(value)))
+    .map(String);
+  const residents = residentIds.length
+    ? await Resident.find({ _id: { $in: [...new Set(residentIds)] } }).select('_id fullName').lean()
+    : [];
+  const namesByResidentId = new Map(residents.map((resident) => [String(resident._id), resident.fullName]));
+  mealPlanLogs.forEach((log) => {
+    const actorId = String(log.actorUserId);
+    const name = namesByUserId.get(actorId);
+    if (name && (!log.performedBy || log.performedBy === actorId)) log.performedBy = name;
+    if (log.module === 'mealTimeSchedule' || log.businessModule === 'mealTimeSchedule') {
+      const entries = log.afterData?.entries || log.beforeData?.entries || [];
+      const entriesSummary = entries.map((entry) => {
+        const residentId = entry?.residentId && typeof entry.residentId === 'object' ? entry.residentId._id : entry?.residentId;
+        const residentName = namesByResidentId.get(String(residentId)) || 'Cư dân';
+        return `${residentName}: Sáng ${entry?.breakfastTime || '—'}, Trưa ${entry?.lunchTime || '—'}, Tối ${entry?.dinnerTime || '—'}`;
+      });
+      if (entriesSummary.length) log.metadata = { ...(log.metadata || {}), entriesSummary };
+    }
+  });
+  return logs;
+};
 
 const buildAuditLogFilter = (query = {}) => {
   const filter = {};
@@ -117,10 +197,11 @@ const listAuditLogs = async (query = {}) => {
   const sortOrder = query.sortOrder === 'asc' ? 1 : -1;
 
   const filter = buildAuditLogFilter(query);
-  const [data, total] = await Promise.all([
+  const [rawData, total] = await Promise.all([
     auditLogRepo.findByFilterLean(filter, { sort: { [sortBy]: sortOrder }, skip, limit }),
     auditLogRepo.countByFilter(filter),
   ]);
+  const data = await enrichMealPlanActorNames(await enrichMealIntakeActorNames(rawData));
 
   return {
     data,
@@ -165,7 +246,8 @@ const getAuditLogById = async (id) => {
     throw new ServiceError('Không tìm thấy bản ghi nhật ký kiểm tra', 404);
   }
 
-  return auditLog;
+  const [enrichedLog] = await enrichMealPlanActorNames(await enrichMealIntakeActorNames([auditLog]));
+  return enrichedLog;
 };
 
 module.exports = {

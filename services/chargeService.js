@@ -2,15 +2,34 @@ const { Types } = require('mongoose');
 const clinicalServiceRepo = require('../repositories/clinicalServiceRepository');
 const medicalChargeRepo = require('../repositories/medicalChargeRepository');
 const auditLogRepo = require('../repositories/auditLogRepository');
+const residentRepo = require('../repositories/residentRepository');
 
 const createChargeForRecord = async (opts = {}) => {
-  // opts: { originType, originId, residentId, serviceCode, serviceName, category, performedById, performedBy, performedAt, quantity, unitPrice, metadata }
-  console.log('[chargeService.createChargeForRecord] Called with opts:', JSON.stringify(opts, null, 2));
-  
+  // opts: { originType, originId, residentId, serviceCode, serviceName, category, performedById, performedBy, performedAt, quantity, unitPrice, metadata, req }
+  console.log('[chargeService.createChargeForRecord] Called with opts:', {
+    originType: opts.originType,
+    originId: opts.originId,
+    residentId: opts.residentId,
+    serviceCode: opts.serviceCode,
+    serviceName: opts.serviceName,
+    category: opts.category,
+    quantity: opts.quantity,
+    unitPrice: opts.unitPrice,
+  });
+
   if (!opts.residentId) {
     console.error('[chargeService] Missing residentId - returning null');
     return null;
   }
+
+  // Determine language from req
+  const isVi = !opts.req || opts.req?.i18n?.language === 'vi' || opts.req?.headers?.['accept-language']?.includes('vi');
+
+  // Resolve resident name for audit log
+  const resident = await residentRepo.findById(opts.residentId);
+  const residentFullName = resident
+    ? (resident.fullName || resident.profile?.fullName || resident.profile?.fullname || String(opts.residentId))
+    : String(opts.residentId);
 
   // try to resolve clinical service by code (don't require active=true for backward compatibility)
   let svc = null;
@@ -85,19 +104,34 @@ const createChargeForRecord = async (opts = {}) => {
     throw err;
   }
 
+  const displayActionVi = 'Tạo chi phí';
+  const displayActionEn = 'Charge generated';
+  const descriptionVi = `Tạo chi phí dịch vụ "${serviceName}" cho cư dân "${residentFullName}" (${quantity} × ${unitPrice.toLocaleString('vi-VN')})`;
+  const descriptionEn = `Charge generated for "${serviceName}" (${quantity} × ${unitPrice}) for "${residentFullName}"`;
+
   try {
     await auditLogRepo.create({
       action: 'CHARGE_GENERATED',
-      displayAction: 'Charge generated',
+      displayAction: isVi ? displayActionVi : displayActionEn,
       businessModule: 'clinical-billing',
       module: opts.originType || 'clinical',
       performedBy: opts.performedBy || '',
       performedByRole: '',
       targetEntityType: 'Resident',
       targetEntityId: new Types.ObjectId(opts.residentId),
-      targetName: serviceName,
-      description: `Charge generated for ${serviceName} (${quantity} x ${unitPrice})`,
-      afterData: { chargeId: charge._id, totalPrice: charge.totalPrice },
+      targetName: `${isVi ? 'Chi phí cho' : 'Charge for'} ${residentFullName} — ${serviceName}`,
+      description: isVi ? descriptionVi : descriptionEn,
+      afterData: {
+        chargeId: charge._id,
+        totalPrice: charge.totalPrice,
+        residentId: String(opts.residentId),
+        residentName: residentFullName,
+        serviceName,
+        serviceCode: opts.serviceCode,
+        category: opts.category,
+        quantity,
+        unitPrice,
+      },
     });
   } catch (err) {
     console.error('Failed to write audit log for charge:', err);

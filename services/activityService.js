@@ -6,10 +6,15 @@ const residentRepo = require('../repositories/residentRepository');
 const userRepo = require('../repositories/userRepository');
 const { ACTIVITY_STATUSES } = require('../models/enums');
 const { calculateDurationMinutes } = require('../utils/activityDuration');
+const { createAuditLog } = require('../utils/auditLog');
 
 const VALID_ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'left_early'];
 const VALID_PARTICIPATION_LEVELS = ['active', 'partial', 'passive'];
 const MANUAL_ACTIVITY_STATUSES = ['draft', 'scheduled', 'completed', 'cancelled'];
+const ALLOWED_CREATE_ACTIVITY_STATUSES = ['draft', 'scheduled'];
+const ALLOWED_BULK_STATUS_TARGETS = ['draft', 'scheduled'];
+const NON_DELETABLE_ACTIVITY_STATUSES = ['completed', 'ongoing'];
+const NON_EDITABLE_ACTIVITY_STATUSES = ['completed', 'ongoing'];
 const ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS = ['nurse', 'y tá', 'điều dưỡng', 'caregiver', 'hộ lý', 'doctor', 'bác sĩ'];
 const ALLOWED_ACTIVITY_CATEGORY_OPTIONS = [
   'Hoạt động chăm sóc cá nhân hằng ngày',
@@ -52,6 +57,48 @@ const isAllowedActivityStaffRole = (role) => {
   return ALLOWED_ACTIVITY_STAFF_ROLE_KEYWORDS.some((keyword) => roleText.includes(keyword));
 };
 
+const getScheduledAt = (activity) => {
+  if (!activity) return null;
+  const raw = activity.scheduledAt || activity.startAt;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const isActivityInPast = (activity) => {
+  const scheduledAt = getScheduledAt(activity);
+  if (!scheduledAt) return false;
+  return scheduledAt.getTime() < Date.now();
+};
+
+const assertActivityEditable = (activity) => {
+  if (!activity) return;
+  const status = String(activity.status || '').trim().toLowerCase();
+  if (NON_EDITABLE_ACTIVITY_STATUSES.includes(status)) {
+    throw new ServiceError(
+      `Không thể chỉnh sửa hoạt động đang ở trạng thái "${status}"`,
+      400,
+    );
+  }
+  if (isActivityInPast(activity)) {
+    throw new ServiceError(
+      'Không thể chỉnh sửa hoạt động đã diễn ra trong quá khứ',
+      400,
+    );
+  }
+};
+
+const assertActivityDeletable = (activity) => {
+  if (!activity) return;
+  const status = String(activity.status || '').trim().toLowerCase();
+  if (NON_DELETABLE_ACTIVITY_STATUSES.includes(status)) {
+    throw new ServiceError(
+      `Không thể xóa hoạt động đang ở trạng thái "${status}"`,
+      400,
+    );
+  }
+};
+
 const normalizeStaffIdList = (value) => {
   if (value === undefined || value === null || value === '') return [];
   if (Array.isArray(value)) {
@@ -74,54 +121,107 @@ const normalizeObjectIds = (value) => {
   return [...new Set(value.map((id) => toObjectId(id).toString()))].map((id) => new mongoose.Types.ObjectId(id));
 };
 
+// Serialize any value so it can be safely JSON-stringified inside the audit log's
+// beforeData/afterData snapshot. Mongoose ObjectId values are converted to strings,
+// Date values to ISO strings, and arrays of ObjectIds to string arrays. Plain
+// primitives/objects pass through unchanged.
+const serializeForAuditLog = (value) => {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      if (item && typeof item === 'object' && item.toString && item.constructor && item.constructor.name === 'ObjectId') {
+        return item.toString();
+      }
+      if (item instanceof Date) return item.toISOString();
+      if (item && typeof item === 'object' && typeof item.toString === 'function' && item._bsontype === 'ObjectId') {
+        return item.toString();
+      }
+      return item;
+    });
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'object' && typeof value.toString === 'function' && value._bsontype === 'ObjectId') {
+    return value.toString();
+  }
+  return value;
+};
+
 const buildFilterFromQuery = (query) => {
   const filter = {};
+  const orBranches = [];
+
   if (query.status) filter.status = query.status;
   if (query.category) filter.category = query.category;
   if (query.organizerStaffId) filter.organizerStaffId = query.organizerStaffId;
   if (query.organizerStaffIds) filter.organizerStaffIds = { $in: [query.organizerStaffIds] };
   if (query.participantResidentIds) filter.participantResidentIds = { $in: query.participantResidentIds };
   else if (query.participantResidentId) filter.participantResidentIds = query.participantResidentId;
+
   if (query.search) {
     const search = query.search.trim();
-    filter.$or = [
-      { title: { $regex: search, $options: 'i' } },
-      { description: { $regex: search, $options: 'i' } },
-      { category: { $regex: search, $options: 'i' } },
-    ];
+    if (search) {
+      orBranches.push({
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } },
+          { category: { $regex: search, $options: 'i' } },
+        ],
+      });
+    }
   }
-  if (query.from || query.to) {
-    const from = query.from ? new Date(query.from) : null;
-    const to = query.to ? new Date(query.to) : null;
-    const conditions = [];
 
+  if (query.from || query.to) {
+    // Chấp nhận cả "YYYY-MM-DD" (coi như ngày VN ICT) và ISO đầy đủ.
+    const parseBound = (value, endOfDay) => {
+      if (!value) return null;
+      const str = String(value);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+        return new Date(endOfDay ? `${str}T23:59:59.999+07:00` : `${str}T00:00:00+07:00`);
+      }
+      const d = new Date(str);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    const from = parseBound(query.from, false);
+    const to = parseBound(query.to, true);
+    const conditions = [];
     if (from && to) {
-      conditions.push({ scheduledAt: { $gte: from, $lte: to } });
-      conditions.push({ endAt: { $gte: from, $lte: to } });
-      conditions.push({ $and: [{ scheduledAt: { $lte: from } }, { endAt: { $gte: to } }] });
+      conditions.push(
+        { scheduledAt: { $gte: from, $lte: to } },
+        { endAt: { $gte: from, $lte: to } },
+        { $and: [{ scheduledAt: { $lte: from } }, { endAt: { $gte: to } }] }
+      );
     } else if (from) {
-      conditions.push({ scheduledAt: { $gte: from } });
-      conditions.push({ endAt: { $gte: from } });
-      conditions.push({ scheduledAt: { $lte: from } });
+      // Hoạt động còn "sống" từ `from` trở đi:
+      //   - bắt đầu ở hoặc sau from, hoặc
+      //   - kết thúc ở hoặc sau from (nghĩa là đang diễn ra lúc from), hoặc
+      //   - đã bao trùm from (bắt đầu trước from và kết thúc sau from).
+      conditions.push(
+        { scheduledAt: { $gte: from } },
+        { endAt: { $gte: from } },
+        { $and: [{ scheduledAt: { $lte: from } }, { endAt: { $gte: from } }] }
+      );
     } else if (to) {
       conditions.push({ scheduledAt: { $lte: to } });
-      conditions.push({ endAt: { $lte: to } });
-      conditions.push({ endAt: { $gte: to } });
     }
-
     if (conditions.length) {
-      filter.$or = conditions;
+      orBranches.push({ $or: conditions });
     }
+  }
+
+  if (orBranches.length === 1) {
+    Object.assign(filter, orBranches[0]);
+  } else if (orBranches.length > 1) {
+    filter.$and = orBranches;
   }
   return filter;
 };
 
-const validateActivityTimeRange = (startDate, endDate) => {
+const validateActivityTimeRange = (startDate, endDate, { allowPastStart = false } = {}) => {
   const now = new Date();
   if (Number.isNaN(startDate.getTime())) {
     throw new ServiceError('startAt phải là ngày hợp lệ', 400);
   }
-  if (startDate < now) {
+  if (!allowPastStart && startDate < now) {
     throw new ServiceError('startAt không được ở trong quá khứ', 400);
   }
 
@@ -416,7 +516,7 @@ const sendActivityNotifications = async (activity, action, message, extraResiden
   }
 };
 
-const createActivity = async (body) => {
+const createActivity = async (body, req) => {
   if (!body || typeof body !== 'object') {
     throw new ServiceError('Request body là bắt buộc', 400);
   }
@@ -514,6 +614,12 @@ const createActivity = async (body) => {
   if (!ACTIVITY_STATUSES.includes(status)) {
     throw new ServiceError(`status phải thuộc một trong: ${ACTIVITY_STATUSES.join(', ')}`, 400);
   }
+  if (!ALLOWED_CREATE_ACTIVITY_STATUSES.includes(status)) {
+    throw new ServiceError(
+      `Khi tạo mới, trạng thái chỉ được là một trong: ${ALLOWED_CREATE_ACTIVITY_STATUSES.join(', ')}`,
+      400,
+    );
+  }
 
   if (shouldCreateRecurring) {
     const createdActivities = [];
@@ -521,6 +627,9 @@ const createActivity = async (body) => {
     currentDay.setHours(0, 0, 0, 0);
     const lastDay = new Date(endAt);
     lastDay.setHours(0, 0, 0, 0);
+    // seriesId is set after the first activity is created
+    let seriesId = null;
+    let isFirst = true;
 
     for (let day = new Date(currentDay); day <= lastDay; day.setDate(day.getDate() + 1)) {
       const occurrenceStart = new Date(day);
@@ -541,7 +650,16 @@ const createActivity = async (body) => {
         supportStaffIds: supportStaffIds.map((id) => new mongoose.Types.ObjectId(id)),
         participantResidentIds: normalizeObjectIds(body.participantResidentIds),
         status,
+        seriesId,
       });
+
+      // First activity becomes the series "parent" — update its seriesId to point to itself
+      if (isFirst) {
+        seriesId = activity._id;
+        await activityRepo.findByIdAndUpdate(activity._id, { seriesId });
+        activity.seriesId = seriesId;
+        isFirst = false;
+      }
 
       createdActivities.push(activity);
       await sendActivityNotifications(
@@ -549,6 +667,20 @@ const createActivity = async (body) => {
         'scheduled',
         `Hoạt động mới: ${activity.title} đã được lên lịch vào ${activity.scheduledAt.toLocaleString('vi-VN')}${activity.location ? ` tại ${activity.location}` : ''}.`,
       );
+      await createAuditLog({
+        actorUserId: req?.user?._id,
+        actorRole: req?.user?.role,
+        action: 'CREATE_ACTIVITY',
+        displayAction: 'Tạo hoạt động',
+        module: 'activity',
+        businessModule: 'activity',
+        targetEntityType: 'Activity',
+        targetEntityId: activity._id,
+        targetName: activity.title,
+        description: `Tạo hoạt động "${activity.title}" (${activity.category || 'không phân loại'}) lặp lại hằng ngày`,
+        afterData: { title: activity.title, category: activity.category, status: activity.status, scheduledAt: activity.scheduledAt },
+        req,
+      });
     }
     return { message: 'Đã tạo hoạt động cho mỗi ngày', createdCount: createdActivities.length, data: createdActivities };
   }
@@ -575,6 +707,21 @@ const createActivity = async (body) => {
     `Hoạt động mới: ${activity.title} đã được lên lịch vào ${activity.scheduledAt.toLocaleString('vi-VN')}${activity.location ? ` tại ${activity.location}` : ''}.`,
   );
 
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'CREATE_ACTIVITY',
+    displayAction: 'Tạo hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: activity._id,
+    targetName: activity.title,
+    description: `Tạo hoạt động "${activity.title}" (${activity.category || 'không phân loại'})`,
+    afterData: { title: activity.title, category: activity.category, status: activity.status, scheduledAt: activity.scheduledAt },
+    req,
+  });
+
   return activity;
 };
 
@@ -595,7 +742,7 @@ const getActivityById = async (activityId) => {
   return syncActivityStatusIfNeeded(activity);
 };
 
-const updateActivity = async (activityId, body) => {
+const updateActivity = async (activityId, body, req) => {
   const update = {};
   if (body.title !== undefined) update.title = body.title.trim();
   if (body.category !== undefined) update.category = normalizeActivityCategory(body);
@@ -609,7 +756,7 @@ const updateActivity = async (activityId, body) => {
   if (body.startAt !== undefined || body.scheduledAt !== undefined || body.endAt !== undefined) {
     const startDate = body.startAt ? new Date(body.startAt) : update.scheduledAt;
     const endDate = body.endAt ? new Date(body.endAt) : update.endAt;
-    validateActivityTimeRange(startDate, endDate);
+    validateActivityTimeRange(startDate, endDate, { allowPastStart: true });
     const computedDurationMinutes = calculateDurationMinutes(startDate, endDate);
     if (computedDurationMinutes === null) {
       throw new ServiceError('startAt và endAt phải là ngày hợp lệ', 400);
@@ -683,6 +830,8 @@ const updateActivity = async (activityId, body) => {
   if (body.participantResidentIds !== undefined) update.participantResidentIds = normalizeObjectIds(body.participantResidentIds);
 
   const previousActivity = await activityRepo.findById(activityId);
+  if (!previousActivity) throw new ServiceError('Không tìm thấy hoạt động', 404);
+  assertActivityEditable(previousActivity);
   const updated = await activityRepo.findByIdAndUpdate(activityId, update);
   if (!updated) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
@@ -694,10 +843,232 @@ const updateActivity = async (activityId, body) => {
     previousActivity,
   );
 
+  // Build a diff that only contains fields the caller actually intended to change
+  // (anything present in `update`). This way the audit log shows what was edited —
+  // including category, location, description, organizer/staff lists, participants, etc.
+  const AUDIT_TRACKED_FIELDS = [
+    'title',
+    'category',
+    'description',
+    'scheduledAt',
+    'endAt',
+    'durationMinutes',
+    'dailyDurationMinutes',
+    'location',
+    'organizerStaffId',
+    'organizerStaffIds',
+    'supportStaffId',
+    'supportStaffIds',
+    'status',
+    'participantResidentIds',
+  ];
+  const AUDIT_FIELD_LABELS = {
+    title: 'tiêu đề',
+    category: 'loại hoạt động',
+    description: 'mô tả',
+    scheduledAt: 'thời gian bắt đầu',
+    endAt: 'thời gian kết thúc',
+    durationMinutes: 'thời lượng (phút)',
+    dailyDurationMinutes: 'thời lượng mỗi ngày (phút)',
+    location: 'địa điểm',
+    organizerStaffId: 'nhân viên tổ chức',
+    organizerStaffIds: 'danh sách nhân viên tổ chức',
+    supportStaffId: 'nhân viên hỗ trợ',
+    supportStaffIds: 'danh sách nhân viên hỗ trợ',
+    status: 'trạng thái',
+    participantResidentIds: 'danh sách cư dân tham gia',
+  };
+  const formatChangedFields = (keys) =>
+    keys.map((k) => AUDIT_FIELD_LABELS[k] || k).join(', ');
+  const beforeSnapshot = {};
+  const afterSnapshot = {};
+  for (const field of AUDIT_TRACKED_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(update, field)) continue;
+    beforeSnapshot[field] = serializeForAuditLog(previousActivity?.[field]);
+    afterSnapshot[field] = serializeForAuditLog(updated[field]);
+  }
+  const changedFieldKeys = AUDIT_TRACKED_FIELDS.filter(
+    (field) => Object.prototype.hasOwnProperty.call(update, field)
+      && JSON.stringify(beforeSnapshot[field]) !== JSON.stringify(afterSnapshot[field]),
+  );
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'UPDATE_ACTIVITY',
+    displayAction: 'Cập nhật hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: updated._id,
+    targetName: updated.title,
+    description: changedFieldKeys.length
+      ? `Cập nhật hoạt động "${updated.title}" — đã đổi: ${formatChangedFields(changedFieldKeys)}`
+      : `Cập nhật hoạt động "${updated.title}" (không có trường nào thay đổi giá trị)`,
+    beforeData: Object.keys(beforeSnapshot).length ? beforeSnapshot : undefined,
+    afterData: Object.keys(afterSnapshot).length ? afterSnapshot : undefined,
+    metadata: { changedFields: changedFieldKeys, submittedFields: Object.keys(update) },
+    req,
+  });
+
   return updated;
 };
 
-const deleteActivity = async (activityId) => {
+const bulkUpdateActivities = async (activityId, body, req) => {
+  const activity = await activityRepo.findById(activityId);
+  if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
+  assertActivityEditable(activity);
+
+  const seriesId = activity.seriesId || activityId;
+  if (!seriesId) throw new ServiceError('Hoạt động này không thuộc chuỗi hoạt động nào', 400);
+
+  const { updateSeries } = body;
+  if (!updateSeries || typeof updateSeries !== 'object') {
+    throw new ServiceError('updateSeries là bắt buộc và phải là object', 400);
+  }
+
+  // Fields that can be updated across all series members
+  const ALLOWED_SERIES_FIELDS = [
+    'title', 'category', 'description', 'location',
+    'organizerStaffId', 'organizerStaffIds',
+    'supportStaffId', 'supportStaffIds',
+    'participantResidentIds', 'status', 'dailyDurationMinutes',
+  ];
+  const rawUpdate = {};
+  for (const key of ALLOWED_SERIES_FIELDS) {
+    if (key in updateSeries) rawUpdate[key] = updateSeries[key];
+  }
+
+  if (Object.keys(rawUpdate).length === 0) {
+    throw new ServiceError('Không có trường hợp lệ để cập nhật', 400);
+  }
+
+  // Fields that need special normalization
+  if (rawUpdate.organizerStaffIds !== undefined) {
+    const ids = normalizeStaffIdList(rawUpdate.organizerStaffIds);
+    if (ids.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('organizerStaffIds chứa ObjectId không hợp lệ', 400);
+    }
+    rawUpdate.organizerStaffIds = ids.map((id) => new mongoose.Types.ObjectId(id));
+    rawUpdate.organizerStaffId = ids[0] || null;
+  }
+  if (rawUpdate.supportStaffIds !== undefined) {
+    const ids = normalizeStaffIdList(rawUpdate.supportStaffIds);
+    if (ids.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+      throw new ServiceError('supportStaffIds chứa ObjectId không hợp lệ', 400);
+    }
+    rawUpdate.supportStaffIds = ids.map((id) => new mongoose.Types.ObjectId(id));
+    rawUpdate.supportStaffId = ids[0] || null;
+  }
+  if (rawUpdate.participantResidentIds !== undefined) {
+    rawUpdate.participantResidentIds = normalizeObjectIds(rawUpdate.participantResidentIds);
+  }
+  if (rawUpdate.status !== undefined) {
+    if (rawUpdate.status === 'ongoing') throw new ServiceError('Không thể đặt trạng thái ongoing cho chuỗi', 400);
+    if (!MANUAL_ACTIVITY_STATUSES.includes(rawUpdate.status)) {
+      throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
+    }
+    if (!ALLOWED_BULK_STATUS_TARGETS.includes(rawUpdate.status)) {
+      throw new ServiceError(
+        `Cập nhật chuỗi chỉ hỗ trợ chuyển sang: ${ALLOWED_BULK_STATUS_TARGETS.join(', ')}`,
+        400,
+      );
+    }
+  }
+
+  // Capture a representative activity's state BEFORE the bulk update so the audit
+  // log can show a meaningful before/after diff. (We can't read this state after
+  // the update because the records have already been mutated.)
+  const seriesBefore = await activityRepo.findBySeriesId(seriesId);
+  const beforeRepresentative = seriesBefore[0];
+
+  // Only update series members that are still in the future (and not in a
+  // terminal/auto state). Past, completed, or ongoing occurrences are left
+  // untouched so admins can't retroactively edit history.
+  const now = new Date();
+  const updatedCountResult = await activityRepo.updateMany(
+    {
+      seriesId,
+      scheduledAt: { $gte: now },
+      status: { $nin: NON_EDITABLE_ACTIVITY_STATUSES },
+    },
+    rawUpdate,
+  );
+  // MongoDB returns an object like { acknowledged, modifiedCount, matchedCount, ... }.
+  // Pull the integer out so it can be safely interpolated into a description string.
+  const updatedCount = updatedCountResult?.modifiedCount ?? updatedCountResult?.n ?? 0;
+
+  const seriesActivities = await activityRepo.findBySeriesId(seriesId);
+  const first = seriesActivities[0];
+
+  // Build the diff snapshot. Only the fields the caller explicitly listed in
+  // `rawUpdate` are worth tracking — everything else is identical and would only
+  // bloat the audit log.
+  const AUDIT_TRACKED_FIELDS = [
+    'title', 'category', 'description', 'scheduledAt', 'endAt',
+    'durationMinutes', 'dailyDurationMinutes', 'location',
+    'status',
+  ];
+  const AUDIT_FIELD_LABELS = {
+    title: 'tiêu đề',
+    category: 'loại hoạt động',
+    description: 'mô tả',
+    scheduledAt: 'thời gian bắt đầu',
+    endAt: 'thời gian kết thúc',
+    durationMinutes: 'thời lượng (phút)',
+    dailyDurationMinutes: 'thời lượng mỗi ngày (phút)',
+    location: 'địa điểm',
+    organizerStaffIds: 'danh sách nhân viên tổ chức',
+    supportStaffIds: 'danh sách nhân viên hỗ trợ',
+    status: 'trạng thái',
+    participantResidentIds: 'danh sách cư dân tham gia',
+  };
+  const formatChangedFields = (keys) =>
+    keys.map((k) => AUDIT_FIELD_LABELS[k] || k).join(', ');
+  const beforeSnapshot = {};
+  const afterSnapshot = {};
+  for (const field of AUDIT_TRACKED_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(rawUpdate, field)) continue;
+    beforeSnapshot[field] = serializeForAuditLog(beforeRepresentative?.[field]);
+    afterSnapshot[field] = serializeForAuditLog(first?.[field]);
+  }
+  const changedFieldKeys = AUDIT_TRACKED_FIELDS.filter(
+    (field) => Object.prototype.hasOwnProperty.call(rawUpdate, field)
+      && JSON.stringify(beforeSnapshot[field]) !== JSON.stringify(afterSnapshot[field]),
+  );
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'BULK_UPDATE_ACTIVITIES',
+    displayAction: 'Cập nhật hàng loạt chuỗi hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: seriesId,
+    targetName: first?.title || 'Chuỗi hoạt động',
+    description: changedFieldKeys.length
+      ? `Cập nhật hàng loạt ${updatedCount} hoạt động trong chuỗi "${first?.title || 'Chuỗi hoạt động'}" — đã đổi: ${formatChangedFields(changedFieldKeys)}`
+      : `Cập nhật hàng loạt ${updatedCount} hoạt động trong chuỗi "${first?.title || 'Chuỗi hoạt động'}" — các trường đã gửi: ${formatChangedFields(Object.keys(rawUpdate))} (giá trị không thay đổi)`,
+    beforeData: Object.keys(beforeSnapshot).length ? beforeSnapshot : undefined,
+    afterData: Object.keys(afterSnapshot).length ? afterSnapshot : undefined,
+    metadata: { seriesId, updatedFields: Object.keys(rawUpdate), changedFields: changedFieldKeys, updatedCount },
+    req,
+  });
+
+  return {
+    message: `Đã cập nhật ${updatedCount} hoạt động trong chuỗi`,
+    updatedCount,
+    seriesId,
+    data: seriesActivities,
+  };
+};
+
+const deleteActivity = async (activityId, req) => {
+  const existing = await activityRepo.findById(activityId);
+  if (!existing) throw new ServiceError('Không tìm thấy hoạt động', 404);
+  assertActivityDeletable(existing);
+
   const activity = await activityRepo.findByIdAndUpdate(activityId, { status: 'cancelled' });
   if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
@@ -708,16 +1079,72 @@ const deleteActivity = async (activityId) => {
   );
 
   await activityRepo.deleteById(activityId);
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'DELETE_ACTIVITY',
+    displayAction: 'Xóa hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: activity._id,
+    targetName: activity.title,
+    description: `Xóa hoạt động "${activity.title}" (${activity.category || 'không phân loại'})`,
+    beforeData: {
+      title: activity.title,
+      category: activity.category,
+      description: activity.description,
+      scheduledAt: activity.scheduledAt ? activity.scheduledAt.toISOString() : undefined,
+      endAt: activity.endAt ? activity.endAt.toISOString() : undefined,
+      durationMinutes: activity.durationMinutes,
+      location: activity.location,
+      status: activity.status,
+      seriesId: activity.seriesId ? activity.seriesId.toString() : undefined,
+      participantResidentIds: (activity.participantResidentIds || []).map((id) => id.toString()),
+    },
+    req,
+  });
+
   return { message: 'Đã xóa hoạt động thành công' };
 };
 
-const bulkDeleteActivities = async (query = {}) => {
+const bulkDeleteActivities = async (query = {}, req) => {
+  if (query.status && NON_DELETABLE_ACTIVITY_STATUSES.includes(String(query.status).toLowerCase())) {
+    throw new ServiceError(
+      `Không thể xóa hoạt động đang ở trạng thái "${String(query.status).toLowerCase()}"`,
+      400,
+    );
+  }
+
   const filter = buildFilterFromQuery(query);
+  // Always exclude completed/ongoing activities. Past activities are still
+  // deletable so admins can clean up old drafts.
+  filter.$and = filter.$and || [];
+  filter.$and.push({ status: { $nin: NON_DELETABLE_ACTIVITY_STATUSES } });
   const deleted = await activityRepo.deleteMany(filter);
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'BULK_DELETE_ACTIVITIES',
+    displayAction: 'Xóa nhiều hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: null,
+    description: `Xóa nhiều hoạt động theo bộ lọc — đã xóa ${deleted.deletedCount || 0} bản ghi`,
+    metadata: {
+      filter: query,
+      deletedCount: deleted.deletedCount || 0,
+    },
+    req,
+  });
+
   return { deletedCount: deleted.deletedCount || 0, message: 'Đã xóa các hoạt động thành công' };
 };
 
-const bulkUpdateActivityStatus = async (query = {}, status) => {
+const bulkUpdateActivityStatus = async (query = {}, status, req) => {
   if (!status) {
     throw new ServiceError('status là bắt buộc', 400);
   }
@@ -730,12 +1157,36 @@ const bulkUpdateActivityStatus = async (query = {}, status) => {
     throw new ServiceError(`status phải thuộc một trong: ${MANUAL_ACTIVITY_STATUSES.join(', ')}`, 400);
   }
 
+  if (!ALLOWED_BULK_STATUS_TARGETS.includes(status)) {
+    throw new ServiceError(
+      `Chuyển trạng thái hàng loạt chỉ hỗ trợ chuyển sang: ${ALLOWED_BULK_STATUS_TARGETS.join(', ')}`,
+      400,
+    );
+  }
+
   const filter = buildFilterFromQuery(query);
+  // Hoạt động trong quá khứ không được phép chuyển trạng thái.
+  filter.$and = filter.$and || [];
+  filter.$and.push({ scheduledAt: { $gte: new Date() } });
   const updated = await activityRepo.updateMany(filter, { status });
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'BULK_UPDATE_ACTIVITY_STATUS',
+    displayAction: 'Cập nhật trạng thái nhiều hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: null,
+    description: `Cập nhật trạng thái nhiều hoạt động thành "${status}" (query: ${JSON.stringify(query)}), đã cập nhật ${updated.modifiedCount || 0} bản ghi`,
+    req,
+  });
+
   return { modifiedCount: updated.modifiedCount || 0, message: 'Đã cập nhật trạng thái hoạt động thành công' };
 };
 
-const setParticipantList = async (activityId, participantResidentIds) => {
+const setParticipantList = async (activityId, participantResidentIds, req) => {
   if (!Array.isArray(participantResidentIds)) {
     throw new ServiceError('participantResidentIds phải là một mảng', 400);
   }
@@ -763,6 +1214,21 @@ const setParticipantList = async (activityId, participantResidentIds) => {
     `Danh sách người tham gia hoạt động đã được cập nhật.`,
   );
 
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'UPDATE_ACTIVITY_PARTICIPANT_LIST',
+    displayAction: 'Cập nhật danh sách người tham gia hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: activity._id,
+    targetName: activity.title,
+    description: `Cập nhật danh sách người tham gia hoạt động "${activity.title}" (${participants.length} người)`,
+    afterData: { participantResidentIds: participants.map(String) },
+    req,
+  });
+
   return activity;
 };
 
@@ -777,7 +1243,7 @@ const assertActivityOpenForRegistration = (activity) => {
   }
 };
 
-const registerResident = async (activityId, residentId, currentUser) => {
+const registerResident = async (activityId, residentId, currentUser, req) => {
   if (!residentId) throw new ServiceError('residentId là bắt buộc', 400);
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
@@ -813,10 +1279,25 @@ const registerResident = async (activityId, residentId, currentUser) => {
     [normalizedResidentId],
   );
 
+  await createAuditLog({
+    actorUserId: currentUser?._id || req?.user?._id,
+    actorRole: currentUser?.role || req?.user?.role,
+    action: 'REGISTER_ACTIVITY',
+    displayAction: 'Đăng ký tham gia hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: activity._id,
+    targetName: activity.title,
+    description: `Đăng ký cư dân tham gia hoạt động "${activity.title}"`,
+    afterData: { residentId: String(residentId), activityTitle: activity.title },
+    req,
+  });
+
   return activity;
 };
 
-const unregisterResident = async (activityId, residentId, currentUser) => {
+const unregisterResident = async (activityId, residentId, currentUser, req) => {
   if (!residentId) throw new ServiceError('residentId là bắt buộc', 400);
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
@@ -846,10 +1327,25 @@ const unregisterResident = async (activityId, residentId, currentUser) => {
   );
   await activity.save();
 
+  await createAuditLog({
+    actorUserId: currentUser?._id || req?.user?._id,
+    actorRole: currentUser?.role || req?.user?.role,
+    action: 'UNREGISTER_ACTIVITY',
+    displayAction: 'Hủy đăng ký tham gia hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: activity._id,
+    targetName: activity.title,
+    description: `Hủy đăng ký cư dân khỏi hoạt động "${activity.title}"`,
+    beforeData: { residentId: String(residentId), activityTitle: activity.title },
+    req,
+  });
+
   return activity;
 };
 
-const recordParticipationResult = async (activityId, body) => {
+const recordParticipationResult = async (activityId, body, req) => {
   const activity = await activityRepo.findById(activityId);
   if (!activity) throw new ServiceError('Không tìm thấy hoạt động', 404);
 
@@ -926,11 +1422,73 @@ const recordParticipationResult = async (activityId, body) => {
   }
 
   const updated = await activityRepo.findByIdAndUpdate(activityId, updates);
+
+  // Resolve resident names for audit log metadata
+  const allResidentIds = [
+    ...(updated.attendanceRecords || []),
+    ...(updated.participationRecords || []),
+  ]
+    .map((r) => r.residentId?.toString())
+    .filter(Boolean);
+  const uniqueIds = [...new Set(allResidentIds)];
+  const residentNames = uniqueIds.length
+    ? await residentRepo.findByFilterLean({ _id: { $in: uniqueIds } }, { select: 'fullName' })
+        .then((residents) => residents.map((r) => ({ id: r._id.toString(), name: r.fullName })))
+        .catch(() => [])
+    : [];
+
   await sendActivityNotifications(
     updated,
     'completed',
-    `Participation results have been recorded for this activity.`,
+    `Kết quả điểm danh đã được ghi nhận cho hoạt động "${updated.title}".`,
   );
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'RECORD_PARTICIPATION_RESULT',
+    displayAction: 'Điểm danh hoạt động',
+    module: 'activity',
+    businessModule: 'activity',
+    targetEntityType: 'Activity',
+    targetEntityId: updated._id,
+    targetName: updated.title,
+    description: `Điểm danh hoạt động "${updated.title}" (trạng thái: ${updated.status})`,
+    beforeData: {
+      status: syncedActivity?.status,
+      participantResultNotes: syncedActivity?.participantResultNotes,
+      attendanceRecords: (syncedActivity?.attendanceRecords || []).map((r) => ({
+        residentId: String(r.residentId),
+        status: r.status,
+        occurrenceDate: r.occurrenceDate,
+        notes: r.notes,
+      })),
+      participationRecords: (syncedActivity?.participationRecords || []).map((r) => ({
+        residentId: String(r.residentId),
+        level: r.level,
+        occurrenceDate: r.occurrenceDate,
+        notes: r.notes,
+      })),
+    },
+    afterData: {
+      status: updated.status,
+      participantResultNotes: updated.participantResultNotes,
+      attendanceRecords: (updated.attendanceRecords || []).map((r) => ({
+        residentId: String(r.residentId),
+        status: r.status,
+        occurrenceDate: r.occurrenceDate,
+        notes: r.notes,
+      })),
+      participationRecords: (updated.participationRecords || []).map((r) => ({
+        residentId: String(r.residentId),
+        level: r.level,
+        occurrenceDate: r.occurrenceDate,
+        notes: r.notes,
+      })),
+    },
+    metadata: { residentNames },
+    req,
+  });
 
   return updated;
 };
@@ -1021,6 +1579,7 @@ module.exports = {
   deleteActivity,
   bulkDeleteActivities,
   bulkUpdateActivityStatus,
+  bulkUpdateActivities,
   setParticipantList,
   registerResident,
   unregisterResident,

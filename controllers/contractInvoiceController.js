@@ -3,6 +3,7 @@ const Invoice = require('../models/invoice');
 const Resident = require('../models/resident');
 const Contract = require('../models/contract');
 const User = require('../models/user');
+const { createAuditLog } = require('../utils/auditLog');
 
 /**
  * UC-128: Create Invoice from Contract
@@ -282,6 +283,37 @@ const LOGO_URL = 'https://res.cloudinary.com/dhcrddnss/image/upload/c_crop,x_385
 </html>`;
 
     const filename = `invoice-${invoice.invoiceNumber || invoice._id.toString()}.html`;
+
+    // Ghi audit log cho hành động xuất hóa đơn ra HTML/PDF
+    await createAuditLog({
+      actorUserId: req.user?._id,
+      actorRole: req.user?.role,
+      action: 'EXPORT_INVOICE',
+      displayAction: 'Xuất hóa đơn',
+      module: 'contract',
+      businessModule: 'contract',
+      targetEntityType: 'Invoice',
+      targetEntityId: invoice._id,
+      targetName: invoice.invoiceNumber || invoice._id?.toString(),
+      performedBy: req.user?.fullName || req.user?.email,
+      performedByRole: req.user?.role,
+      description: `${req.user?.fullName || req.user?.email || 'Quản trị viên'} đã xuất hóa đơn ${invoice.invoiceNumber || invoice._id}${resident.fullName ? ` của cư dân ${resident.fullName}` : ''}${contract.contractNumber ? ` (hợp đồng ${contract.contractNumber})` : ''} ra file HTML/PDF.`,
+      metadata: {
+        event: 'export_invoice',
+        invoiceNumber: invoice.invoiceNumber || null,
+        invoiceStatus: invoice.status || null,
+        invoiceType: invoice.type || null,
+        totalAmount: Number(invoice.totalAmount || invoice.total || 0),
+        contractId: invoice.contractId?._id || invoice.contractId || null,
+        contractNumber: contract.contractNumber || null,
+        residentId: invoice.residentId?._id || invoice.residentId || null,
+        residentName: resident.fullName || null,
+        residentCode: resident.code || null,
+        filename,
+      },
+      req,
+    });
+
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(html);

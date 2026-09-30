@@ -106,6 +106,12 @@ app.use('/api/admin/consultation-requests', require('./routes/adminConsultationR
 
 app.use('/api/nurse/meal-plans', require('./routes/mealPlans'));
 app.use('/api/nurse/nutrition', require('./routes/nutritionCoverage'));
+// routes/nutritionReports.js đã tồn tại đầy đủ (route -> controller -> service ->
+// repository) nhưng chưa bao giờ được đăng ký ở đây, nên mọi request tới
+// /api/nurse/nutrition-reports/* rơi xuống 404 handler cuối file ("Route not found").
+// Lưu ý: dòng '/api/nurse/nutrition' ở trên KHÔNG trùng prefix vì Express khớp
+// theo ranh giới đoạn đường dẫn ("nutrition-reports" != "nutrition/...").
+app.use('/api/nurse/nutrition-reports', require('./routes/nutritionReports'));
 app.use('/api/nurse/special-diets', require('./routes/specialDiets'));
 app.use('/api/nurse/meal-time-schedules', require('./routes/mealTimeSchedules'));
 app.use('/api/caregiver/meal-intake-notes', require('./routes/caregiverMealIntakeNotes'));

@@ -15,13 +15,13 @@ const listResidents = (req, res) =>
 
 const createDraft = (req, res) =>
   svc
-    .createDraft(req.body, req.user._id)
+    .createDraft(req.body, req.user._id, req)
     .then((data) => res.status(201).json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
 const updateDraft = (req, res) =>
   svc
-    .updateDraft(req.params.id, req.body, req.user._id)
+    .updateDraft(req.params.id, req.body, req.user._id, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
@@ -48,13 +48,13 @@ const getPlan = (req, res) =>
 
 const deleteDraft = (req, res) =>
   svc
-    .deleteDraft(req.params.id)
+    .deleteDraft(req.params.id, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
 const publishPlan = (req, res) =>
   svc
-    .publishPlan(req.params.id, req.user._id)
+    .publishPlan(req.params.id, req.user._id, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 

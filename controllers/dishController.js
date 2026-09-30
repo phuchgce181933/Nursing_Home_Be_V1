@@ -15,19 +15,19 @@ const getDish = (req, res) =>
 
 const createDish = (req, res) =>
   svc
-    .createDish(req.body, req.user)
+    .createDish(req.body, req.user, req)
     .then((data) => res.status(201).json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
 const updateDish = (req, res) =>
   svc
-    .updateDish(req.params.id, req.body, req.user)
+    .updateDish(req.params.id, req.body, req.user, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
 const deleteDish = (req, res) =>
   svc
-    .deleteDish(req.params.id, req.user)
+    .deleteDish(req.params.id, req.user, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 

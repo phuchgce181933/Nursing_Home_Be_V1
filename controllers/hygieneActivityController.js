@@ -54,7 +54,7 @@ const adminListRecords = (req, res) =>
 
 const createRecord = (req, res) =>
   svc
-    .createRecord(req.user._id, req.body)
+    .createRecord(req.user._id, req.body, req)
     .then((data) => res.status(201).json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
@@ -66,13 +66,13 @@ const getRecord = (req, res) =>
 
 const updateRecord = (req, res) =>
   svc
-    .updateRecord(req.user._id, req.params.id, req.body)
+    .updateRecord(req.user._id, req.params.id, req.body, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
 const deleteRecord = (req, res) =>
   svc
-    .deleteRecord(req.user._id, req.params.id)
+    .deleteRecord(req.user._id, req.params.id, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 

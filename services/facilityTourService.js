@@ -3,6 +3,14 @@ const tourRepo = require('../repositories/facilityTourRepository');
 const { createAuditLog } = require('../utils/auditLog');
 const { validateEmail } = require('../utils/validators');
 
+const TOUR_STATUS_LABELS = {
+  pending: 'Đang chờ',
+  confirmed: 'Đã xác nhận',
+  completed: 'Hoàn thành',
+  cancelled: 'Đã hủy',
+  no_show: 'Không đến',
+};
+
 const MAX_TEXT_LENGTH = 500;
 const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
   if (value && value.length > max) {
@@ -185,10 +193,23 @@ const scheduleTour = async (user, body, req) => {
     actorUserId: user._id,
     actorRole: user.role,
     action: 'SCHEDULE_FACILITY_TOUR',
+    displayAction: 'Đặt lịch tham quan cơ sở',
     module: 'facilityTour',
+    businessModule: 'facilityTour',
     targetEntityType: 'FacilityTour',
     targetEntityId: tour._id,
-    afterData: { contactName: tour.contactName, preferredDate: tour.preferredDate, status: tour.status },
+    targetName: tour.contactName,
+    description: `${user.fullName || user.email || 'Khách'} đã đặt lịch tham quan cơ sở vào ngày ${tour.preferredDate ? new Date(tour.preferredDate).toLocaleDateString('vi-VN') : 'chưa xác định'}`,
+    beforeData: {},
+    afterData: {
+      contactName: tour.contactName,
+      contactPhone: tour.contactPhone,
+      contactEmail: tour.contactEmail,
+      preferredDate: tour.preferredDate,
+      preferredTimeSlot: tour.preferredTimeSlot,
+      numberOfVisitors: tour.numberOfVisitors,
+      statusLabel: 'Đang chờ',
+    },
     req,
   });
 
@@ -273,11 +294,21 @@ const cancelTour = async (user, tourId, body, req) => {
     actorUserId: user._id,
     actorRole: user.role,
     action: 'CANCEL_FACILITY_TOUR',
+    displayAction: 'Hủy lịch tham quan cơ sở',
     module: 'facilityTour',
+    businessModule: 'facilityTour',
     targetEntityType: 'FacilityTour',
     targetEntityId: tour._id,
-    beforeData: { status: tour.status, preferredDate: tour.preferredDate },
-    afterData: { status: updated.status, cancellationReason },
+    targetName: tour.contactName,
+    description: `${user.fullName || user.email || 'Khách'} đã hủy lịch tham quan cơ sở (ngày ${tour.preferredDate ? new Date(tour.preferredDate).toLocaleDateString('vi-VN') : 'chưa xác định'})`,
+    beforeData: {
+      statusLabel: TOUR_STATUS_LABELS[tour.status] || tour.status,
+      preferredDate: tour.preferredDate,
+    },
+    afterData: {
+      statusLabel: TOUR_STATUS_LABELS[updated.status] || updated.status,
+      cancellationReason: cancellationReason || undefined,
+    },
     req,
   });
 
@@ -377,11 +408,19 @@ const approveTour = async (admin, tourId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'APPROVE_FACILITY_TOUR',
+    displayAction: 'Duyệt lịch tham quan cơ sở',
     module: 'facilityTour',
+    businessModule: 'facilityTour',
     targetEntityType: 'FacilityTour',
     targetEntityId: tour._id,
-    beforeData: { status: tour.status },
-    afterData: { status: updated.status, confirmedAt: updated.confirmedAt, confirmedTimeSlot: updated.confirmedTimeSlot },
+    targetName: tour.contactName,
+    description: `${admin.fullName || 'Quản trị viên'} đã duyệt lịch tham quan của "${tour.contactName}"`,
+    beforeData: { statusLabel: TOUR_STATUS_LABELS[tour.status] || tour.status },
+    afterData: {
+      statusLabel: TOUR_STATUS_LABELS[updated.status] || updated.status,
+      confirmedAt: updated.confirmedAt,
+      confirmedTimeSlot: updated.confirmedTimeSlot || undefined,
+    },
     req,
   });
 
@@ -414,11 +453,15 @@ const completeTour = async (admin, tourId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'COMPLETE_FACILITY_TOUR',
+    displayAction: 'Hoàn tất lịch tham quan cơ sở',
     module: 'facilityTour',
+    businessModule: 'facilityTour',
     targetEntityType: 'FacilityTour',
     targetEntityId: tour._id,
-    beforeData: { status: tour.status },
-    afterData: { status: updated.status, completedAt: updated.completedAt },
+    targetName: tour.contactName,
+    description: `${admin.fullName || 'Quản trị viên'} đã đánh dấu hoàn thành lịch tham quan của "${tour.contactName}"`,
+    beforeData: { statusLabel: TOUR_STATUS_LABELS[tour.status] || tour.status },
+    afterData: { statusLabel: TOUR_STATUS_LABELS[updated.status] || updated.status },
     req,
   });
 
@@ -454,11 +497,18 @@ const rejectTour = async (admin, tourId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'REJECT_FACILITY_TOUR',
+    displayAction: 'Từ chối lịch tham quan cơ sở',
     module: 'facilityTour',
+    businessModule: 'facilityTour',
     targetEntityType: 'FacilityTour',
     targetEntityId: tour._id,
-    beforeData: { status: tour.status },
-    afterData: { status: updated.status, rejectionReason },
+    targetName: tour.contactName,
+    description: `${admin.fullName || 'Quản trị viên'} đã từ chối lịch tham quan của "${tour.contactName}"`,
+    beforeData: { statusLabel: TOUR_STATUS_LABELS[tour.status] || tour.status },
+    afterData: {
+      statusLabel: TOUR_STATUS_LABELS[updated.status] || updated.status,
+      rejectionReason,
+    },
     req,
   });
 

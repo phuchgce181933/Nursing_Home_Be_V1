@@ -78,6 +78,24 @@ const getContractHistory = async (req, res) => {
   }
 };
 
+/**
+ * GET all contracts of one resident (active + old/terminated/cancelled/expired).
+ * Admin dùng để xem lịch sử hợp đồng của cư dân — khi resident đã ký hợp đồng
+ * mới sau khi hợp đồng cũ bị chấm dứt, các hợp đồng cũ vẫn còn trong DB và
+ * cần hiển thị cho admin tra cứu.
+ */
+const getContractsByResident = async (req, res) => {
+  try {
+    const result = await contractService.getContractsByResident(
+      req.params.residentId,
+      req.user
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
+  }
+};
+
 // Issue Invoices: flip DRAFT → ISSUED for all (or selected) invoices of a contract.
 const issueInvoices = async (req, res) => {
   try {
@@ -171,6 +189,7 @@ module.exports = {
   renewContract,
   terminateContract,
   getContractHistory,
+  getContractsByResident,
   issueInvoices,
   recalculateContractInvoices,
   updateDraftInvoicePrice,

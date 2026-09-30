@@ -8,6 +8,7 @@ const residentRepo = require('../repositories/residentRepository');
 const servicePackageRepo = require('../repositories/servicePackageRepository');
 const admissionRepo = require('../repositories/admissionRepository');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
+const { createAuditLog } = require('../utils/auditLog');
 
 const NON_TX_ERROR_PATTERNS = [
   /retryable writes/i,
@@ -233,7 +234,7 @@ const listResidentsForSpecialDiet = async (params = {}, actorUser) => {
   return result;
 };
 
-const createDraft = async (body, actorUserId) => {
+const createDraft = async (body, actorUserId, req = null) => {
   const workDate = parseWorkDateStrict(body.workDate);
   if (workDate < todayVN()) {
     throw apiErr(CODES.MEAL_PAST_DATE_NOT_ALLOWED, { statusCode: 400 });
@@ -272,13 +273,30 @@ const createDraft = async (body, actorUserId) => {
     await specialDietEntryRepo.createMany(entries.map((e) => ({ ...e, specialDietDayId: day._id })), dbOpts);
   });
   const saved = await specialDietDayRepo.findById(createdId);
-  return { ...apiSuccess(SUCCESS.MEAL_SPECIAL_DIET_DRAFT_CREATED), plan: await hydratePlan(saved) };
+  const hydrated = await hydratePlan(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'CREATE',
+    displayAction: 'Tạo nháp chế độ ăn đặc biệt',
+    module: 'specialDiet',
+    targetEntityType: 'SpecialDietDay',
+    targetEntityId: createdId,
+    targetName: saved.title,
+    description: `Tạo nháp chế độ ăn đặc biệt ngày ${workDate}, ${entries.length} mục`,
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_SPECIAL_DIET_DRAFT_CREATED), plan: hydrated };
 };
 
-const updateDraft = async (id, body, actorUserId) => {
+const updateDraft = async (id, body, actorUserId, req = null) => {
   const day = await specialDietDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_SPECIAL_DIET_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') throw apiErr(CODES.MEAL_SPECIAL_DIET_DRAFT_ONLY_EDIT, { statusCode: 400 });
+
+  const beforeData = day.toObject ? day.toObject() : day;
 
   const updatePayload = {};
   if (body.workDate !== undefined) {
@@ -331,7 +349,23 @@ const updateDraft = async (id, body, actorUserId) => {
   });
 
   const saved = await specialDietDayRepo.findById(id);
-  return { ...apiSuccess(SUCCESS.MEAL_SPECIAL_DIET_DRAFT_UPDATED), plan: await hydratePlan(saved) };
+  const hydrated = await hydratePlan(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật nháp chế độ ăn đặc biệt',
+    module: 'specialDiet',
+    targetEntityType: 'SpecialDietDay',
+    targetEntityId: id,
+    targetName: saved.title,
+    description: `Cập nhật nháp chế độ ăn đặc biệt ID ${id}`,
+    beforeData,
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_SPECIAL_DIET_DRAFT_UPDATED), plan: hydrated };
 };
 
 const listPlans = async (filter = {}, options = {}) => {
@@ -362,12 +396,14 @@ const getPlan = async (id) => {
   return hydratePlan(day);
 };
 
-const deleteDraft = async (id, _userId) => {
+const deleteDraft = async (id, _userId, req = null) => {
   const day = await specialDietDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_SPECIAL_DIET_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') {
     throw apiErr(CODES.MEAL_SPECIAL_DIET_DRAFT_ONLY_DELETE, { statusCode: 400 });
   }
+
+  const beforeData = day.toObject ? day.toObject() : day;
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
@@ -375,10 +411,23 @@ const deleteDraft = async (id, _userId) => {
     await specialDietDayRepo.deleteById(id, dbOpts);
   });
 
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    action: 'DELETE',
+    displayAction: 'Xóa nháp chế độ ăn đặc biệt',
+    module: 'specialDiet',
+    targetEntityType: 'SpecialDietDay',
+    targetEntityId: id,
+    targetName: day.title,
+    description: `Xóa nháp chế độ ăn đặc biệt ID ${id}`,
+    beforeData,
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.MEAL_SPECIAL_DIET_DRAFT_DELETED), deleted: true, id };
 };
 
-const publishPlan = async (id, actorUserId) => {
+const publishPlan = async (id, actorUserId, req = null) => {
   const day = await specialDietDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_SPECIAL_DIET_NOT_FOUND, { statusCode: 404 });
   if (day.status === 'published') {
@@ -410,6 +459,8 @@ const publishPlan = async (id, actorUserId) => {
   await assertResidentsEligibleForSpecialDiet(residentIds);
   await assertNoPublishedSpecialDietConflicts(workDate, residentIds, id);
 
+  const beforeData = day.toObject ? day.toObject() : day;
+
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
     await specialDietDayRepo.updateById(
@@ -425,7 +476,23 @@ const publishPlan = async (id, actorUserId) => {
   });
 
   const saved = await specialDietDayRepo.findById(id);
-  return { ...apiSuccess(SUCCESS.MEAL_SPECIAL_DIET_PUBLISHED), plan: await hydratePlan(saved) };
+  const hydrated = await hydratePlan(saved);
+
+  await createAuditLog({
+    actorUserId,
+    action: 'UPDATE',
+    displayAction: 'Xuất bản chế độ ăn đặc biệt',
+    module: 'specialDiet',
+    targetEntityType: 'SpecialDietDay',
+    targetEntityId: id,
+    targetName: saved.title,
+    description: `Xuất bản chế độ ăn đặc biệt ID ${id}, ngày ${workDate}`,
+    beforeData,
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_SPECIAL_DIET_PUBLISHED), plan: hydrated };
 };
 
 module.exports = {

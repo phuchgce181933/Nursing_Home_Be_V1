@@ -5,6 +5,7 @@ const staffProfileRepo = require('../repositories/staffProfileRepository');
 const userRepo = require('../repositories/userRepository');
 const guestMessageStore = require('../utils/guestMessageStore');
 const { validateEmail, validatePhone, escapeRegex } = require('../utils/validators');
+const { createAuditLog } = require('../utils/auditLog');
 
 const residentRepo = require('../repositories/residentRepository');
 
@@ -55,7 +56,7 @@ const getCareTeam = async (user) => {
   return getCareTeamForFamily(user._id);
 };
 
-const createConversation = async ({ body, user }) => {
+const createConversation = async ({ body, user, req }) => {
   const { familyAccountId, participantUserIds = [], subject, targetUserId } = body;
 
   if (user.role === 'family') {
@@ -84,6 +85,21 @@ const createConversation = async ({ body, user }) => {
         ),
         subject,
       });
+
+      await createAuditLog({
+        actorUserId: user._id,
+        actorRole: user.role,
+        action: 'CREATE_CONVERSATION',
+        displayAction: 'Tạo cuộc trò chuyện',
+        module: 'conversation',
+        businessModule: 'conversation',
+        targetEntityType: 'Conversation',
+        targetEntityId: conversation._id,
+        targetName: conversation.subject || 'Cuộc trò chuyện gia đình',
+        description: `Tạo cuộc trò chuyện${conversation.subject ? ` về "${conversation.subject}"` : ''}`,
+        afterData: { familyAccountId: String(famId), subject: conversation.subject, participantCount: conversation.participantUserIds?.length },
+        req,
+      });
     }
     return conversation;
   }
@@ -105,6 +121,21 @@ const createConversation = async ({ body, user }) => {
         participantUserIds: [user._id, targetUserId],
         subject,
       });
+
+      await createAuditLog({
+        actorUserId: user._id,
+        actorRole: user.role,
+        action: 'CREATE_CONVERSATION',
+        displayAction: 'Tạo cuộc trò chuyện',
+        module: 'conversation',
+        businessModule: 'conversation',
+        targetEntityType: 'Conversation',
+        targetEntityId: conversation._id,
+        targetName: conversation.subject || 'Cuộc trò chuyện nhân viên',
+        description: `Tạo cuộc trò chuyện${conversation.subject ? ` về "${conversation.subject}"` : ''}`,
+        afterData: { targetUserId: String(targetUserId), subject: conversation.subject },
+        req,
+      });
     }
     return conversation;
   }
@@ -118,6 +149,21 @@ const createConversation = async ({ body, user }) => {
       participantUserIds: Array.from(new Set([String(user._id), ...(Array.isArray(participantUserIds) ? participantUserIds : []).map(String)])),
       subject,
     });
+
+    await createAuditLog({
+      actorUserId: user._id,
+      actorRole: user.role,
+      action: 'CREATE_CONVERSATION',
+      displayAction: 'Tạo cuộc trò chuyện',
+      module: 'conversation',
+      businessModule: 'conversation',
+      targetEntityType: 'Conversation',
+      targetEntityId: conversation._id,
+      targetName: conversation.subject || 'Cuộc trò chuyện',
+      description: `Tạo cuộc trò chuyện${conversation.subject ? ` về "${conversation.subject}"` : ''}`,
+      afterData: { familyAccountId: String(familyAccountId), subject: conversation.subject, participantCount: conversation.participantUserIds?.length },
+      req,
+    });
   }
   return conversation;
 };
@@ -129,7 +175,7 @@ const getStaffDirectory = async (userId) => {
   );
 };
 
-const createGuestConversation = async ({ body }) => {
+const createGuestConversation = async ({ body, req }) => {
   const { guestName, guestEmail, guestPhone, subject, content, attachments = [] } = body;
   if (!guestName) throw new ServiceError('guestName là bắt buộc', 400);
   if (!guestEmail && !guestPhone) throw new ServiceError('guestEmail hoặc guestPhone là bắt buộc', 400);
@@ -165,10 +211,25 @@ const createGuestConversation = async ({ body }) => {
     await conversationRepo.saveDoc(conversation);
   }
 
+  await createAuditLog({
+    actorUserId: null,
+    actorRole: 'guest',
+    action: 'CREATE_GUEST_CONVERSATION',
+    displayAction: 'Tạo cuộc trò chuyện khách',
+    module: 'conversation',
+    businessModule: 'conversation',
+    targetEntityType: 'Conversation',
+    targetEntityId: conversation._id,
+    targetName: conversation.subject || `Khách: ${guestName}`,
+    description: `Tạo cuộc trò chuyện khách với "${guestName}"${conversation.subject ? ` về "${conversation.subject}"` : ''}`,
+    afterData: { guestName, guestEmail: guestEmail || null, subject: conversation.subject },
+    req,
+  });
+
   return { conversation, message };
 };
 
-const createGuestMessage = async ({ conversationId, body }) => {
+const createGuestMessage = async ({ conversationId, body, req }) => {
   const { content, attachments = [], guestName, guestEmail, guestPhone } = body;
   const hasContent = typeof content === 'string' && content.trim().length > 0;
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
@@ -189,6 +250,20 @@ const createGuestMessage = async ({ conversationId, body }) => {
   const message = guestMessageStore.addMessage(conversation._id, msgObj);
   conversation.lastMessageAt = message.sentAt || new Date();
   await conversationRepo.saveDoc(conversation);
+
+  await createAuditLog({
+    actorUserId: null,
+    actorRole: 'guest',
+    action: 'CREATE_GUEST_MESSAGE',
+    displayAction: 'Gửi tin nhắn khách',
+    module: 'conversation',
+    businessModule: 'conversation',
+    targetEntityType: 'Conversation',
+    targetEntityId: conversation._id,
+    description: `Gửi tin nhắn khách vào cuộc trò chuyện`,
+    afterData: { conversationId: String(conversation._id), guestName: guestName || conversation.guestName },
+    req,
+  });
 
   return { conversation, message };
 };
@@ -221,7 +296,7 @@ const getGuestMessages = async ({ conversationId, page = 1, limit = 50 }) => {
   return { items, page, limit, total: all.length };
 };
 
-const createMessage = async ({ conversationId, body, user }) => {
+const createMessage = async ({ conversationId, body, user, req }) => {
   const { content, attachments = [], participantUserIds = [] } = body;
   const hasContent = typeof content === 'string' && content.trim().length > 0;
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
@@ -243,6 +318,21 @@ const createMessage = async ({ conversationId, body, user }) => {
   conversation.participantUserIds = Array.from(participants);
   conversation.lastMessageAt = message.sentAt || message.createdAt || new Date();
   await conversationRepo.saveDoc(conversation);
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'CREATE_MESSAGE',
+    displayAction: 'Gửi tin nhắn',
+    module: 'conversation',
+    businessModule: 'conversation',
+    targetEntityType: 'Conversation',
+    targetEntityId: conversation._id,
+    targetName: conversation.subject || 'Cuộc trò chuyện',
+    description: `Gửi tin nhắn trong cuộc trò chuyện`,
+    afterData: { conversationId: String(conversation._id), messageId: String(message._id) },
+    req,
+  });
 
   return { conversation, message };
 };
@@ -281,7 +371,7 @@ const listConversations = async ({ user }) => {
   return conversations.map((c) => ({ ...c, unreadCount: unreadCounts.get(String(c._id)) || 0 }));
 };
 
-const markMessagesRead = async ({ conversationId, user }) => {
+const markMessagesRead = async ({ conversationId, user, req }) => {
   const conversation = await conversationRepo.findById(conversationId);
   if (!conversation) throw new ServiceError('Không tìm thấy cuộc trò chuyện', 404);
   if (!assertConversationAccess(user, conversation)) throw new ServiceError('Truy cập bị từ chối', 403);
@@ -290,6 +380,20 @@ const markMessagesRead = async ({ conversationId, user }) => {
     { conversationId: conversation._id, senderUserId: { $ne: user._id } },
     { $addToSet: { readByUserIds: user._id } }
   );
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'MARK_MESSAGES_READ',
+    displayAction: 'Đánh dấu tin nhắn đã đọc',
+    module: 'conversation',
+    businessModule: 'conversation',
+    targetEntityType: 'Conversation',
+    targetEntityId: conversation._id,
+    description: `Đánh dấu tin nhắn đã đọc trong cuộc trò chuyện`,
+    afterData: { conversationId: String(conversation._id) },
+    req,
+  });
 };
 
 const getConversationDetail = async ({ conversationId, user }) => {
@@ -436,7 +540,7 @@ const searchMessages = async ({ user, q, conversationId, page = 1, limit = 50 })
   return { items, page, limit, total };
 };
 
-const deleteConversation = async ({ conversationId, user }) => {
+const deleteConversation = async ({ conversationId, user, req }) => {
   const conversation = await conversationRepo.findById(conversationId);
   if (!conversation) throw new ServiceError('Không tìm thấy cuộc trò chuyện', 404);
   if (!assertConversationAccess(user, conversation)) throw new ServiceError('Truy cập bị từ chối', 403);
@@ -444,6 +548,22 @@ const deleteConversation = async ({ conversationId, user }) => {
   await messageRepo.deleteByConversation(conversation._id);
   try { guestMessageStore.clearConversation(conversationId); } catch (e) {}
   await conversationRepo.deleteById(conversation._id);
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'DELETE_CONVERSATION',
+    displayAction: 'Xóa cuộc trò chuyện',
+    module: 'conversation',
+    businessModule: 'conversation',
+    targetEntityType: 'Conversation',
+    targetEntityId: conversation._id,
+    targetName: conversation.subject || 'Cuộc trò chuyện',
+    description: `Xóa cuộc trò chuyện${conversation.subject ? ` "${conversation.subject}"` : ''}`,
+    beforeData: { subject: conversation.subject, isGuest: conversation.isGuest },
+    req,
+  });
+
   return conversation;
 };
 

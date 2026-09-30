@@ -1,5 +1,6 @@
 const ServiceError = require('./serviceError');
 const clinicalServiceRepo = require('../repositories/clinicalServiceRepository');
+const { createAuditLog } = require('../utils/auditLog');
 
 const validateFieldThresholds = (field) => {
   if (!field || field.type !== 'NUMBER') return null;
@@ -73,34 +74,109 @@ const getService = async (id) => {
   return svc;
 };
 
-const createService = async (body) => {
+const createService = async (body, req) => {
   if (Array.isArray(body.fields)) {
     for (const field of body.fields) {
       const error = validateFieldThresholds(field);
       if (error) throw new ServiceError(error, 400);
     }
   }
-  return clinicalServiceRepo.create(body);
-};
+  const svc = await clinicalServiceRepo.create(body);
 
-const updateService = async (id, body) => {
-  const svc = await clinicalServiceRepo.findById(id);
-  if (!svc) throw new ServiceError('Không tìm thấy dịch vụ', 404);
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'CREATE_CLINICAL_SERVICE',
+    displayAction: 'Tạo dịch vụ lâm sàng',
+    module: 'clinicalService',
+    businessModule: 'clinicalService',
+    targetEntityType: 'ClinicalService',
+    targetEntityId: svc._id,
+    targetName: svc.serviceName,
+    description: `Tạo dịch vụ lâm sàng "${svc.serviceName}"`,
+    afterData: {
+      serviceCode: svc.serviceCode,
+      serviceName: svc.serviceName,
+      category: svc.category,
+      description: svc.description,
+      unitPrice: svc.unitPrice,
+      active: svc.active,
+      fields: svc.fields,
+    },
+    req,
+  });
 
-  if (Array.isArray(body.fields)) {
-    for (const field of body.fields) {
-      const error = validateFieldThresholds(field);
-      if (error) throw new ServiceError(error, 400);
-    }
-  }
-  Object.assign(svc, body);
-  await clinicalServiceRepo.saveDoc(svc);
   return svc;
 };
 
-const deleteService = async (id) => {
+const updateService = async (id, body, req) => {
   const svc = await clinicalServiceRepo.findById(id);
   if (!svc) throw new ServiceError('Không tìm thấy dịch vụ', 404);
+
+  if (Array.isArray(body.fields)) {
+    for (const field of body.fields) {
+      const error = validateFieldThresholds(field);
+      if (error) throw new ServiceError(error, 400);
+    }
+  }
+  const beforeData = {
+    serviceCode: svc.serviceCode,
+    serviceName: svc.serviceName,
+    category: svc.category,
+    description: svc.description,
+    unitPrice: svc.unitPrice,
+    active: svc.active,
+    fields: svc.fields,
+  };
+  Object.assign(svc, body);
+  await clinicalServiceRepo.saveDoc(svc);
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'UPDATE_CLINICAL_SERVICE',
+    displayAction: 'Cập nhật dịch vụ lâm sàng',
+    module: 'clinicalService',
+    businessModule: 'clinicalService',
+    targetEntityType: 'ClinicalService',
+    targetEntityId: svc._id,
+    targetName: svc.serviceName,
+    description: `Cập nhật dịch vụ lâm sàng "${svc.serviceName}"`,
+    beforeData,
+    afterData: {
+      serviceCode: svc.serviceCode,
+      serviceName: svc.serviceName,
+      category: svc.category,
+      description: svc.description,
+      unitPrice: svc.unitPrice,
+      active: svc.active,
+      fields: svc.fields,
+    },
+    req,
+  });
+
+  return svc;
+};
+
+const deleteService = async (id, req) => {
+  const svc = await clinicalServiceRepo.findById(id);
+  if (!svc) throw new ServiceError('Không tìm thấy dịch vụ', 404);
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    actorRole: req?.user?.role,
+    action: 'DELETE_CLINICAL_SERVICE',
+    displayAction: 'Xóa dịch vụ lâm sàng',
+    module: 'clinicalService',
+    businessModule: 'clinicalService',
+    targetEntityType: 'ClinicalService',
+    targetEntityId: svc._id,
+    targetName: svc.serviceName,
+    description: `Xóa (deactivate) dịch vụ lâm sàng "${svc.serviceName}"`,
+    beforeData: { serviceName: svc.serviceName, active: svc.active },
+    req,
+  });
+
   svc.active = false;
   await clinicalServiceRepo.saveDoc(svc);
 };

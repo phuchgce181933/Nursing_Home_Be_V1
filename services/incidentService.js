@@ -9,6 +9,7 @@ const notificationService = require('./notificationService');
 const mailService = require('./mailService');
 const ServiceError = require('./serviceError');
 const { ensureStaffProfileForUser } = require('./staffProfileBootstrap');
+const { createAuditLog } = require('../utils/auditLog');
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -199,13 +200,33 @@ const normalizeAssignedStaffIds = (assignedStaffIds) => {
   return [assignedStaffIds];
 };
 
+const extractObjectIdValue = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string' || value instanceof mongoose.Types.ObjectId) return String(value);
+  return value._id || value.id || value.staffProfile?._id || value.staffProfile?.id || value.userId?._id || value.userId?.id || value.userId || null;
+};
+
 const convertUserIdsToStaffProfileIds = async (userIds) => {
   if (!userIds || !Array.isArray(userIds) || userIds.length === 0) return [];
 
   try {
     const normalizedIds = userIds
-      .map((value) => value?._id || value?.id || value)
+      .map(extractObjectIdValue)
       .filter(Boolean);
+
+    const invalidId = normalizedIds.find((id) => !mongoose.Types.ObjectId.isValid(String(id)));
+    if (invalidId) {
+      throw new ServiceError('ID người xử lý không hợp lệ', 400);
+    }
+
+    if (normalizedIds.length !== userIds.length) {
+      throw new ServiceError('ID người xử lý không hợp lệ', 400);
+    }
+
+    const users = await userRepo.findByIdsWithSelect(normalizedIds.map(String), '_id role');
+    if (users.some((user) => String(user.role || '').toLowerCase() === 'family')) {
+      throw new ServiceError('Không thể chỉ định người có role gia đình xử lý sự cố', 400);
+    }
 
     const profiles = [];
     for (const id of normalizedIds) {
@@ -221,6 +242,7 @@ const convertUserIdsToStaffProfileIds = async (userIds) => {
     return uniqueProfiles.map((profile) => profile._id);
   } catch (err) {
     console.error('[ERROR] convertUserIdsToStaffProfileIds failed:', err.message);
+    if (err instanceof ServiceError) throw err;
     return [];
   }
 };
@@ -290,8 +312,13 @@ const getAssignmentConflictsForStaff = async ({ incidentAt, residentIds = [], st
   const incidentMinutes = incidentDate.getHours() * 60 + incidentDate.getMinutes();
   const residentIdList = normalizeResidentIds(residentIds).filter(Boolean);
   const residentObjectIds = residentIdList
-    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => id?._id || id?.id || id)
+    .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
     .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+  if (!mongoose.Types.ObjectId.isValid(String(staffProfileId))) {
+    throw new ServiceError('ID hồ sơ nhân viên xử lý không hợp lệ', 400);
+  }
 
   const careTasks = await careTaskRepo.findByFilter({
     staffProfileId: new mongoose.Types.ObjectId(String(staffProfileId)),
@@ -602,7 +629,7 @@ const notifyIncident = async (incident, options = {}) => {
         deliveryChannels: ['in_app'],
       }));
 
-      await notificationRepo.insertMany(adminNotificationDocs);
+      await notificationService.createMany(adminNotificationDocs);
     }
   }
 
@@ -625,7 +652,7 @@ const assertMaxLength = (value, fieldName, max = MAX_TEXT_LENGTH) => {
   }
 };
 
-const createIncident = async (currentUser, payload) => {
+const createIncident = async (currentUser, payload, req = null) => {
   console.log('[DEBUG] === START createIncident ===');
   console.log('[DEBUG] currentUser:', { _id: currentUser._id, role: currentUser.role, email: currentUser.email });
   console.log('[DEBUG] payload:', { incidentType: payload?.incidentType, description: payload?.description?.substring(0, 50), residentIds: payload?.residentIds, residentId: payload?.residentId });
@@ -633,6 +660,7 @@ const createIncident = async (currentUser, payload) => {
   if (!payload?.incidentType?.trim()) throw new ServiceError('incidentType là bắt buộc', 400);
   if (!payload?.description?.trim()) throw new ServiceError('description là bắt buộc', 400);
   if (!payload?.incidentAt) throw new ServiceError('incidentAt là bắt buộc', 400);
+  if (!payload?.location?.trim()) throw new ServiceError('location là bắt buộc', 400);
 
   const incidentAtDate = new Date(payload.incidentAt);
   if (Number.isNaN(incidentAtDate.getTime())) {
@@ -712,7 +740,7 @@ const createIncident = async (currentUser, payload) => {
     incidentType: payload.incidentType.trim(),
     severity: payload.severity || 'medium',
     incidentAt: incidentAtDate,
-    location: payload.location?.trim() || '',
+    location: payload.location.trim(),
     description: payload.description.trim(),
     status: 'open',
     assignedStaffIds: assignedStaffProfileIds,
@@ -759,6 +787,68 @@ const createIncident = async (currentUser, payload) => {
       notifyAdmin: ['doctor', 'nurse', 'caregiver'].includes(String(currentUser.role || '').toLowerCase()),
     });
 
+  // Normalize residentIds / assignedStaffIds to plain string IDs so the audit log
+  // always stores clean references (no populated objects leaking through).
+  const normalizedResidentIds = Array.isArray(createdIncident.residentIds)
+    ? createdIncident.residentIds
+        .map((entry) => {
+          if (!entry) return null;
+          if (typeof entry === 'string') return entry;
+          // For populated Mongoose docs, _id is an ObjectId; stringify it.
+          const id = entry._id ?? entry.id;
+          return id ? String(id) : null;
+        })
+        .filter(Boolean)
+    : [];
+  const normalizedAssignedStaffIds = Array.isArray(createdIncident.assignedStaffIds)
+    ? createdIncident.assignedStaffIds
+        .map((entry) => {
+          if (!entry) return null;
+          if (typeof entry === 'string') return entry;
+          const id = entry._id ?? entry.id;
+          return id ? String(id) : null;
+        })
+        .filter(Boolean)
+    : [];
+
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'CREATE_INCIDENT',
+    displayAction: 'Báo cáo sự cố mới',
+    module: 'incident',
+    businessModule: 'incident',
+    targetEntityType: 'Incident',
+    targetEntityId: createdIncident._id,
+    targetName: `${createdIncident.incidentType}${firstResidentName ? ` - ${firstResidentName}` : ''}`,
+    description: `${currentUser.fullName || currentUser.email || 'Nhân viên'} đã báo cáo sự cố "${createdIncident.incidentType}"`,
+    beforeData: null,
+    afterData: {
+      incidentType: createdIncident.incidentType,
+      severity: createdIncident.severity,
+      status: createdIncident.status,
+      incidentAt: createdIncident.incidentAt,
+      location: createdIncident.location,
+      description: createdIncident.description,
+      residentIds: normalizedResidentIds,
+      assignedStaffIds: normalizedAssignedStaffIds,
+    },
+    metadata: {
+      event: 'create',
+      assignedStaffNames,
+      residentNames: Array.isArray(createdIncident.residentIds)
+        ? createdIncident.residentIds
+            .map((entry) => {
+              const id = entry?._id ? String(entry._id) : (typeof entry === 'string' ? entry : null);
+              const name = entry?.fullName || entry?.residentCode;
+              return id && name ? { id, name } : null;
+            })
+            .filter(Boolean)
+        : [],
+    },
+    req,
+  });
+
     console.log('[DEBUG] === END createIncident - SUCCESS ===');
     return createdIncident;
   } catch (error) {
@@ -797,7 +887,7 @@ const getIncident = async (currentUser, id) => {
   return incident;
 };
 
-const updateIncidentStatus = async (currentUser, id, payload) => {
+const updateIncidentStatus = async (currentUser, id, payload, req = null) => {
   validateStatus(payload.status);
 
   const existing = await incidentRepo.findById(id);
@@ -825,6 +915,23 @@ const updateIncidentStatus = async (currentUser, id, payload) => {
 
   const updated = await incidentRepo.updateById(id, { status: payload.status });
 
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'UPDATE_INCIDENT_STATUS',
+    displayAction: 'Cập nhật trạng thái sự cố',
+    module: 'incident',
+    businessModule: 'incident',
+    targetEntityType: 'Incident',
+    targetEntityId: updated._id,
+    targetName: updated.incidentType,
+    description: `${currentUser.fullName || currentUser.email || 'Người dùng'} đã chuyển trạng thái sự cố "${updated.incidentType}" từ "${getStatusLabel(existing.status)}" sang "${getStatusLabel(updated.status)}"`,
+    beforeData: { status: existing.status },
+    afterData: { status: updated.status },
+    metadata: { previousStatus: existing.status, newStatus: updated.status },
+    req,
+  });
+
   await notifyIncident(updated, {
     title: 'Cập nhật trạng thái sự cố',
     content: `Trạng thái sự cố ${updated.incidentType} đã được cập nhật thành ${getStatusLabel(updated.status)}.`,
@@ -844,7 +951,7 @@ const exportIncidents = async (currentUser, query) => {
   };
 };
 
-const assignHandlers = async (currentUser, id, payload) => {
+const assignHandlers = async (currentUser, id, payload, req = null) => {
   // Only admin can assign handlers
   if (!currentUser || currentUser.role !== 'admin') {
     throw new ServiceError('Chỉ quản trị viên mới có thể chỉ định người xử lý', 403);
@@ -883,6 +990,62 @@ const assignHandlers = async (currentUser, id, payload) => {
   }
 
   const updated = await incidentRepo.updateById(id, { assignedStaffIds: staffProfileIds });
+  const assignedStaffNames = Array.isArray(updated.assignedStaffIds)
+    ? updated.assignedStaffIds
+        .map((entry) => entry?.userId?.fullName || entry?.userId?.email || entry?.fullName || entry?.email)
+        .filter(Boolean)
+        .join(', ')
+    : '';
+
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'ASSIGN_INCIDENT_HANDLERS',
+    displayAction: 'Phân công người xử lý sự cố',
+    module: 'incident',
+    businessModule: 'incident',
+    targetEntityType: 'Incident',
+    targetEntityId: updated._id,
+    targetName: updated.incidentType,
+    description: `${currentUser.fullName || 'Quản trị viên'} đã chỉ định người xử lý cho sự cố "${updated.incidentType}"`,
+    beforeData: {
+      assignedStaffIds: Array.isArray(existing.assignedStaffIds)
+        ? existing.assignedStaffIds.map((entry) => {
+            if (!entry) return null;
+            if (typeof entry === 'string') return entry;
+            const id = entry._id ?? entry.id;
+            return id ? String(id) : null;
+          }).filter(Boolean)
+        : [],
+    },
+    afterData: {
+      assignedStaffIds: staffProfileIds.map((id) => String(id)),
+    },
+    metadata: {
+      handlerCount: staffProfileIds.length,
+      assignedStaffNames,
+      assignedStaffNameList: Array.isArray(updated.assignedStaffIds)
+        ? updated.assignedStaffIds
+            .map((entry) => {
+              const id = entry?._id ? String(entry._id) : (typeof entry === 'string' ? entry : null);
+              const userObj = entry?.userId;
+              const name = userObj?.fullName || entry?.fullName || userObj?.email;
+              return id && name ? { id, name } : null;
+            })
+            .filter(Boolean)
+        : [],
+      residentNames: Array.isArray(existing.residentIds)
+        ? existing.residentIds
+            .map((entry) => {
+              const id = entry?._id ? String(entry._id) : (typeof entry === 'string' ? entry : null);
+              const name = entry?.fullName || entry?.residentCode;
+              return id && name ? { id, name } : null;
+            })
+            .filter(Boolean)
+        : [],
+    },
+    req,
+  });
 
   await notifyIncident(updated, {
     title: 'Được chỉ định xử lý sự cố',
@@ -894,7 +1057,7 @@ const assignHandlers = async (currentUser, id, payload) => {
   return updated;
 };
 
-const updateIncidentResolution = async (currentUser, id, payload = {}, files = []) => {
+const updateIncidentResolution = async (currentUser, id, payload = {}, files = [], req = null) => {
   const existing = await incidentRepo.findById(id);
   if (!existing) throw new ServiceError('Không tìm thấy sự cố', 404);
 
@@ -920,8 +1083,19 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
 
   // immediateActions may come as comma-separated string or array
   if (payload.immediateActions) {
-    if (Array.isArray(payload.immediateActions)) resolution.immediateActions = payload.immediateActions;
-    else resolution.immediateActions = String(payload.immediateActions).split(',').map((s) => s.trim()).filter(Boolean);
+    if (Array.isArray(payload.immediateActions)) {
+      resolution.immediateActions = payload.immediateActions;
+    } else {
+      const rawImmediateActions = String(payload.immediateActions).trim();
+      try {
+        const parsedImmediateActions = JSON.parse(rawImmediateActions);
+        resolution.immediateActions = Array.isArray(parsedImmediateActions)
+          ? parsedImmediateActions.map((item) => String(item).trim()).filter(Boolean)
+          : rawImmediateActions.split(',').map((s) => s.trim()).filter(Boolean);
+      } catch {
+        resolution.immediateActions = rawImmediateActions.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
   }
 
   // medical medications may be JSON encoded
@@ -990,10 +1164,43 @@ const updateIncidentResolution = async (currentUser, id, payload = {}, files = [
       smsMessage: `Sự cố ${updated.incidentType} đã được giải quyết.`,
     });
   }
+
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'UPDATE_INCIDENT_RESOLUTION',
+    displayAction: 'Cập nhật thông tin giải quyết sự cố',
+    module: 'incident',
+    businessModule: 'incident',
+    targetEntityType: 'Incident',
+    targetEntityId: updated._id,
+    targetName: updated.incidentType,
+    description: action === 'markResolved'
+      ? `${currentUser.fullName || 'Người dùng'} đã đánh dấu sự cố "${updated.incidentType}" là đã giải quyết`
+      : `${currentUser.fullName || 'Người dùng'} đã cập nhật thông tin giải quyết sự cố "${updated.incidentType}"`,
+    beforeData: {
+      status: existing.status,
+      resolutionMethod: existing.resolution?.method,
+      resolutionRootCause: existing.resolution?.rootCause,
+      resolutionSeverityAssessment: existing.resolution?.severityAssessment,
+      hasAttachments: (existing.resolution?.attachments || []).length,
+    },
+    afterData: {
+      status: updated.status,
+      resolutionMethod: updated.resolution?.method,
+      resolutionRootCause: updated.resolution?.rootCause,
+      resolutionSeverityAssessment: updated.resolution?.severityAssessment,
+      hasAttachments: (updated.resolution?.attachments || []).length,
+      attachmentsAdded: attachments.length,
+    },
+    metadata: { event: action || 'update_resolution' },
+    req,
+  });
+
   return updated;
 };
 
-const reopenIncident = async (currentUser, id, payload) => {
+const reopenIncident = async (currentUser, id, payload, req = null) => {
   const existing = await incidentRepo.findById(id);
   if (!existing) throw new ServiceError('Không tìm thấy sự cố', 404);
 
@@ -1013,6 +1220,43 @@ const reopenIncident = async (currentUser, id, payload) => {
   }
 
   const updated = await incidentRepo.updateById(id, updateData);
+
+  await createAuditLog({
+    actorUserId: currentUser._id,
+    actorRole: currentUser.role,
+    action: 'REOPEN_INCIDENT',
+    displayAction: 'Mở lại sự cố',
+    module: 'incident',
+    businessModule: 'incident',
+    targetEntityType: 'Incident',
+    targetEntityId: updated._id,
+    targetName: updated.incidentType,
+    description: `${currentUser.fullName || 'Người dùng'} đã mở lại sự cố "${updated.incidentType}" để xử lý tiếp`,
+    beforeData: {
+      status: existing.status,
+      assignedStaffIds: Array.isArray(existing.assignedStaffIds)
+        ? existing.assignedStaffIds.map((entry) => {
+            if (!entry) return null;
+            if (typeof entry === 'string') return entry;
+            const id = entry._id ?? entry.id;
+            return id ? String(id) : null;
+          }).filter(Boolean)
+        : [],
+    },
+    afterData: {
+      status: updated.status,
+      assignedStaffIds: Array.isArray(updateData.assignedStaffIds)
+        ? updateData.assignedStaffIds.map((entry) => {
+            if (!entry) return null;
+            if (typeof entry === 'string') return entry;
+            const id = entry._id ?? entry.id;
+            return id ? String(id) : null;
+          }).filter(Boolean)
+        : [],
+    },
+    metadata: { event: 'reopen' },
+    req,
+  });
 
   await notifyIncident(updated, {
     title: 'Sự cố được mở lại',

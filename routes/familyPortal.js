@@ -5,9 +5,14 @@ const {
   getResident,
   getResidentBillingSummary,
   getResidentInvoices,
+  getPaymentHistory,
   getInvoicePaymentUrl,
+  createInvoicePayosCheckout,
+  verifyInvoicePayos,
   getInvoiceDetail,
   getWalletBalance,
+  getWalletTransactions,
+  getWalletTransactionDetail,
   generateWalletTopupUrl,
   confirmWalletTopup,
   verifyWalletTopup,
@@ -17,6 +22,8 @@ const {
   getHealthChart,
   getCareNotes,
   getMedications,
+  getMedicationHistory,
+  getDailyMedicationSchedule,
   getPrescriptions,
   getActivities,
   getCareAppointments,
@@ -117,6 +124,30 @@ router.get('/residents/:residentId/billing-summary', getResidentBillingSummary);
 
 /**
  * @swagger
+ * /api/family/residents/{residentId}/payment-history:
+ *   get:
+ *     summary: Get payment history for a resident — wallet topups and paid invoices
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Payment history with wallet topups and invoice payments
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Resident not found
+ */
+router.get('/residents/:residentId/payment-history', getPaymentHistory);
+
+/**
+ * @swagger
  * /api/family/residents/{residentId}/invoices:
  *   get:
  *     summary: Get invoices for a resident
@@ -177,6 +208,10 @@ router.get('/residents/:residentId/invoices', getResidentInvoices);
  *         description: Invoice not found
  */
 router.get('/residents/:residentId/invoices/:invoiceId/payment-url', getInvoicePaymentUrl);
+
+// PayOS QR trong app (song song với nạp ví): tạo checkout JSON + xác thực server-to-server.
+router.post('/residents/:residentId/invoices/:invoiceId/payos', createInvoicePayosCheckout);
+router.post('/residents/:residentId/invoices/:invoiceId/payos/verify', verifyInvoicePayos);
 
 /**
  * @swagger
@@ -287,6 +322,40 @@ router.post('/wallet/topup', generateWalletTopupUrl);
  */
 router.post('/wallet/topup/confirm', confirmWalletTopup);
 router.post('/wallet/topup/verify', verifyWalletTopup);
+
+/**
+ * @swagger
+ * /api/family/wallet/transactions:
+ *   get:
+ *     summary: Unified financial transaction history for the logged-in family account
+ *     description: >
+ *       Returns every financial movement belonging to the authenticated family account:
+ *       PayOS wallet top-ups, wallet invoice payments, refunds, and invoices settled
+ *       directly through PayOS. Scope comes from the session user only — no userId
+ *       parameter is accepted, so one family can never read another family's ledger.
+ *     tags: [Family Portal]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema: { type: string }
+ *         description: Comma-separated subset of topup,payment,refund
+ *       - in: query
+ *         name: status
+ *         schema: { type: string }
+ *         description: Comma-separated subset of pending,completed,failed
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20, maximum: 100 }
+ *     responses:
+ *       200:
+ *         description: Paginated ledger plus a wallet summary
+ */
+router.get('/wallet/transactions', getWalletTransactions);
+router.get('/wallet/transactions/:transactionId', getWalletTransactionDetail);
 
 /**
  * Wallet payment with OTP
@@ -527,6 +596,69 @@ router.get('/residents/:residentId/care-notes', getCareNotes);
  *         description: Access denied
  */
 router.get('/residents/:residentId/medications', getMedications);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/medication-history:
+ *   get:
+ *     summary: Get medication administration history with compliance stats for a resident
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter scheduledTime >= from
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter scheduledTime <= to
+ *     responses:
+ *       200:
+ *         description: Medication history with compliance stats
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/medication-history', getMedicationHistory);
+
+/**
+ * @swagger
+ * /api/family/residents/{residentId}/daily-medication-schedule:
+ *   get:
+ *     summary: Get daily medication schedule for a resident (today's doses)
+ *     tags: [Family Portal]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: residentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *           example: "2024-06-04"
+ *         description: Single date (YYYY-MM-DD). Defaults to today.
+ *     responses:
+ *       200:
+ *         description: Daily medication schedule with doses
+ *       403:
+ *         description: Access denied
+ */
+router.get('/residents/:residentId/daily-medication-schedule', getDailyMedicationSchedule);
 
 /**
  * @swagger

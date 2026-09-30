@@ -21,7 +21,7 @@ const getInvoice = async (req, res) => {
 
 const createMonthlyInvoice = async (req, res) => {
   try {
-    const data = await invoiceService.createMonthlyInvoice(req.body);
+    const data = await invoiceService.createMonthlyInvoice(req.body, req);
     return res.json({ success: true, data });
   } catch (err) {
     return sendApiError(res, err);
@@ -30,7 +30,7 @@ const createMonthlyInvoice = async (req, res) => {
 
 const markPaid = async (req, res) => {
   try {
-    const data = await invoiceService.markPaid(req.params.id);
+    const data = await invoiceService.markPaid(req.params.id, req);
     return res.json({ success: true, data });
   } catch (err) {
     return sendApiError(res, err);

@@ -4,6 +4,7 @@ const hygieneActivityRepo = require('../repositories/hygieneActivityRecordReposi
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const residentRepo = require('../repositories/residentRepository');
 const assignedResidentService = require('./assignedResidentService');
+const { createAuditLog } = require('../utils/auditLog');
 const {
   HYGIENE_CATEGORIES,
   HYGIENE_ACTIVITY_TYPES,
@@ -25,6 +26,17 @@ const CATEGORY_BY_TYPE = {
   bathroom_clean: 'environment',
   linen_change: 'environment',
   laundry: 'environment',
+};
+const ACTIVITY_TYPE_LABELS = {
+  bathing: 'Tắm rửa',
+  oral_care: 'Vệ sinh răng miệng',
+  grooming: 'Chải chuốt',
+  toileting: 'Đi vệ sinh',
+  diaper_change: 'Thay tã',
+  room_tidy: 'Dọn phòng',
+  bathroom_clean: 'Vệ sinh phòng tắm',
+  linen_change: 'Thay ga giường',
+  laundry: 'Giặt đồ',
 };
 
 const parseWorkDateStrict = (workDate) => {
@@ -211,11 +223,11 @@ const listRecordsForAdmin = async (query) => {
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 };
 
-const createRecord = async (userId, body) => {
+const createRecord = async (userId, body, req = null) => {
   validatePayload(body, false);
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
-  await assertResidentAssigned(profile, body.residentId);
+  const resident = await assertResidentAssigned(profile, body.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDate,
@@ -233,6 +245,7 @@ const createRecord = async (userId, body) => {
   }
 
   const activityCategory = CATEGORY_BY_TYPE[body.activityType];
+  const activityTypeLabel = ACTIVITY_TYPE_LABELS[body.activityType] || body.activityType;
   const record = await hygieneActivityRepo.create({
     residentId: body.residentId,
     workDate: workDateDate,
@@ -244,7 +257,25 @@ const createRecord = async (userId, body) => {
     recordedAt: new Date(),
   });
 
-  return hygieneActivityRepo.findById(record._id);
+  const saved = await hygieneActivityRepo.findById(record._id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'CREATE',
+    displayAction: 'Tạo bản ghi vệ sinh cá nhân',
+    module: 'hygieneActivity',
+    targetEntityType: 'HygieneActivityRecord',
+    targetEntityId: saved._id,
+    targetName: `${activityTypeLabel} - ${workDate}`,
+    description: `Tạo bản ghi vệ sinh cá nhân cho cư dân ${resident.fullName}, loại: ${activityTypeLabel}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
+    afterData: saved,
+    req,
+  });
+
+  return saved;
 };
 
 const assertAuthor = (record, profile) => {
@@ -261,12 +292,12 @@ const getRecord = async (userId, id) => {
   return record;
 };
 
-const updateRecord = async (userId, id, body) => {
+const updateRecord = async (userId, id, body, req = null) => {
   const record = await hygieneActivityRepo.findById(id);
   if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
-  await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  const resident = await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDateToVNString(record.workDate),
@@ -277,22 +308,64 @@ const updateRecord = async (userId, id, body) => {
   const update = {};
   if (body.completionStatus !== undefined) update.completionStatus = body.completionStatus;
   if (body.notes !== undefined) update.notes = body.notes?.trim() || undefined;
+  update.recordedAt = new Date();
 
-  return hygieneActivityRepo.updateById(id, update);
+  const beforeData = record.toObject ? record.toObject() : record;
+  const updated = await hygieneActivityRepo.updateById(id, update);
+  const activityTypeLabel = ACTIVITY_TYPE_LABELS[record.activityType] || record.activityType;
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật bản ghi vệ sinh cá nhân',
+    module: 'hygieneActivity',
+    targetEntityType: 'HygieneActivityRecord',
+    targetEntityId: id,
+    targetName: `${activityTypeLabel} - ${workDateToVNString(record.workDate)}`,
+    description: `Cập nhật bản ghi vệ sinh cá nhân của cư dân ${resident.fullName}, loại: ${activityTypeLabel}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
+    beforeData,
+    afterData: updated,
+    req,
+  });
+
+  return updated;
 };
 
-const deleteRecord = async (userId, id) => {
+const deleteRecord = async (userId, id, req = null) => {
   const record = await hygieneActivityRepo.findById(id);
   if (!record) throw apiErr(CODES.HYGIENE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
-  await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  const resident = await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDateToVNString(record.workDate),
     CODES.HYGIENE_SHIFT_WINDOW_CLOSED
   );
+
+  const beforeData = record.toObject ? record.toObject() : record;
+  const activityTypeLabel = ACTIVITY_TYPE_LABELS[record.activityType] || record.activityType;
   await hygieneActivityRepo.deleteById(id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'DELETE',
+    displayAction: 'Xóa bản ghi vệ sinh cá nhân',
+    module: 'hygieneActivity',
+    targetEntityType: 'HygieneActivityRecord',
+    targetEntityId: id,
+    targetName: `${activityTypeLabel} - ${workDateToVNString(record.workDate)}`,
+    description: `Xóa bản ghi vệ sinh cá nhân của cư dân ${resident.fullName}, loại: ${activityTypeLabel}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
+    beforeData,
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.HYGIENE_RECORD_DELETED), deleted: true, id };
 };
 

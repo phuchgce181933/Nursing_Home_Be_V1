@@ -27,7 +27,7 @@ const getCurrentMedications = async (req, res) => {
 
 const setMedicationSchedule = async (req, res) => {
   try {
-    const result = await medAdminService.setMedicationSchedule({ body: req.body, user: req.user });
+    const result = await medAdminService.setMedicationSchedule({ body: req.body, user: req.user, req });
     if (result.noChanges) {
       return res.status(200).json({ success: true, message: 'Không có thay đổi lịch nào được phát hiện', data: result.data });
     }
@@ -57,7 +57,7 @@ const getSchedules = async (req, res) => {
 
 const markTaken = async (req, res) => {
   try {
-    const data = await medAdminService.markTaken({ id: req.params.id, body: req.body, user: req.user });
+    const data = await medAdminService.markTaken({ id: req.params.id, body: req.body, user: req.user, req });
     return res.status(200).json({ success: true, data });
   } catch (err) {
     return sendError(res, err);
@@ -66,7 +66,7 @@ const markTaken = async (req, res) => {
 
 const markMissed = async (req, res) => {
   try {
-    const data = await medAdminService.markMissed({ id: req.params.id, body: req.body, user: req.user });
+    const data = await medAdminService.markMissed({ id: req.params.id, body: req.body, user: req.user, req });
     return res.status(200).json({ success: true, data });
   } catch (err) {
     return sendError(res, err);
@@ -75,7 +75,7 @@ const markMissed = async (req, res) => {
 
 const markRefused = async (req, res) => {
   try {
-    const data = await medAdminService.markRefused({ id: req.params.id, body: req.body, user: req.user });
+    const data = await medAdminService.markRefused({ id: req.params.id, body: req.body, user: req.user, req });
     return res.status(200).json({ success: true, data });
   } catch (err) {
     return sendError(res, err);
@@ -84,7 +84,7 @@ const markRefused = async (req, res) => {
 
 const markHeld = async (req, res) => {
   try {
-    const data = await medAdminService.markHeld({ id: req.params.id, body: req.body, user: req.user });
+    const data = await medAdminService.markHeld({ id: req.params.id, body: req.body, user: req.user, req });
     return res.status(200).json({ success: true, data });
   } catch (err) {
     return sendError(res, err);
@@ -93,7 +93,7 @@ const markHeld = async (req, res) => {
 
 const markNotAvailable = async (req, res) => {
   try {
-    const data = await medAdminService.markNotAvailable({ id: req.params.id, body: req.body, user: req.user });
+    const data = await medAdminService.markNotAvailable({ id: req.params.id, body: req.body, user: req.user, req });
     return res.status(200).json({ success: true, data });
   } catch (err) {
     return sendError(res, err);
@@ -102,7 +102,7 @@ const markNotAvailable = async (req, res) => {
 
 const administerPRN = async (req, res) => {
   try {
-    const data = await medAdminService.administerPRN({ body: req.body, user: req.user });
+    const data = await medAdminService.administerPRN({ body: req.body, user: req.user, req });
     return res.status(201).json({ success: true, data });
   } catch (err) {
     return sendError(res, err);

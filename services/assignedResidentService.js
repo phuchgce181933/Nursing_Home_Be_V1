@@ -2,6 +2,8 @@ const mongoose = require('mongoose');
 const { apiErr, apiSuccess, CODES, SUCCESS } = require('../utils/apiError');
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const residentRepo = require('../repositories/residentRepository');
+const roomRepo = require('../repositories/roomRepository');
+const bedRepo = require('../repositories/bedRepository');
 const activityService = require('./activityService');
 
 const MINIMAL_SELECT = '_id fullName residentCode';
@@ -275,10 +277,69 @@ const getAssignedResidentById = async (userId, residentId) => {
   return formatResident(resident, false);
 };
 
+/**
+ * Các phòng mà hộ lý đang đăng nhập được phép xem.
+ *
+ * Phạm vi = đúng những phòng đang có cư dân trong `assignedResidentIds` của
+ * chính họ; KHÔNG trả về toàn bộ phòng của cơ sở. Danh sách cư dân trong mỗi
+ * phòng cũng chỉ gồm cư dân được phân công, nên hộ lý không đọc được tên cư
+ * dân của người khác dù ở chung phòng.
+ *
+ * Số liệu phòng (capacity/occupiedCount/status/roomType) và giường lấy nguyên
+ * từ model Room/Bed, không tự tính lại và không thêm trường mới.
+ */
+const listAssignedRoomsForUser = async (userId) => {
+  const { data: residents } = await listAssignedResidentsForUser(userId);
+
+  const roomIds = [...new Set(residents.map((r) => r.room?._id).filter(Boolean).map(String))];
+  if (!roomIds.length) return { data: [], total: 0 };
+
+  const objectIds = roomIds.map((id) => new mongoose.Types.ObjectId(id));
+  const [rooms, beds] = await Promise.all([
+    roomRepo.findByFilterLean({ _id: { $in: objectIds } }),
+    bedRepo.findByFilterLean(
+      { roomId: { $in: objectIds } },
+      { select: '_id roomId bedCode bedType status', sort: { bedCode: 1 } }
+    ),
+  ]);
+
+  const data = rooms
+    .map((room) => {
+      const inRoom = residents.filter((r) => String(r.room?._id) === String(room._id));
+      const first = inRoom[0];
+      return {
+        _id: room._id,
+        roomNumber: room.roomNumber,
+        label: room.roomNumber != null ? `Phòng ${room.roomNumber}` : null,
+        roomType: room.roomType,
+        status: room.status,
+        capacity: room.capacity,
+        occupiedCount: room.occupiedCount,
+        notes: room.notes || null,
+        // Toà/tầng lấy lại từ chính bản ghi cư dân đã populate sẵn.
+        building: first?.building || null,
+        floor: first?.floor || null,
+        beds: beds
+          .filter((b) => String(b.roomId) === String(room._id))
+          .map((b) => ({ _id: b._id, bedCode: b.bedCode, bedType: b.bedType, status: b.status })),
+        residents: inRoom.map((r) => ({
+          _id: r._id,
+          fullName: r.fullName,
+          residentCode: r.residentCode,
+          bed: r.bed || null,
+        })),
+      };
+    })
+    .sort((a, b) => String(a.roomNumber).localeCompare(String(b.roomNumber), 'vi', { numeric: true }));
+
+  return { data, total: data.length };
+};
+
 module.exports = {
   MEAL_RESIDENT_SELECT,
   getStaffProfileByUserId,
   listAssignedResidentsForUser,
+  listAssignedRoomsForUser,
   listAssignedResidentActivities,
   listAssignedAdmittedResidentsForUser,
   listAssignedAdmittedResidentsForStaffProfile,

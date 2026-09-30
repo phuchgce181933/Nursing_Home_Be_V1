@@ -21,7 +21,7 @@ const getCharge = async (req, res) => {
 
 const updateCharge = async (req, res) => {
   try {
-    const data = await medicalChargeService.updateCharge(req.params.id, req.body);
+    const data = await medicalChargeService.updateCharge(req.params.id, req.body, req.user, req);
     return res.json({ success: true, data });
   } catch (err) {
     return sendApiError(res, err);

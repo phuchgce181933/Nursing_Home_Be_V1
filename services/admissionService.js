@@ -336,6 +336,16 @@ const submitAdmissionRequest = async (user, body, req) => {
       throw new ServiceError('Đã tồn tại yêu cầu nhập viện đang hoạt động cho cư dân này', 409);
     }
 
+    // Check for duplicate citizenId across all active admissions
+    if (resident.citizenId) {
+      const existingByCitizenId = await admissionRepo.findActiveAdmission({
+        'applicant.citizenId': resident.citizenId,
+      });
+      if (existingByCitizenId) {
+        throw new ServiceError('Số CCCD/Hộ chiếu này đã được sử dụng trong yêu cầu nhập viện khác đang chờ xử lý', 409);
+      }
+    }
+
     resolvedApplicant = buildApplicant(
       applicantCopy || {
         fullName: resident.fullName,
@@ -405,13 +415,41 @@ const submitAdmissionRequest = async (user, body, req) => {
     actorUserId: user._id,
     actorRole: user.role,
     action: 'SUBMIT_ADMISSION_REQUEST',
+    displayAction: 'Gửi yêu cầu nhập viện',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `Người nhà ${user.fullName || user.username || ''} đã gửi yêu cầu nhập viện ${admission.requestCode} cho ${admission.applicant?.fullName || 'N/A'}`,
+    beforeData: null,
     afterData: {
       requestCode: admission.requestCode,
       status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
       applicantName: admission.applicant?.fullName,
+      applicantGender: admission.applicant?.gender,
+      applicantDateOfBirth: admission.applicant?.dateOfBirth,
+      applicantCitizenId: admission.applicant?.citizenId,
+      applicantBloodType: admission.applicant?.bloodType,
+      applicantRelationship: admission.applicant?.relationshipToRequester,
+      applicantAllergies: admission.applicant?.allergies,
+      applicantChronicConditions: admission.applicant?.chronicConditions,
+      applicantPhone: admission.applicant?.phone,
+      applicantPersonalAddress: admission.applicant?.personalAddress,
+      applicantInitialHealthCondition: admission.applicant?.initialHealthCondition,
+      applicantAvatarUrl: admission.applicant?.avatarUrl,
+      preferredAdmissionDate: admission.preferredAdmissionDate,
+      reasonForAdmission: admission.reasonForAdmission,
+      requestedByName: admission.requestedByName,
+      requestedByPhone: admission.requestedByPhone,
+      residentId: admission.residentId,
+      familyAccountId: admission.familyAccountId,
+      submittedAt: admission.requestedAt,
+    },
+    metadata: {
+      channel: 'family-portal',
+      hasExistingResident: Boolean(admission.residentId),
     },
     req,
   });
@@ -447,6 +485,16 @@ const createWalkInAdmission = async (admin, body, req) => {
   }
 
   const resolvedApplicant = buildApplicant(applicant, relationshipToRequester);
+
+  // Check for duplicate citizenId across all active admissions
+  if (resolvedApplicant.citizenId) {
+    const existingByCitizenId = await admissionRepo.findActiveAdmission({
+      'applicant.citizenId': resolvedApplicant.citizenId,
+    });
+    if (existingByCitizenId) {
+      throw new ServiceError('Số CCCD/Hộ chiếu này đã được sử dụng trong yêu cầu nhập viện khác đang chờ xử lý', 409);
+    }
+  }
 
   const contactName = requestedByName?.trim();
   if (!contactName) {
@@ -501,14 +549,42 @@ const createWalkInAdmission = async (admin, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'CREATE_WALK_IN_ADMISSION',
+    displayAction: 'Tạo yêu cầu nhập viện trực tiếp (walk-in)',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã tạo yêu cầu nhập viện ${admission.requestCode} cho người nhà ${contactName} (walk-in, chưa có tài khoản)`,
+    beforeData: null,
     afterData: {
       requestCode: admission.requestCode,
       status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
       applicantName: admission.applicant?.fullName,
-      requestedByName: contactName,
+      applicantGender: admission.applicant?.gender,
+      applicantDateOfBirth: admission.applicant?.dateOfBirth,
+      applicantCitizenId: admission.applicant?.citizenId,
+      applicantBloodType: admission.applicant?.bloodType,
+      applicantRelationship: admission.applicant?.relationshipToRequester,
+      applicantAllergies: admission.applicant?.allergies,
+      applicantChronicConditions: admission.applicant?.chronicConditions,
+      applicantPhone: admission.applicant?.phone,
+      applicantPersonalAddress: admission.applicant?.personalAddress,
+      applicantInitialHealthCondition: admission.applicant?.initialHealthCondition,
+      applicantAvatarUrl: admission.applicant?.avatarUrl,
+      preferredAdmissionDate: admission.preferredAdmissionDate,
+      reasonForAdmission: admission.reasonForAdmission,
+      requestedByName: admission.requestedByName,
+      requestedByPhone: admission.requestedByPhone,
+      requestedByEmail: admission.requestedByEmail,
+      residentId: admission.residentId,
+      familyAccountId: admission.familyAccountId,
+      submittedAt: admission.requestedAt,
+    },
+    metadata: {
+      channel: 'walk-in',
+      hasFamilyAccount: false,
     },
     req,
   });
@@ -543,6 +619,16 @@ const submitGuestAdmissionRequest = async (body, req) => {
   }
 
   const resolvedApplicant = buildApplicant(applicant, relationshipToRequester);
+
+  // Check for duplicate citizenId across all active admissions
+  if (resolvedApplicant.citizenId) {
+    const existingByCitizenId = await admissionRepo.findActiveAdmission({
+      'applicant.citizenId': resolvedApplicant.citizenId,
+    });
+    if (existingByCitizenId) {
+      throw new ServiceError('Số CCCD/Hộ chiếu này đã được sử dụng trong yêu cầu nhập viện khác đang chờ xử lý', 409);
+    }
+  }
 
   const contactName = requestedByName?.trim();
   if (!contactName) {
@@ -634,14 +720,43 @@ const submitGuestAdmissionRequest = async (body, req) => {
     actorUserId: newUser._id,
     actorRole: newUser.role,
     action: 'SUBMIT_GUEST_ADMISSION_REQUEST',
+    displayAction: 'Gửi yêu cầu nhập viện (khách chưa có tài khoản)',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `Khách ${contactName} đã gửi yêu cầu nhập viện ${admission.requestCode} cho ${admission.applicant?.fullName || 'N/A'} — hệ thống đã tự tạo tài khoản tạm và gửi mật khẩu qua ${contactEmail ? 'email' : 'SMS'}`,
+    beforeData: null,
     afterData: {
       requestCode: admission.requestCode,
       status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
       applicantName: admission.applicant?.fullName,
-      requestedByName: contactName,
+      applicantGender: admission.applicant?.gender,
+      applicantDateOfBirth: admission.applicant?.dateOfBirth,
+      applicantCitizenId: admission.applicant?.citizenId,
+      applicantBloodType: admission.applicant?.bloodType,
+      applicantRelationship: admission.applicant?.relationshipToRequester,
+      applicantAllergies: admission.applicant?.allergies,
+      applicantChronicConditions: admission.applicant?.chronicConditions,
+      applicantPhone: admission.applicant?.phone,
+      applicantPersonalAddress: admission.applicant?.personalAddress,
+      applicantInitialHealthCondition: admission.applicant?.initialHealthCondition,
+      applicantAvatarUrl: admission.applicant?.avatarUrl,
+      preferredAdmissionDate: admission.preferredAdmissionDate,
+      reasonForAdmission: admission.reasonForAdmission,
+      requestedByName: admission.requestedByName,
+      requestedByPhone: admission.requestedByPhone,
+      requestedByEmail: admission.requestedByEmail,
+      residentId: admission.residentId,
+      familyAccountId: admission.familyAccountId,
+      submittedAt: admission.requestedAt,
+    },
+    metadata: {
+      channel: 'guest-public-form',
+      autoCreatedUserId: String(newUser._id),
+      credentialsSentVia: contactEmail ? 'email' : 'sms',
     },
     req,
   });
@@ -650,6 +765,37 @@ const submitGuestAdmissionRequest = async (body, req) => {
     message: 'Đã gửi yêu cầu nhập viện thành công. Thông tin đăng nhập đã được gửi qua email/số điện thoại của bạn.',
     admission: formatAdmission(admission),
   };
+};
+
+// ── Real-time check for duplicate citizenId ────────────────────────────────────
+const checkCitizenIdDuplicate = async (user, citizenId) => {
+  const cleanId = citizenId ? String(citizenId).trim() : '';
+
+  // Check if citizenId has valid format (for early return if empty/invalid)
+  if (!cleanId) {
+    return { duplicate: false, source: null };
+  }
+
+  // Check against active admissions
+  const existingAdmission = await admissionRepo.findActiveAdmission({
+    'applicant.citizenId': cleanId,
+  });
+  if (existingAdmission) {
+    return { duplicate: true, source: 'admission', requestCode: existingAdmission.requestCode };
+  }
+
+  // Check against existing residents
+  const existingResident = await residentRepo.findByCitizenId(cleanId);
+  if (existingResident) {
+    return {
+      duplicate: true,
+      source: 'resident',
+      residentCode: existingResident.residentCode,
+      residentName: existingResident.fullName,
+    };
+  }
+
+  return { duplicate: false, source: null };
 };
 
 const listAdmissionHistory = async (user, query) => {
@@ -769,16 +915,197 @@ const cancelAdmissionRequest = async (user, admissionId, body, req) => {
     actorUserId: user._id,
     actorRole: user.role,
     action: 'CANCEL_ADMISSION_REQUEST',
+    displayAction: 'Hủy yêu cầu nhập viện',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status },
-    afterData: { requestCode: updated.requestCode, status: updated.status, cancellationReason },
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${user.fullName || user.username || 'Người dùng'} đã hủy yêu cầu nhập viện ${admission.requestCode}${cancellationReason ? ` — Lý do: ${cancellationReason}` : ''}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
+      applicantName: admission.applicant?.fullName,
+      applicantAvatarUrl: admission.applicant?.avatarUrl,
+      preferredAdmissionDate: admission.preferredAdmissionDate,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      eligibilityStatus: updated.eligibilityStatus,
+      cancelledAt: updated.cancelledAt,
+      cancellationReason: updated.cancellationReason,
+      applicantName: updated.applicant?.fullName,
+      applicantAvatarUrl: updated.applicant?.avatarUrl,
+    },
+    metadata: {
+      cancelledBy: 'family',
+    },
     req,
   });
 
   return {
     message: 'Đã hủy yêu cầu nhập viện thành công',
+    admission: formatAdmission(updated),
+  };
+};
+
+// ── Re-submit a previous admission request (Family) ─────────────────────────────
+// Use case: Hợp đồng đã kết thúc (do cư dân xuất viện hoặc admin hủy hợp đồng).
+// Gia đình muốn nhập viện lại cho cùng cư dân sau một thời gian. Thay vì tạo yêu cầu
+// nhập viện mới (mất thông tin cư dân đã lưu), gia đình bấm "Gửi yêu cầu nhập viện lại"
+// trên admission cũ. Hệ thống reset workflow về 'new_request' và giữ nguyên residentId /
+// applicant / familyAccountId — sau đó đi lại từ đầu: Admin duyệt → Bác sĩ khám → Tạo HĐ.
+const resubmitAdmissionRequest = async (user, admissionId, body, req) => {
+  const admission = await admissionRepo.findByIdForFamily(admissionId, user._id);
+  if (!admission) {
+    throw new ServiceError('Không tìm thấy yêu cầu nhập viện', 404);
+  }
+
+  // Chỉ cho phép gửi lại khi admission đã kết thúc (cư dân đã xuất viện / hợp đồng bị hủy).
+  // Nếu đang ở trạng thái active (new_request, consulting, assessing, contracting, checked_in)
+  // thì không cần gửi lại — gia đình đang xử lý admission này rồi.
+  const isContractEnded =
+    admission.contractStatus === 'cancelled' ||
+    admission.contractStatus === 'terminated' ||
+    admission.contractStatus === 'expired';
+  const isTerminal =
+    isContractEnded ||
+    admission.status === 'cancelled';
+
+  if (!isTerminal) {
+    throw new ServiceError(
+      `Không thể gửi lại yêu cầu đang trong quá trình xử lý (trạng thái hiện tại: ${admission.status}). Chỉ gửi lại được khi yêu cầu đã hủy hoặc hợp đồng đã kết thúc.`,
+      400
+    );
+  }
+
+  // Reset toàn bộ workflow để admission đi lại từ đầu: new_request → admin duyệt →
+  // bác sĩ khám → tạo hợp đồng. Giữ nguyên thông tin cư dân và gia đình.
+  const resetData = {
+    status: 'new_request',
+    eligibilityStatus: 'pending',
+    approvedAt: null,
+    approvedBy: null,
+    rejectedAt: null,
+    rejectedBy: null,
+    rejectionReason: null,
+    cancelledAt: null,
+    cancellationReason: null,
+    // Reset contract fields — hợp đồng cũ đã kết thúc, admission mới sẽ có HĐ mới sau khi admin tạo.
+    contractNumber: null,
+    contractStatus: null,
+    contractStartDate: null,
+    contractEndDate: null,
+    contractDurationMonths: null,
+    contractDiscountPercent: null,
+    contractTerms: null,
+    contractSignedAt: null,
+    contractCancelledAt: null,
+    contractCancellationReason: null,
+    // Reset medical assessment fields — bác sĩ phải khám lại cho lần nhập viện mới.
+    assessedAt: null,
+    assessedBy: null,
+    assessmentResult: null,
+    // Reset care appointment scheduling (giữ lại lịch cũ nếu còn scheduled là OK,
+    // nhưng an toàn nhất là reset các field liên quan đến admission cycle cũ).
+    initialAssessmentScheduledAt: null,
+    initialAssessmentNotes: null,
+    consultationScheduledAt: null,
+    consultationNotes: null,
+    consultedAt: null,
+    consultedBy: null,
+    consultantId: null,
+    assignServicePackageId: null,
+    checkInAt: null,
+    // Ghi lại thời điểm gửi lại (dùng requestedAt làm reference cho lần admission mới này).
+    resubmittedAt: new Date(),
+    resubmissionCount: (admission.resubmissionCount || 0) + 1,
+  };
+
+  // Lưu lý do gửi lại (optional) để admin theo dõi.
+  const resubmitReason = body?.reason?.trim() || '';
+  if (resubmitReason) {
+    assertMaxLength(resubmitReason, 'reason', 500);
+    resetData.resubmitReason = resubmitReason;
+  }
+
+  // Optional: gia đình có thể chọn ngày nhập viện mong muốn mới cho chu kỳ admission này.
+  // Nếu không truyền → reset về null để approveAdmission fallback về "ngày mai 8h".
+  let newPreferredDate = null;
+  if (body?.preferredAdmissionDate) {
+    const parsed = new Date(body.preferredAdmissionDate);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new ServiceError('preferredAdmissionDate không hợp lệ', 400);
+    }
+    newPreferredDate = parsed;
+  }
+  resetData.preferredAdmissionDate = newPreferredDate;
+
+  // Hủy TẤT CẢ Care Appointment "Khám lâm sàng đầu vào" cũ (của admission/resident này)
+  // bất kể trạng thái (scheduled, in_progress, pending, completed) để khi Admin duyệt
+  // lại, guard trong approveAdmission không chặn việc tạo appointment mới. Cần hủy cả
+  // `completed` vì guard hiện tại dùng `status: { $ne: 'cancelled' }` — appointment đã
+  // hoàn thành từ chu kỳ cũ vẫn sẽ chặn việc tạo appointment mới cho chu kỳ mới.
+  const intakeFilter = {
+    appointmentType: 'Khám lâm sàng đầu vào',
+    status: { $nin: ['cancelled'] },
+    $or: [{ admissionId: admission._id }],
+  };
+  if (admission.residentId) {
+    intakeFilter.$or.push({ residentId: admission.residentId });
+  }
+  const cancelResult = await careAppointmentRepo.updateMany(intakeFilter, {
+    $set: {
+      status: 'cancelled',
+      notes:
+        '[Auto-cancelled] Yêu cầu nhập viện đã được gia đình gửi lại — hệ thống sẽ tạo lịch khám mới khi Admin duyệt lại.',
+    },
+  });
+  const cancelledAppointmentsCount = cancelResult?.modifiedCount || cancelResult?.nModified || 0;
+
+  const updated = await admissionRepo.updateAdmission(admission._id, resetData);
+
+  await createAuditLog({
+    actorUserId: user._id,
+    actorRole: user.role,
+    action: 'RESUBMIT_ADMISSION_REQUEST',
+    displayAction: 'Gửi lại yêu cầu nhập viện',
+    module: 'admission',
+    businessModule: 'admission',
+    targetEntityType: 'Admission',
+    targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${user.fullName || user.username || 'Người dùng'} đã gửi lại yêu cầu nhập viện ${admission.requestCode} cho cùng cư dân (lần thứ ${resetData.resubmissionCount})${resubmitReason ? ` — Lý do: ${resubmitReason}` : ''}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
+      contractStatus: admission.contractStatus,
+      applicantName: admission.applicant?.fullName,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      eligibilityStatus: updated.eligibilityStatus,
+      contractStatus: updated.contractStatus,
+      applicantName: updated.applicant?.fullName,
+      resubmissionCount: resetData.resubmissionCount,
+      resubmittedAt: resetData.resubmittedAt,
+    },
+    metadata: {
+      resubmittedBy: 'family',
+      previousContractStatus: admission.contractStatus,
+      previousContractCancelledAt: admission.contractCancelledAt,
+      cancelledIntakeAppointments: cancelledAppointmentsCount,
+      newPreferredAdmissionDate: newPreferredDate,
+    },
+    req,
+  });
+
+  return {
+    message: 'Đã gửi lại yêu cầu nhập viện. Yêu cầu sẽ được Admin xem xét và chuyển sang bác sĩ khám lại.',
     admission: formatAdmission(updated),
   };
 };
@@ -987,10 +1314,12 @@ const approveAdmission = async (admin, admissionId, body, req) => {
   const updated = await admissionRepo.updateAdmission(admissionId, updateData);
 
   // Automatically create first Care Appointment at UC-12
-  // Guard: only create if no intake appointment already exists for this resident
+  // Guard: only skip if there is an ACTIVE intake appointment (scheduled / in_progress / pending)
+  // for this admission or resident. A `completed` appointment belongs to a previous admission
+  // cycle and must not block creating a fresh one for a re-admission (resubmit flow).
   const existingAppt = await careAppointmentRepo.findOneByFilter({
     $or: [{ admissionId: admission._id }, { residentId, appointmentType: 'Khám lâm sàng đầu vào' }],
-    status: { $ne: 'cancelled' },
+    status: { $in: ['scheduled', 'in_progress', 'pending'] },
   });
 
   if (!existingAppt) {
@@ -1013,11 +1342,34 @@ const approveAdmission = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'APPROVE_ADMISSION_REQUEST',
+    displayAction: 'Phê duyệt yêu cầu nhập viện',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status, eligibilityStatus: admission.eligibilityStatus },
-    afterData: { requestCode: updated.requestCode, status: updated.status, eligibilityStatus: updated.eligibilityStatus, residentId: residentId },
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã duyệt yêu cầu nhập viện ${admission.requestCode} cho ${admission.applicant?.fullName || 'N/A'}${residentId ? ' — đã tạo hồ sơ cư dân' : ''}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
+      applicantName: admission.applicant?.fullName,
+      residentId: admission.residentId,
+      approvedAt: admission.approvedAt,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      eligibilityStatus: updated.eligibilityStatus,
+      applicantName: updated.applicant?.fullName,
+      residentId,
+      approvedAt: updated.approvedAt,
+      notes: updated.notes,
+    },
+    metadata: {
+      residentAutoCreated: !admission.residentId && Boolean(residentId),
+      nextStatus: nextStatus,
+    },
     req,
   });
 
@@ -1059,11 +1411,32 @@ const rejectAdmission = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'REJECT_ADMISSION_REQUEST',
+    displayAction: 'Từ chối yêu cầu nhập viện',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status },
-    afterData: { requestCode: updated.requestCode, status: updated.status, rejectionReason },
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã từ chối yêu cầu nhập viện ${admission.requestCode} — Lý do: ${rejectionReason}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
+      applicantName: admission.applicant?.fullName,
+      requestedByName: admission.requestedByName,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      eligibilityStatus: updated.eligibilityStatus,
+      applicantName: updated.applicant?.fullName,
+      rejectionReason: updated.rejectionReason,
+      rejectedAt: updated.rejectedAt,
+      cancelledAt: updated.cancelledAt,
+    },
+    metadata: {
+      rejectionReason,
+    },
     req,
   });
 
@@ -1120,11 +1493,31 @@ const preAdmissionConsultation = async (user, admissionId, body, req) => {
     actorUserId: user._id,
     actorRole: user.role,
     action: 'PRE_ADMISSION_CONSULTATION',
+    displayAction: 'Ghi nhận tư vấn trước nhập viện',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status },
-    afterData: { requestCode: updated.requestCode, status: updated.status, consultationNotes },
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${user.fullName || user.username || 'Nhân viên'} đã ghi nhận tư vấn trước nhập viện cho ${admission.requestCode}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
+      consultationNotes: admission.consultationNotes,
+      consultedAt: admission.consultedAt,
+      consultedBy: admission.consultedBy,
+      notes: admission.notes,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      eligibilityStatus: updated.eligibilityStatus,
+      consultationNotes: updated.consultationNotes,
+      consultedAt: updated.consultedAt,
+      consultedBy: updated.consultedBy,
+      notes: updated.notes,
+    },
     req,
   });
 
@@ -1173,11 +1566,27 @@ const scheduleInitialAssessment = async (user, admissionId, body, req) => {
     actorUserId: user._id,
     actorRole: user.role,
     action: 'SCHEDULE_INITIAL_ASSESSMENT',
+    displayAction: 'Lên lịch khám lâm sàng đầu vào',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status },
-    afterData: { requestCode: updated.requestCode, status: updated.status, initialAssessmentScheduledAt: scheduledAt },
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${user.fullName || user.username || 'Nhân viên'} đã lên lịch khám lâm sàng đầu vào cho ${admission.requestCode} vào lúc ${scheduledAt.toISOString?.() || scheduledAt}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      initialAssessmentScheduledAt: admission.initialAssessmentScheduledAt,
+      initialAssessmentNotes: admission.initialAssessmentNotes,
+      notes: admission.notes,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      initialAssessmentScheduledAt: updated.initialAssessmentScheduledAt,
+      initialAssessmentNotes: updated.initialAssessmentNotes,
+      notes: updated.notes,
+    },
     req,
   });
 
@@ -1227,11 +1636,25 @@ const assignConsultant = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'ASSIGN_CONSULTANT',
+    displayAction: 'Phân công nhân viên tư vấn',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, consultantId: admission.consultantId },
-    afterData: { requestCode: updated.requestCode, consultantId: consultant._id, consultantName: consultant.fullName },
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã phân công nhân viên tư vấn ${consultant.fullName || consultant.username} cho ${admission.requestCode}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      consultantId: admission.consultantId,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      consultantId: consultant._id,
+      consultantName: consultant.fullName,
+      consultantRole: consultant.role,
+    },
     req,
   });
 
@@ -1284,13 +1707,21 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
   } else if (eligibilityStatus === 'eligible') {
     updateData.status = 'contracting';
 
-    // Auto-assign resident to the doctor/nurse's assignedResidentIds so they can monitor in "Theo dõi sức khỏe"
+    // [DISABLED 2026-09-25] Auto-assign resident to staff assignedResidentIds.
+    // Theo yêu cầu nghiệp vụ: việc duyệt admission KHÔNG được tự động gán
+    // cư dân vào danh sách "phụ trách" của bác sĩ đánh giá hay bác sĩ/y tá
+    // được chỉ định khám đầu vào. Việc gán phụ trách phải được thực hiện thủ
+    // công qua trang "Cư dân phụ trách" hoặc qua flow Phân phòng/giường.
+    // Nếu cần khôi phục, bỏ comment đoạn dưới và đảm bảo trùng khớp logic
+    // với FE (Nursing_Home_fe/src/pages/admin/appointments/index.jsx —
+    // xem `handleSaveAssignment`).
+    /*
     try {
       const residentId = admission.residentId?._id || admission.residentId;
       if (residentId) {
         const ridStr = residentId.toString();
         const staffProfileRepo = require('../repositories/staffProfileRepository');
-        
+
         const addResidentToStaff = async (profile) => {
           if (!profile) return;
           const currentIds = (profile.assignedResidentIds || []).map(id => id.toString());
@@ -1322,6 +1753,7 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     } catch (err) {
       console.error('Failed to automatically assign resident to staff assigned list:', err);
     }
+    */
   }
 
   if (body?.notes) updateData.notes = String(body.notes).trim();
@@ -1332,11 +1764,35 @@ const evaluateAdmissionEligibility = async (doctor, admissionId, body, req) => {
     actorUserId: doctor._id,
     actorRole: doctor.role,
     action: 'EVALUATE_ADMISSION_ELIGIBILITY',
+    displayAction: 'Đánh giá điều kiện nhập viện',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status, eligibilityStatus: admission.eligibilityStatus },
-    afterData: { requestCode: updated.requestCode, status: updated.status, eligibilityStatus: updated.eligibilityStatus, assessmentResult },
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `Bác sĩ ${doctor.fullName || doctor.username} đã đánh giá điều kiện nhập viện cho ${admission.requestCode}: ${eligibilityStatus === 'eligible' ? 'Đủ điều kiện' : 'Không đủ điều kiện'}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      eligibilityStatus: admission.eligibilityStatus,
+      assessmentResult: admission.assessmentResult,
+      assessedBy: admission.assessedBy,
+      assessedAt: admission.assessedAt,
+      notes: admission.notes,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      eligibilityStatus: updated.eligibilityStatus,
+      assessmentResult: updated.assessmentResult,
+      assessedBy: updated.assessedBy,
+      assessedAt: updated.assessedAt,
+      rejectionReason: updated.rejectionReason,
+      notes: updated.notes,
+    },
+    metadata: {
+      eligibilityStatus,
+    },
     req,
   });
 
@@ -1408,11 +1864,16 @@ const assignServicePackage = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'ASSIGN_SERVICE_PACKAGE',
+    displayAction: 'Gán gói dịch vụ',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã gán gói dịch vụ "${pkg.name}" cho ${admission.requestCode}`,
     beforeData: {
       requestCode: admission.requestCode,
+      status: admission.status,
       servicePackageId: admission.servicePackageId,
       assignedServicePackage: admission.assignedServicePackage,
       contractDurationMonths: admission.contractDurationMonths,
@@ -1420,10 +1881,16 @@ const assignServicePackage = async (admin, admissionId, body, req) => {
     },
     afterData: {
       requestCode: updated.requestCode,
+      status: updated.status,
       servicePackageId: pkg._id,
       assignedServicePackage: pkg.name,
+      servicePackageMonthlyPrice: pkg.monthlyPrice,
       contractDurationMonths: updated.contractDurationMonths,
       contractDiscountPercent: updated.contractDiscountPercent,
+    },
+    metadata: {
+      servicePackageName: pkg.name,
+      servicePackageCode: pkg.packageCode,
     },
     req,
   });
@@ -1540,31 +2007,101 @@ const createAdmissionContract = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'CREATE_ADMISSION_CONTRACT',
+    displayAction: 'Tạo hợp đồng nhập viện',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã tạo hợp đồng ${contractNumber} cho ${admission.requestCode}${servicePackageIdForUpdate ? ` (gói: ${servicePackageIdForUpdate})` : ''}${contractDurationMonths ? ` — ${contractDurationMonths} tháng` : ''}`,
     beforeData: {
       requestCode: admission.requestCode,
       status: admission.status,
       servicePackageId: admission.servicePackageId,
+      assignedServicePackage: admission.assignedServicePackage,
+      contractNumber: admission.contractNumber,
+      contractStatus: admission.contractStatus,
       contractDurationMonths: admission.contractDurationMonths,
       contractDiscountPercent: admission.contractDiscountPercent,
+      contractStartDate: admission.contractStartDate,
+      contractEndDate: admission.contractEndDate,
     },
     afterData: {
       requestCode: updated.requestCode,
       status: updated.status,
-      contractNumber,
+      contractNumber: updated.contractNumber,
+      contractStatus: updated.contractStatus,
+      contractSignedAt: updated.contractSignedAt,
       servicePackageId: updated.servicePackageId,
+      assignedServicePackage: updated.assignedServicePackage,
       contractDurationMonths: updated.contractDurationMonths,
       contractDiscountPercent: updated.contractDiscountPercent,
+      contractStartDate: updated.contractStartDate,
+      contractEndDate: updated.contractEndDate,
+    },
+    metadata: {
+      contractNumber,
+      servicePackageChanged: Boolean(servicePackageIdForUpdate && String(servicePackageIdForUpdate) !== String(admission.servicePackageId)),
     },
     req,
   });
 
-  return {
-    message: 'Đã tạo hợp đồng nhập viện thành công',
+  // ── Tạo Contract document + sinh hóa đơn nếu admission đủ điều kiện ───────────
+  // Drawer AdmissionDetailDrawer (cả family và admin) gọi endpoint PATCH này thay vì
+  // POST /admin/admission-contracts/from-admission/:id. Trước đây endpoint PATCH chỉ
+  // cập nhật metadata trên admission — KHÔNG tạo Contract doc và KHÔNG sinh hóa đơn,
+  // khiến sau khi hủy hợp đồng cũ và nhập viện lại, hợp đồng mới "trống rỗng" không
+  // có hóa đơn nào.
+  //
+  // Fix: sau khi update admission metadata, nếu admission đủ điều kiện (eligible) và
+  // có gói dịch vụ → delegate sang contractService.createContract để thực sự tạo
+  // Contract doc + sinh hóa đơn tự động. contractService sẽ validate eligibility /
+  // status / phòng giường và báo lỗi nếu có vấn đề — bắt và trả về thông báo rõ ràng.
+  let createdContract = null;
+  let invoiceCreationError = null;
+  if (updated.eligibilityStatus === 'eligible' && updated.servicePackageId) {
+    try {
+      const contractBody = {
+        contractNumber,
+        startDate: updated.contractStartDate || undefined,
+        endDate: updated.contractEndDate || undefined,
+        durationMonths: updated.contractDurationMonths || undefined,
+        discountPercent: updated.contractDiscountPercent || undefined,
+        // Không truyền paymentPlan/roomId/bedId từ PATCH — drawer không có field này;
+        // contractService sẽ fallback sang admission.assignedRoomId/BedId + mặc định 'MONTHLY'.
+      };
+      const contractResult = await contractService.createContract(admin, admissionId, contractBody, req);
+      createdContract = contractResult?.contract || null;
+    } catch (invErr) {
+      console.error(
+        `[createAdmissionContract] Failed to auto-create Contract doc + invoices for admission ${admissionId}:`,
+        invErr
+      );
+      invoiceCreationError = invErr?.message || 'Không thể tự động tạo hóa đơn cho hợp đồng.';
+      // Không throw — admission metadata đã được lưu thành công. Admin có thể tạo thủ
+      // công từ "Quản lý Hợp đồng" sau. Trả về warning trong response.
+    }
+  }
+
+  const responsePayload = {
+    message: createdContract
+      ? 'Đã tạo hợp đồng nhập viện và sinh hóa đơn thành công'
+      : 'Đã tạo hợp đồng nhập viện thành công',
     admission: formatAdmission(updated),
   };
+  if (createdContract) {
+    responsePayload.contract = {
+      _id: createdContract._id,
+      contractNumber: createdContract.contractNumber,
+      startDate: createdContract.startDate,
+      endDate: createdContract.endDate,
+      durationMonths: createdContract.durationMonths,
+    };
+  }
+  if (invoiceCreationError) {
+    responsePayload.invoiceWarning = invoiceCreationError;
+  }
+  return responsePayload;
 };
 
 const generateResidentCode = async () => {
@@ -1769,11 +2306,35 @@ const checkInResident = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'CHECK_IN_RESIDENT',
+    displayAction: 'Nhận phòng cho cư dân',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
-    beforeData: { requestCode: admission.requestCode, status: admission.status },
-    afterData: { requestCode: updated.requestCode, status: updated.status, residentId: resident._id, residentCode: resident.residentCode },
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã nhận phòng cho cư dân từ ${admission.requestCode}${resident ? ` — mã cư dân: ${resident.residentCode}` : ''}${assignedRoomId ? `, phòng/giường: ${assignedRoomId}/${assignedBedId || '—'}` : ''}`,
+    beforeData: {
+      requestCode: admission.requestCode,
+      status: admission.status,
+      residentId: admission.residentId,
+      assignedRoomId: admission.assignedRoomId,
+      assignedBedId: admission.assignedBedId,
+    },
+    afterData: {
+      requestCode: updated.requestCode,
+      status: updated.status,
+      residentId: resident._id,
+      residentCode: resident.residentCode,
+      residentFullName: resident.fullName,
+      assignedRoomId: updated.assignedRoomId,
+      assignedBedId: updated.assignedBedId,
+      checkInAt: updated.checkInAt,
+      familyAccountId: updated.familyAccountId,
+    },
+    metadata: {
+      residentAutoCreated: !admission.residentId,
+      familyAccountProvisioned: Boolean(familyAccountId && !admission.familyAccountId),
+    },
     req,
   });
 
@@ -1813,20 +2374,34 @@ const cancelAdmissionContract = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'CANCEL_ADMISSION_CONTRACT',
+    displayAction: 'Hủy hợp đồng nhập viện',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã hủy hợp đồng ${admission.contractNumber} của ${admission.requestCode} — Lý do: ${cancellationReason}`,
     beforeData: {
       requestCode: admission.requestCode,
       status: admission.status,
       contractNumber: admission.contractNumber,
       contractStatus: admission.contractStatus || 'active',
+      contractSignedAt: admission.contractSignedAt,
+      contractStartDate: admission.contractStartDate,
+      contractEndDate: admission.contractEndDate,
+      contractDurationMonths: admission.contractDurationMonths,
+      servicePackageId: admission.servicePackageId,
+      assignedServicePackage: admission.assignedServicePackage,
     },
     afterData: {
       requestCode: updated.requestCode,
       status: updated.status,
       contractNumber: updated.contractNumber,
       contractStatus: updated.contractStatus,
+      contractCancelledAt: updated.contractCancelledAt,
+      contractCancellationReason: updated.contractCancellationReason,
+    },
+    metadata: {
       cancellationReason,
     },
     req,
@@ -1989,11 +2564,17 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'CHANGE_ADMISSION_CONTRACT_SERVICE_PACKAGE',
+    displayAction: 'Đổi gói dịch vụ cho hợp đồng',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã đổi gói dịch vụ của ${admission.requestCode} từ "${previousPackageName || '—'}" sang "${servicePackage.name}"${priceDelta > 0 ? ` — phát sinh hóa đơn điều chỉnh ${priceDelta.toLocaleString('vi-VN')} VND` : priceDelta < 0 ? ` — hoàn ${Math.abs(priceDelta).toLocaleString('vi-VN')} VND` : ''}`,
     beforeData: {
       requestCode: admission.requestCode,
+      status: admission.status,
+      contractNumber: admission.contractNumber,
       servicePackageId: previousPackage,
       assignedServicePackage: previousPackageName,
       previousPackageMonthlyPrice,
@@ -2003,11 +2584,20 @@ const changeContractServicePackage = async (admin, admissionId, body, req) => {
     },
     afterData: {
       requestCode: updated.requestCode,
+      status: updated.status,
+      contractNumber: updated.contractNumber,
       servicePackageId: servicePackage._id,
       assignedServicePackage: servicePackage.name,
       cancelledInvoiceIds: invoicesToCancel.map((invoice) => invoice._id),
       adjustmentInvoiceId: adjustmentInvoice?._id || null,
       priceDelta,
+      remainingMonths,
+    },
+    metadata: {
+      previousPackageName,
+      newPackageName: servicePackage.name,
+      invoiceAdjustmentCreated: Boolean(adjustmentInvoice?._id),
+      cancelledInvoicesCount: invoicesToCancel.length,
     },
     req,
   });
@@ -2246,11 +2836,26 @@ const extendAdmissionContract = async (admin, admissionId, body) => {
     actorUserId: admin._id,
     actorRole: admin.role,
     action: 'EXTEND_CONTRACT',
+    displayAction: 'Gia hạn hợp đồng',
     module: 'admission',
+    businessModule: 'admission',
     targetEntityType: 'Admission',
     targetEntityId: admission._id,
+    targetName: `${admission.requestCode} — ${admission.applicant?.fullName || ''}`.trim(),
+    description: `${admin.fullName || admin.username || 'Quản trị viên'} đã gia hạn hợp đồng ${admission.contractNumber || ''} của ${admission.requestCode} đến ${newEndDate.toISOString?.().slice(0, 10) || newEndDate}${assignedBedId ? `, đổi giường: ${assignedBedId}` : ''}`,
     beforeData,
     afterData,
+    metadata: {
+      oldEndDate: oldEndDate?.toISOString?.(),
+      newEndDate: newEndDate.toISOString?.(),
+      contractNumber: admission.contractNumber,
+      extendedDays: Math.max(
+        0,
+        Math.ceil((newEndDate - (oldEndDate || new Date())) / (1000 * 60 * 60 * 24))
+      ),
+      residentAutoCreated: residentWasCreated,
+    },
+    req,
   });
 
   return {
@@ -2266,6 +2871,8 @@ module.exports = {
   listAdmissionHistory,
   getAdmissionRequest,
   cancelAdmissionRequest,
+  resubmitAdmissionRequest,
+  checkCitizenIdDuplicate,
   adminListAdmissions,
   adminGetAdmission,
   approveAdmission,

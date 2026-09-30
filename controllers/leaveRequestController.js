@@ -3,7 +3,7 @@ const { sendApiError } = require('../utils/apiErrorResponse');
 
 const submitLeaveRequest = async (req, res) => {
   try {
-    const result = await leaveRequestService.submitLeaveRequest(req.user, req.body);
+    const result = await leaveRequestService.submitLeaveRequest(req.user, req.body, req);
     res.status(201).json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -39,7 +39,7 @@ const getReplacementCandidates = async (req, res) => {
 
 const approveLeaveRequest = async (req, res) => {
   try {
-    const result = await leaveRequestService.approveLeaveRequest(req.user, req.params.id, req.body);
+    const result = await leaveRequestService.approveLeaveRequest(req.user, req.params.id, req.body, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -48,7 +48,7 @@ const approveLeaveRequest = async (req, res) => {
 
 const rejectLeaveRequest = async (req, res) => {
   try {
-    const result = await leaveRequestService.rejectLeaveRequest(req.user, req.params.id, req.body);
+    const result = await leaveRequestService.rejectLeaveRequest(req.user, req.params.id, req.body, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);
@@ -57,7 +57,7 @@ const rejectLeaveRequest = async (req, res) => {
 
 const cancelLeaveRequest = async (req, res) => {
   try {
-    const result = await leaveRequestService.cancelLeaveRequest(req.user, req.params.id);
+    const result = await leaveRequestService.cancelLeaveRequest(req.user, req.params.id, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);

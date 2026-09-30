@@ -8,7 +8,7 @@ const resolutionUpload = multer({
 
 const createIncident = async (req, res) => {
   try {
-    const result = await incidentService.createIncident(req.user, req.body);
+    const result = await incidentService.createIncident(req.user, req.body, req);
     res.status(201).json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -35,7 +35,7 @@ const getIncident = async (req, res) => {
 
 const updateIncidentStatus = async (req, res) => {
   try {
-    const result = await incidentService.updateIncidentStatus(req.user, req.params.id, req.body);
+    const result = await incidentService.updateIncidentStatus(req.user, req.params.id, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -44,7 +44,7 @@ const updateIncidentStatus = async (req, res) => {
 
 const reopenIncident = async (req, res) => {
   try {
-    const result = await incidentService.reopenIncident(req.user, req.params.id, req.body);
+    const result = await incidentService.reopenIncident(req.user, req.params.id, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -64,7 +64,7 @@ const exportIncidents = async (req, res) => {
 
 const assignHandlers = async (req, res) => {
   try {
-    const result = await incidentService.assignHandlers(req.user, req.params.id, req.body);
+    const result = await incidentService.assignHandlers(req.user, req.params.id, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -89,7 +89,7 @@ const updateIncidentResolution = async (req, res) => {
     try {
       const payload = req.body || {};
       const files = req.files || [];
-      const result = await incidentService.updateIncidentResolution(req.user, req.params.id, payload, files);
+      const result = await incidentService.updateIncidentResolution(req.user, req.params.id, payload, files, req);
       res.json(result);
     } catch (error) {
       res.status(error.statusCode || 500).json({ message: error.message });

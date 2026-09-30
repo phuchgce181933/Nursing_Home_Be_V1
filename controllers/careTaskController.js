@@ -1,4 +1,5 @@
 const svc = require('../services/careTaskService');
+const selfSvc = require('../services/caregiverCareTaskService');
 const { sendApiError } = require('../utils/apiErrorResponse');
 
 const getAssignmentContext = (req, res) =>
@@ -9,13 +10,24 @@ const getAssignmentContext = (req, res) =>
 
 const assignCareTask = (req, res) =>
   svc
-    .assignCareTask(req.body, req.user._id)
-    .then((result) => res.status(201).json({ success: true, ...result }))
-    .catch((err) => sendApiError(res, err));
+    .assignCareTask(req.body, req.user._id, req)
+    .then((result) => {
+      console.log('[assignCareTask] Success, task:', result?.task?._id);
+      res.status(201).json({ success: true, ...result });
+    })
+    .catch((err) => {
+      console.error('[assignCareTask] Error:', err?.message, err?.stack);
+      sendApiError(res, err);
+    });
 
+// Admin thấy toàn bộ; nhân viên (nurse/doctor/caregiver) chỉ thấy nhiệm vụ của chính mình.
+// Dùng lại caregiverCareTaskService.listMyCareTasks: nó đã ép staffProfileId và
+// kiểm tra residentId theo assignedResidentIds, và trả về cùng shape kết quả.
 const listCareTasks = (req, res) =>
-  svc
-    .listCareTasks(req.query, req.query)
+  (req.user.role === 'admin'
+    ? svc.listCareTasks(req.query, req.query)
+    : selfSvc.listMyCareTasks(req.user._id, req.query)
+  )
     .then((result) =>
       res.json({
         success: true,
@@ -39,7 +51,7 @@ const getCareTask = (req, res) =>
 
 const updateCareTaskStatus = (req, res) =>
   svc
-    .updateCareTaskStatus(req.params.id, req.body.status, req.body.notes, req.user)
+    .updateCareTaskStatus(req.params.id, req.body.status, req.body.notes, req.user, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
@@ -51,7 +63,7 @@ const getCareTasksByShift = (req, res) =>
 
 const deleteCareTask = (req, res) =>
   svc
-    .deleteCareTask(req.params.id)
+    .deleteCareTask(req.params.id, req.user, req)
     .then((result) => res.json({ success: true, ...result }))
     .catch((err) => sendApiError(res, err));
 

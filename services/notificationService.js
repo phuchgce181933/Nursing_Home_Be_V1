@@ -15,6 +15,9 @@ const createMany = async (notifications) => {
         title: n.title,
         body: n.content,
         category: n.category,
+        // Nhắc phát thuốc đi theo kênh Android 'medication' (heads-up, hiển thị trên màn khóa);
+        // các loại khác dùng kênh 'default'. Cả hai kênh đều do client tạo sẵn.
+        channelId: n.targetEntityType === 'MedicationSchedule' ? 'medication' : 'default',
         data: { notificationId: String(n._id), targetEntityType: n.targetEntityType, targetEntityId: n.targetEntityId ? String(n.targetEntityId) : undefined },
       })
     )

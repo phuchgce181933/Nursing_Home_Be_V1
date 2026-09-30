@@ -55,7 +55,7 @@ const adminListNotes = (req, res) =>
 
 const createNote = (req, res) =>
   svc
-    .createIntakeNote(req.user._id, req.body)
+    .createIntakeNote(req.user._id, req.body, req)
     .then((data) => res.status(201).json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
@@ -67,13 +67,13 @@ const getNote = (req, res) =>
 
 const updateNote = (req, res) =>
   svc
-    .updateIntakeNote(req.user._id, req.params.id, req.body)
+    .updateIntakeNote(req.user._id, req.params.id, req.body, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 
 const deleteNote = (req, res) =>
   svc
-    .deleteIntakeNote(req.user._id, req.params.id)
+    .deleteIntakeNote(req.user._id, req.params.id, req)
     .then((data) => res.json({ success: true, data }))
     .catch((err) => sendApiError(res, err));
 

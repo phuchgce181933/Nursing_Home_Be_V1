@@ -48,7 +48,7 @@ const findByRoomId = async (roomId) =>
     .populate('userId', 'fullName role avatarUrl isActive isBanned');
 
 const findByAssignedResidentId = async (residentId) =>
-  StaffProfile.find({ assignedResidentIds: residentId }).populate('userId', 'role');
+  StaffProfile.find({ assignedResidentIds: residentId }).populate('userId', 'role isActive');
 
 const findByIdWithAreas = async (id) =>
   StaffProfile.findById(id)

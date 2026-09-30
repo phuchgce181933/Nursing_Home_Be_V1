@@ -30,7 +30,7 @@ const getConsultationRequest = async (req, res) => {
 
 const updateConsultationRequest = async (req, res) => {
   try {
-    const result = await consultationRequestService.updateConsultationRequest(req.params.requestId, req.body);
+    const result = await consultationRequestService.updateConsultationRequest(req.params.requestId, req.body, req);
     res.json(result);
   } catch (err) {
     sendApiError(res, err);

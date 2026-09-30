@@ -37,6 +37,27 @@ router.get('/activities', protect, authorize(...CAREGIVER_ROLES), ctrl.listResid
 
 /**
  * @swagger
+ * /api/caregiver/residents/rooms:
+ *   get:
+ *     summary: Phòng của những cư dân mà hộ lý đang đăng nhập được phân công
+ *     description: |
+ *       Chỉ trả về các phòng đang có cư dân thuộc `assignedResidentIds` của chính
+ *       người gọi. Đây KHÔNG phải danh sách phòng toàn cơ sở — muốn xem toàn bộ
+ *       phòng phải dùng `/api/facilities` với quyền quản trị.
+ *       Mỗi phòng chỉ liệt kê những cư dân nằm trong phạm vi phân công.
+ *     tags: [CaregiverResidents]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Danh sách phòng trong phạm vi phụ trách
+ *       404:
+ *         description: Không tìm thấy hồ sơ nhân viên của người gọi
+ */
+router.get('/rooms', protect, authorize(...CAREGIVER_ROLES), ctrl.listRooms);
+
+/**
+ * @swagger
  * /api/caregiver/residents/{id}:
  *   get:
  *     summary: Get one assigned resident detail

@@ -63,6 +63,35 @@ const cancelAdmissionRequest = async (req, res) => {
   }
 };
 
+// ── Re-submit a previous admission request (Family) ─────────────────────────────
+// Used when the contract has ended (resident discharged, contract cancelled/expired)
+// and the family wants to re-admit the same resident. Reuses the existing admission
+// record (preserves resident info + applicant info) and resets workflow to 'new_request'
+// so it goes through admin approval → doctor examination → contract creation again.
+const resubmitAdmissionRequest = async (req, res) => {
+  try {
+    const result = await admissionService.resubmitAdmissionRequest(
+      req.user,
+      req.params.admissionId,
+      req.body,
+      req
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
+  }
+};
+
+// ── Check duplicate citizenId (real-time validation) ─────────────────────────────
+const checkCitizenIdDuplicate = async (req, res) => {
+  try {
+    const result = await admissionService.checkCitizenIdDuplicate(req.user, req.query.citizenId);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message, errorCode: err.errorCode });
+  }
+};
+
 // ── Admin controllers ──────────────────────────────────────────────────
 const adminListAdmissions = async (req, res) => {
   try {
@@ -195,6 +224,8 @@ module.exports = {
   listAdmissionRequests,
   getAdmissionRequest,
   cancelAdmissionRequest,
+  resubmitAdmissionRequest,
+  checkCitizenIdDuplicate,
   adminListAdmissions,
   adminGetAdmission,
   approveAdmission,

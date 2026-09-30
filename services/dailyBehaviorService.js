@@ -4,6 +4,7 @@ const dailyBehaviorRepo = require('../repositories/dailyBehaviorRecordRepository
 const staffProfileRepo = require('../repositories/staffProfileRepository');
 const residentRepo = require('../repositories/residentRepository');
 const assignedResidentService = require('./assignedResidentService');
+const { createAuditLog } = require('../utils/auditLog');
 const {
   OBSERVATION_CATEGORIES,
   MOOD_LEVELS,
@@ -15,6 +16,17 @@ const {
   getCaregiverRecordingWindow,
   assertCaregiverRecordingWindowOpen,
 } = require('../utils/mealIntakeShiftWindow');
+
+const BEHAVIOR_LABELS = {
+  mood: 'Tâm trạng', behavior: 'Hành vi', abnormal: 'Bất thường',
+  calm: 'Bình tĩnh', happy: 'Vui vẻ', neutral: 'Bình thường', anxious: 'Lo lắng',
+  sad: 'Buồn', agitated: 'Kích động', confused: 'Lú lẫn', irritable: 'Cáu gắt',
+  cooperative: 'Hợp tác', withdrawn: 'Thu mình', restless: 'Bồn chồn', wandering: 'Đi lang thang',
+  verbal_outburst: 'La hét/lời nói bộc phát', physical_resistance: 'Kháng cự',
+  sleep_disturbance: 'Rối loạn giấc ngủ', appetite_change: 'Thay đổi cảm giác ăn uống',
+  social_withdrawal: 'Xa cách xã hội', repetitive_behavior: 'Hành vi lặp lại', other: 'Khác',
+  normal: 'Bình thường', mild: 'Nhẹ', moderate: 'Vừa', urgent: 'Khẩn cấp',
+};
 
 const parseWorkDateStrict = (workDate) => {
   const str = String(workDate || '').trim();
@@ -208,11 +220,11 @@ const listRecordsForAdmin = async (query) => {
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 };
 
-const createRecord = async (userId, body) => {
+const createRecord = async (userId, body, req = null) => {
   validatePayload(body, false);
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
-  await assertResidentAssigned(profile, body.residentId);
+  const resident = await assertResidentAssigned(profile, body.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDate,
@@ -244,7 +256,25 @@ const createRecord = async (userId, body) => {
     recordedAt: new Date(),
   });
 
-  return dailyBehaviorRepo.findById(record._id);
+  const saved = await dailyBehaviorRepo.findById(record._id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'CREATE',
+    displayAction: 'Tạo bản ghi hành vi hàng ngày',
+    module: 'dailyBehavior',
+    targetEntityType: 'DailyBehaviorRecord',
+    targetEntityId: saved._id,
+    targetName: `${BEHAVIOR_LABELS[category] || category} - ${workDate}`,
+    description: `Tạo bản ghi hành vi hàng ngày cho cư dân ${resident.fullName}, loại: ${BEHAVIOR_LABELS[category] || category}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
+    afterData: saved,
+    req,
+  });
+
+  return saved;
 };
 
 const assertAuthor = (record, profile) => {
@@ -261,12 +291,12 @@ const getRecord = async (userId, id) => {
   return record;
 };
 
-const updateRecord = async (userId, id, body) => {
+const updateRecord = async (userId, id, body, req = null) => {
   const record = await dailyBehaviorRepo.findById(id);
   if (!record) throw apiErr(CODES.BEHAVIOR_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
-  await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  const resident = await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDateToVNString(record.workDate),
@@ -293,6 +323,7 @@ const updateRecord = async (userId, id, body) => {
   if (body.behaviorType !== undefined) update.behaviorType = body.behaviorType || undefined;
   if (severity !== record.severity) update.severity = severity;
   if (body.notes !== undefined) update.notes = String(body.notes).trim();
+  update.recordedAt = new Date();
 
   if (body.observedAt !== undefined || body.workDate !== undefined) {
     const workDateStr = body.workDate
@@ -302,21 +333,62 @@ const updateRecord = async (userId, id, body) => {
     update.observedAt = parseObservedAt(body.observedAt ?? record.observedAt, workDateStr);
   }
 
-  return dailyBehaviorRepo.updateById(id, update);
+  const beforeData = record.toObject ? record.toObject() : record;
+  const updated = await dailyBehaviorRepo.updateById(id, update);
+  const categoryLabel = BEHAVIOR_LABELS[category] || category;
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật bản ghi hành vi hàng ngày',
+    module: 'dailyBehavior',
+    targetEntityType: 'DailyBehaviorRecord',
+    targetEntityId: id,
+    targetName: `${categoryLabel} - ${workDateToVNString(record.workDate)}`,
+    description: `Cập nhật bản ghi hành vi hàng ngày của cư dân ${resident.fullName}, loại: ${categoryLabel}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
+    beforeData,
+    afterData: updated,
+    req,
+  });
+
+  return updated;
 };
 
-const deleteRecord = async (userId, id) => {
+const deleteRecord = async (userId, id, req = null) => {
   const record = await dailyBehaviorRepo.findById(id);
   if (!record) throw apiErr(CODES.BEHAVIOR_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(record, profile);
-  await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
+  const resident = await assertResidentAssigned(profile, record.residentId?._id || record.residentId);
   await assertCaregiverRecordingWindowOpen(
     profile._id,
     workDateToVNString(record.workDate),
     CODES.BEHAVIOR_SHIFT_WINDOW_CLOSED
   );
+
+  const beforeData = record.toObject ? record.toObject() : record;
+  const categoryLabel = BEHAVIOR_LABELS[record.observationCategory] || record.observationCategory;
   await dailyBehaviorRepo.deleteById(id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    action: 'DELETE',
+    displayAction: 'Xóa bản ghi hành vi hàng ngày',
+    module: 'dailyBehavior',
+    targetEntityType: 'DailyBehaviorRecord',
+    targetEntityId: id,
+    targetName: `${categoryLabel} - ${workDateToVNString(record.workDate)}`,
+    description: `Xóa bản ghi hành vi hàng ngày của cư dân ${resident.fullName}, loại: ${categoryLabel}`,
+    performedBy: req?.user?.fullName,
+    metadata: { recordedByName: req?.user?.fullName },
+    beforeData,
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.BEHAVIOR_RECORD_DELETED), deleted: true, id };
 };
 

@@ -24,6 +24,23 @@ const findByFilterLean = async (filter, { populate, sort } = {}) => {
   return q.lean();
 };
 
+const workDateRangeFilter = (workDateStr) => ({
+  $gte: new Date(`${workDateStr}T00:00:00.000Z`),
+  $lte: new Date(`${workDateStr}T23:59:59.999Z`),
+});
+
+/**
+ * Bản công bố mới nhất của ngày làm việc — cùng quy ước với
+ * rehabilitationScheduleDayRepository.findPublishedByWorkDate.
+ */
+const findPublishedByWorkDate = async (workDateStr) =>
+  SpecialDietDay.findOne({
+    status: 'published',
+    workDate: workDateRangeFilter(workDateStr),
+  })
+    .sort({ publishedAt: -1 })
+    .lean();
+
 module.exports = {
   create,
   findById,
@@ -32,4 +49,6 @@ module.exports = {
   updateById,
   deleteById,
   findByFilterLean,
+  workDateRangeFilter,
+  findPublishedByWorkDate,
 };

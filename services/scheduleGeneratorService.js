@@ -9,17 +9,18 @@ const toVNDateStr = (date) => {
 };
 
 /**
- * Delete future PENDING schedules for one item and recreate from item.times[].
+ * Delete today's/future PENDING schedules for one item and recreate from item.times[].
  * Times are stored as "HH:MM" in Vietnam time (UTC+7); converted to UTC for storage.
  */
 const generateSchedulesForItem = async (prescription, item) => {
   const now = new Date();
+  const todayStart = new Date(`${toVNDateStr(now)}T00:00:00+07:00`);
 
   await medicationScheduleRepo.deleteManyByFilter({
     prescriptionId: prescription._id,
     prescriptionItemId: item._id,
     status: 'PENDING',
-    scheduledTime: { $gt: now },
+    scheduledTime: { $gte: todayStart },
   });
 
   if (!item.startDate || !item.endDate || !Array.isArray(item.times) || !item.times.length) return;
@@ -35,7 +36,7 @@ const generateSchedulesForItem = async (prescription, item) => {
     const dateStr = toVNDateStr(cursor);
     for (const timeStr of item.times) {
       const scheduledTime = new Date(`${dateStr}T${timeStr}:00+07:00`);
-      if (scheduledTime > now) {
+      if (scheduledTime >= todayStart) {
         schedules.push({
           residentId: prescription.residentId,
           prescriptionId: prescription._id,
@@ -60,6 +61,7 @@ const generateSchedulesForItem = async (prescription, item) => {
  */
 const generateSchedules = async (prescription) => {
   const now = new Date();
+  const todayStart = new Date(`${toVNDateStr(now)}T00:00:00+07:00`);
   const bulk = [];
 
   for (const item of prescription.items) {
@@ -75,7 +77,7 @@ const generateSchedules = async (prescription) => {
       const dateStr = toVNDateStr(cursor);
       for (const timeStr of item.times) {
         const scheduledTime = new Date(`${dateStr}T${timeStr}:00+07:00`);
-        if (scheduledTime > now) {
+        if (scheduledTime >= todayStart) {
           bulk.push({
             residentId: prescription.residentId,
             prescriptionId: prescription._id,

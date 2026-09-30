@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { apiErr, apiSuccess, ApiError, CODES, SUCCESS } = require('../utils/apiError');
+const User = require('../models/user');
 const mealPlanDayRepo = require('../repositories/mealPlanDayRepository');
 const mealPlanEntryRepo = require('../repositories/mealPlanEntryRepository');
 const mealTimeScheduleService = require('./mealTimeScheduleService');
@@ -8,6 +9,7 @@ const { listAssignedAdmittedResidentsForUser, assertResidentsAssignedToUser } = 
 const residentRepo = require('../repositories/residentRepository');
 const { parseWorkDate, todayVN, nowVN, toMinutes, buildTaskDateTime, workDateToVNString } = require('../utils/shiftTime');
 const { assertNoMealPlanConflicts } = require('../utils/mealPlanValidation');
+const { createAuditLog } = require('../utils/auditLog');
 
 const NON_TX_ERROR_PATTERNS = [
   /retryable writes/i,
@@ -20,6 +22,18 @@ const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const MEAL_STAGES = ['recovery', 'maintenance', 'special_monitoring'];
 const VALID_ENTRY_SOURCES = ['template', 'manual', 'catalog'];
 const DEFAULT_MEAL_TIMES = { breakfast: '07:30', lunch: '11:30', dinner: '17:30' };
+
+// Translate enums for audit logs
+const CARE_STAGE_LABELS = {
+  recovery: 'Phục hồi',
+  maintenance: 'Duy trì',
+  special_monitoring: 'Theo dõi đặc biệt',
+};
+const MEAL_TYPE_LABELS = {
+  breakfast: 'Sáng',
+  lunch: 'Trưa',
+  dinner: 'Tối',
+};
 
 const MEAL_PLAN_TEMPLATES = [
   {
@@ -255,7 +269,47 @@ const assertEntryMealTimesFromNow = (entries, workDateStr) => {
 const hydratePlan = async (day) => {
   if (!day) return null;
   const entries = await mealPlanEntryRepo.findByDayId(day._id);
-  return { ...day.toObject(), entries };
+
+  // Resolve resident IDs to names for audit readability
+  const resolvedEntries = await Promise.all(entries.map(async (entry) => {
+    const residentObj = entry.residentId && typeof entry.residentId === 'object' ? entry.residentId : null;
+    let residentName = null;
+    if (!residentObj) {
+      try {
+        const r = await residentRepo.findById(entry.residentId);
+        residentName = r ? r.fullName : String(entry.residentId);
+      } catch {
+        residentName = String(entry.residentId);
+      }
+    } else {
+      residentName = residentObj.fullName || String(entry.residentId._id || entry.residentId);
+    }
+    return {
+      ...entry.toObject ? entry.toObject() : entry,
+      residentName,
+      mealTypeLabel: MEAL_TYPE_LABELS[entry.mealType] || entry.mealType,
+    };
+  }));
+
+  const dayObj = day.toObject ? day.toObject() : day;
+
+  // Replace populated user objects with just the name for audit readability
+  if (dayObj.createdBy && typeof dayObj.createdBy === 'object') {
+    dayObj.createdBy = dayObj.createdBy.fullName || dayObj.createdBy._id?.toString() || String(dayObj.createdBy);
+  }
+  if (dayObj.publishedBy && typeof dayObj.publishedBy === 'object') {
+    dayObj.publishedBy = dayObj.publishedBy.fullName || dayObj.publishedBy._id?.toString() || String(dayObj.publishedBy);
+  }
+  // mealTimeScheduleDayId is also populated, replace with just the title for readability
+  if (dayObj.mealTimeScheduleDayId && typeof dayObj.mealTimeScheduleDayId === 'object') {
+    dayObj.mealTimeScheduleDayId = dayObj.mealTimeScheduleDayId._id?.toString() || String(dayObj.mealTimeScheduleDayId);
+  }
+
+  return {
+    ...dayObj,
+    careStageLabel: CARE_STAGE_LABELS[dayObj.careStage] || dayObj.careStage,
+    entries: resolvedEntries,
+  };
 };
 
 const getTemplates = async () => ({
@@ -290,7 +344,7 @@ const listResidentsForMealPlan = async (params = {}, actorUser) => {
   return listAssignedAdmittedResidentsForUser(actorUser._id, { search: params.search });
 };
 
-const createDraft = async (body, actorUserId) => {
+const createDraft = async (body, actorUserId, req = null) => {
   const workDate = parseWorkDateStrict(body.workDate);
   if (workDate < todayVN()) {
     throw apiErr(CODES.MEAL_PAST_DATE_NOT_ALLOWED, { statusCode: 400 });
@@ -336,13 +390,32 @@ const createDraft = async (body, actorUserId) => {
     await mealPlanEntryRepo.createMany(entries.map((e) => ({ ...e, mealPlanDayId: day._id })), dbOpts);
   });
   const saved = await mealPlanDayRepo.findById(createdId);
-  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_CREATED), plan: await hydratePlan(saved) };
+  const hydrated = await hydratePlan(saved);
+
+  await createAuditLog({
+    actorUserId,
+    performedBy: req?.user?.fullName,
+    action: 'CREATE',
+    displayAction: 'Tạo nháp kế hoạch bữa ăn',
+    module: 'mealPlan',
+    targetEntityType: 'MealPlanDay',
+    targetEntityId: createdId,
+    targetName: `Kế hoạch bữa ăn — ${CARE_STAGE_LABELS[saved.careStage] || saved.careStage} (${workDateToVNString(saved.workDate)})`,
+    description: `Tạo nháp kế hoạch bữa ăn ngày ${workDate}, giai đoạn: ${CARE_STAGE_LABELS[careStage] || careStage}, gồm ${entries.length} mục món ăn`,
+    metadata: { createdByName: req?.user?.fullName },
+    afterData: hydrated,
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_CREATED), plan: hydrated };
 };
 
-const updateDraft = async (id, body, actorUserId) => {
+const updateDraft = async (id, body, actorUserId, req = null) => {
   const day = await mealPlanDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') throw apiErr(CODES.MEAL_PLAN_DRAFT_ONLY_EDIT, { statusCode: 400 });
+
+  const beforeData = day.toObject ? day.toObject() : day;
 
   const updatePayload = {};
   if (body.workDate !== undefined) {
@@ -367,6 +440,12 @@ const updateDraft = async (id, body, actorUserId) => {
   }
 
   const hasEntries = Array.isArray(body.entries);
+  const changeSummary = [];
+  if (body.workDate !== undefined) changeSummary.push(`ngày làm việc: ${body.workDate}`);
+  if (body.careStage !== undefined) changeSummary.push('giai đoạn chăm sóc');
+  if (body.title !== undefined) changeSummary.push('tiêu đề kế hoạch');
+  if (body.mealTimeScheduleDayId !== undefined) changeSummary.push('lịch giờ ăn');
+  if (hasEntries) changeSummary.push(`danh sách món ăn: ${body.entries.length} mục`);
   const targetWorkDateStr =
     body.workDate !== undefined
       ? parseWorkDateStrict(body.workDate)
@@ -433,7 +512,34 @@ const updateDraft = async (id, body, actorUserId) => {
     }
   });
   const saved = await mealPlanDayRepo.findById(id);
-  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_UPDATED), plan: await hydratePlan(saved) };
+  const hydrated = await hydratePlan(saved);
+
+  // Resolve creator name for audit metadata
+  let creatorName = '—';
+  try {
+    if (beforeData.createdBy) {
+      const creator = await User.findById(beforeData.createdBy).select('fullName').lean();
+      if (creator?.fullName) creatorName = creator.fullName;
+    }
+  } catch (_) {}
+
+  await createAuditLog({
+    actorUserId,
+    performedBy: req?.user?.fullName,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật nháp kế hoạch bữa ăn',
+    module: 'mealPlan',
+    targetEntityType: 'MealPlanDay',
+    targetEntityId: id,
+    targetName: `Kế hoạch bữa ăn — ${CARE_STAGE_LABELS[saved.careStage] || saved.careStage} (${workDateToVNString(saved.workDate)})`,
+    description: `Cập nhật nháp kế hoạch bữa ăn ngày ${workDateToVNString(saved.workDate)}, giai đoạn: ${CARE_STAGE_LABELS[saved.careStage] || saved.careStage}${changeSummary.length ? `; thay đổi ${changeSummary.join(', ')}` : ''}`,
+    beforeData,
+    afterData: hydrated,
+    metadata: { createdByName: creatorName },
+    req,
+  });
+
+  return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_UPDATED), plan: hydrated };
 };
 
 const listPlans = async (filter = {}, options = {}) => {
@@ -465,12 +571,14 @@ const getPlan = async (id) => {
   return hydratePlan(day);
 };
 
-const deleteDraft = async (id) => {
+const deleteDraft = async (id, req = null) => {
   const day = await mealPlanDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   if (day.status !== 'draft') {
     throw apiErr(CODES.MEAL_PLAN_DRAFT_ONLY_DELETE, { statusCode: 400 });
   }
+
+  const beforeData = day.toObject ? day.toObject() : day;
 
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
@@ -478,10 +586,34 @@ const deleteDraft = async (id) => {
     await mealPlanDayRepo.deleteById(id, dbOpts);
   });
 
+  // Resolve creator name for audit metadata
+  let creatorName = '—';
+  try {
+    if (beforeData.createdBy) {
+      const creator = await User.findById(beforeData.createdBy).select('fullName').lean();
+      if (creator?.fullName) creatorName = creator.fullName;
+    }
+  } catch (_) {}
+
+  await createAuditLog({
+    actorUserId: req?.user?._id,
+    performedBy: req?.user?.fullName,
+    action: 'DELETE',
+    displayAction: 'Xóa nháp kế hoạch bữa ăn',
+    module: 'mealPlan',
+    targetEntityType: 'MealPlanDay',
+    targetEntityId: id,
+    targetName: day.title,
+    description: `Xóa nháp kế hoạch bữa ăn: ${day.title}`,
+    beforeData,
+    metadata: { createdByName: creatorName },
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.MEAL_PLAN_DRAFT_DELETED), deleted: true, id };
 };
 
-const publishPlan = async (id, actorUserId) => {
+const publishPlan = async (id, actorUserId, req = null) => {
   const day = await mealPlanDayRepo.findById(id);
   if (!day) throw apiErr(CODES.MEAL_PLAN_NOT_FOUND, { statusCode: 404 });
   if (day.status === 'published') {
@@ -525,6 +657,8 @@ const publishPlan = async (id, actorUserId) => {
     excludeMealPlanDayId: id,
   });
 
+  const beforeData = day.toObject ? day.toObject() : day;
+
   await runWithOptionalTransaction(async (session) => {
     const dbOpts = session ? { session } : {};
     await mealPlanDayRepo.updateById(
@@ -540,9 +674,36 @@ const publishPlan = async (id, actorUserId) => {
   });
 
   const saved = await mealPlanDayRepo.findById(id);
+  const hydrated = await hydratePlan(saved);
+
+  // Resolve creator name for audit metadata
+  let creatorName = '—';
+  try {
+    if (beforeData.createdBy) {
+      const creator = await User.findById(beforeData.createdBy).select('fullName').lean();
+      if (creator?.fullName) creatorName = creator.fullName;
+    }
+  } catch (_) {}
+
+  await createAuditLog({
+    actorUserId,
+    performedBy: req?.user?.fullName,
+    action: 'UPDATE',
+    displayAction: 'Xuất bản kế hoạch bữa ăn',
+    module: 'mealPlan',
+    targetEntityType: 'MealPlanDay',
+    targetEntityId: id,
+    targetName: `Kế hoạch bữa ăn — ${CARE_STAGE_LABELS[saved.careStage] || saved.careStage} (${workDateToVNString(saved.workDate)})`,
+    description: `Xuất bản kế hoạch bữa ăn ngày ${workDate}, giai đoạn: ${CARE_STAGE_LABELS[saved.careStage] || saved.careStage}`,
+    beforeData,
+    afterData: hydrated,
+    metadata: { createdByName: creatorName },
+    req,
+  });
+
   return {
     ...apiSuccess(SUCCESS.MEAL_PLAN_PUBLISHED),
-    plan: await hydratePlan(saved),
+    plan: hydrated,
     createdExecutionRows: entries.length,
   };
 };

@@ -52,6 +52,15 @@ const invoiceSchema = new Schema(
     prescriptionId: { type: Types.ObjectId, ref: 'Prescription' },
     dueDate: { type: Date },
 
+    // Proration metadata — lưu lại thông tin tính theo ngày khi hóa đơn chỉ cover
+    // một phần tháng (vd vào viện ngày 25/09 → 30/09, monthlyFee=200k, proration
+    // = 6/30 = 0.2 → tiền hóa đơn = 40k). Giúp admin đối chiếu khi cần và frontend
+    // có thể hiển thị "tính theo 6/30 ngày" thay vì phải tự tính lại.
+    prorationDays: { type: Number, default: null },
+    prorationMonthDays: { type: Number, default: null },
+    prorationRatio: { type: Number, default: null },
+    isPartialMonth: { type: Boolean, default: false },
+
     // Set when a PayOS checkout is created for this invoice; used to verify the real payment
     // status with PayOS before marking the invoice paid (never trust client-supplied status alone).
     payosOrderCode: { type: Number, index: true },

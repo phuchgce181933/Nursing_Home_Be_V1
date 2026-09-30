@@ -8,9 +8,11 @@ const assignedResidentService = require('./assignedResidentService');
 const { findPublishedMealPlanEntryForResident } = require('../utils/publishedMealPlanLookup');
 const { parseWorkDate, todayVN, workDateToVNString } = require('../utils/shiftTime');
 const { getCaregiverRecordingWindow, assertCaregiverRecordingWindowOpen } = require('../utils/mealIntakeShiftWindow');
+const { createAuditLog } = require('../utils/auditLog');
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const INTAKE_STATUSES = ['full', 'partial', 'refused', 'assisted'];
+const MEAL_TYPE_LABELS = { breakfast: 'Sáng', lunch: 'Trưa', dinner: 'Tối' };
 
 const parseWorkDateStrict = (workDate) => {
   const str = String(workDate || '').trim();
@@ -224,11 +226,11 @@ const listIntakeNotesForAdmin = async (query) => {
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 };
 
-const createIntakeNote = async (userId, body) => {
+const createIntakeNote = async (userId, body, req = null) => {
   validateIntakePayload(body, false);
   const workDate = parseWorkDateStrict(body.workDate);
   const profile = await getCaregiverProfile(userId);
-  await assertResidentAssigned(profile, body.residentId);
+  const resident = await assertResidentAssigned(profile, body.residentId);
   await assertRecordingWindowOpen(profile._id, workDate);
 
   const workDateDate = workDateToDate(workDate);
@@ -246,6 +248,7 @@ const createIntakeNote = async (userId, body) => {
     throw apiErr(CODES.RECORD_NOT_FOUND, { statusCode: 400 });
   }
   const plannedMealName = body.plannedMealName?.trim() || planEntry.mealName;
+  const mealTypeLabel = MEAL_TYPE_LABELS[body.mealType] || body.mealType;
 
   const portionPercent =
     body.intakeStatus === 'partial' ? Number(body.portionPercent) : body.portionPercent ?? undefined;
@@ -262,7 +265,25 @@ const createIntakeNote = async (userId, body) => {
     recordedAt: new Date(),
   });
 
-  return mealIntakeNoteRepo.findById(note._id);
+  const saved = await mealIntakeNoteRepo.findById(note._id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    performedBy: req?.user?.fullName,
+    action: 'CREATE',
+    displayAction: 'Tạo ghi chú bữa ăn',
+    module: 'mealIntake',
+    targetEntityType: 'MealIntakeNote',
+    targetEntityId: saved._id,
+    targetName: `Bữa ${mealTypeLabel} - ${workDate}`,
+    description: `Tạo ghi chú bữa ăn cho cư dân ${resident.fullName}, bữa: ${mealTypeLabel}, ngày: ${workDate}`,
+    metadata: { recordedByName: req?.user?.fullName },
+    afterData: saved,
+    req,
+  });
+
+  return saved;
 };
 
 const assertAuthor = (note, profile) => {
@@ -279,12 +300,12 @@ const getIntakeNote = async (userId, id) => {
   return note;
 };
 
-const updateIntakeNote = async (userId, id, body) => {
+const updateIntakeNote = async (userId, id, body, req = null) => {
   const note = await mealIntakeNoteRepo.findById(id);
   if (!note) throw apiErr(CODES.MEAL_INTAKE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
-  await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
+  const resident = await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
   await assertRecordingWindowOpen(profile._id, workDateToVNString(note.workDate));
   validateIntakePayload(body, true);
 
@@ -292,6 +313,7 @@ const updateIntakeNote = async (userId, id, body) => {
   if (body.intakeStatus !== undefined) update.intakeStatus = body.intakeStatus;
   if (body.notes !== undefined) update.notes = body.notes?.trim() || undefined;
   if (body.plannedMealName !== undefined) update.plannedMealName = body.plannedMealName?.trim() || undefined;
+  update.recordedAt = new Date();
 
   const status = body.intakeStatus ?? note.intakeStatus;
   if (body.portionPercent !== undefined || status === 'partial') {
@@ -308,17 +330,58 @@ const updateIntakeNote = async (userId, id, body) => {
     }
   }
 
-  return mealIntakeNoteRepo.updateById(id, update);
+  const beforeData = note.toObject ? note.toObject() : note;
+  const updated = await mealIntakeNoteRepo.updateById(id, update);
+  const mealTypeLabel = MEAL_TYPE_LABELS[note.mealType] || note.mealType;
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    performedBy: req?.user?.fullName,
+    action: 'UPDATE',
+    displayAction: 'Cập nhật ghi chú bữa ăn',
+    module: 'mealIntake',
+    targetEntityType: 'MealIntakeNote',
+    targetEntityId: id,
+    targetName: `Bữa ${mealTypeLabel} - ${workDateToVNString(note.workDate)}`,
+    description: `Cập nhật ghi chú bữa ăn của cư dân ${resident.fullName}, bữa: ${mealTypeLabel}`,
+    metadata: { recordedByName: req?.user?.fullName },
+    beforeData,
+    afterData: updated,
+    req,
+  });
+
+  return updated;
 };
 
-const deleteIntakeNote = async (userId, id) => {
+const deleteIntakeNote = async (userId, id, req = null) => {
   const note = await mealIntakeNoteRepo.findById(id);
   if (!note) throw apiErr(CODES.MEAL_INTAKE_RECORD_NOT_FOUND, { statusCode: 404 });
   const profile = await getCaregiverProfile(userId);
   assertAuthor(note, profile);
-  await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
+  const resident = await assertResidentAssigned(profile, note.residentId?._id || note.residentId);
   await assertRecordingWindowOpen(profile._id, workDateToVNString(note.workDate));
+
+  const beforeData = note.toObject ? note.toObject() : note;
+  const mealTypeLabel = MEAL_TYPE_LABELS[note.mealType] || note.mealType;
   await mealIntakeNoteRepo.deleteById(id);
+
+  await createAuditLog({
+    actorUserId: userId,
+    actorRole: profile.role,
+    performedBy: req?.user?.fullName,
+    action: 'DELETE',
+    displayAction: 'Xóa ghi chú bữa ăn',
+    module: 'mealIntake',
+    targetEntityType: 'MealIntakeNote',
+    targetEntityId: id,
+    targetName: `Bữa ${mealTypeLabel} - ${workDateToVNString(note.workDate)}`,
+    description: `Xóa ghi chú bữa ăn của cư dân ${resident.fullName}, bữa: ${mealTypeLabel}`,
+    metadata: { recordedByName: req?.user?.fullName },
+    beforeData,
+    req,
+  });
+
   return { ...apiSuccess(SUCCESS.MEAL_INTAKE_RECORD_DELETED), deleted: true, id };
 };
 

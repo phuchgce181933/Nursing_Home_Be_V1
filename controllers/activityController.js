@@ -2,7 +2,7 @@ const activityService = require('../services/activityService');
 
 const createActivity = async (req, res) => {
   try {
-    const result = await activityService.createActivity(req.body);
+    const result = await activityService.createActivity(req.body, req);
     res.status(201).json(result);
   } catch (err) {
     // Surface extra context in dev so 500s aren't silent "Request body is required" placeholders.
@@ -51,7 +51,7 @@ const getActivity = async (req, res) => {
 
 const updateActivity = async (req, res) => {
   try {
-    const result = await activityService.updateActivity(req.params.activityId, req.body);
+    const result = await activityService.updateActivity(req.params.activityId, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -60,7 +60,7 @@ const updateActivity = async (req, res) => {
 
 const deleteActivity = async (req, res) => {
   try {
-    const result = await activityService.deleteActivity(req.params.activityId);
+    const result = await activityService.deleteActivity(req.params.activityId, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -69,7 +69,7 @@ const deleteActivity = async (req, res) => {
 
 const bulkDeleteActivities = async (req, res) => {
   try {
-    const result = await activityService.bulkDeleteActivities(req.query);
+    const result = await activityService.bulkDeleteActivities(req.query, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -78,7 +78,16 @@ const bulkDeleteActivities = async (req, res) => {
 
 const bulkUpdateActivityStatus = async (req, res) => {
   try {
-    const result = await activityService.bulkUpdateActivityStatus(req.query, req.body?.status);
+    const result = await activityService.bulkUpdateActivityStatus(req.query, req.body?.status, req);
+    res.json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const bulkUpdateActivities = async (req, res) => {
+  try {
+    const result = await activityService.bulkUpdateActivities(req.params.activityId, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -87,7 +96,7 @@ const bulkUpdateActivityStatus = async (req, res) => {
 
 const updateActivityStatus = async (req, res) => {
   try {
-    const result = await activityService.updateActivity(req.params.activityId, { status: req.body.status });
+    const result = await activityService.updateActivity(req.params.activityId, { status: req.body.status }, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -96,7 +105,7 @@ const updateActivityStatus = async (req, res) => {
 
 const setParticipantList = async (req, res) => {
   try {
-    const result = await activityService.setParticipantList(req.params.activityId, req.body.participantResidentIds);
+    const result = await activityService.setParticipantList(req.params.activityId, req.body.participantResidentIds, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -105,7 +114,7 @@ const setParticipantList = async (req, res) => {
 
 const registerResident = async (req, res) => {
   try {
-    const result = await activityService.registerResident(req.params.activityId, req.body.residentId, req.user);
+    const result = await activityService.registerResident(req.params.activityId, req.body.residentId, req.user, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -114,7 +123,7 @@ const registerResident = async (req, res) => {
 
 const unregisterResident = async (req, res) => {
   try {
-    const result = await activityService.unregisterResident(req.params.activityId, req.body.residentId, req.user);
+    const result = await activityService.unregisterResident(req.params.activityId, req.body.residentId, req.user, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -123,7 +132,7 @@ const unregisterResident = async (req, res) => {
 
 const recordParticipationResult = async (req, res) => {
   try {
-    const result = await activityService.recordParticipationResult(req.params.activityId, req.body);
+    const result = await activityService.recordParticipationResult(req.params.activityId, req.body, req);
     res.json(result);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
@@ -156,6 +165,7 @@ module.exports = {
   deleteActivity,
   bulkDeleteActivities,
   bulkUpdateActivityStatus,
+  bulkUpdateActivities,
   updateActivityStatus,
   setParticipantList,
   registerResident,

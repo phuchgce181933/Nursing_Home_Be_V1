@@ -24,7 +24,6 @@ const CareNote = require('./careNote');
 const Invoice = require('./invoice');
 const Payment = require('./payment');
 const Notification = require('./notification');
-const SupportRequest = require('./supportRequest');
 const ConsultationRequest = require('./consultationRequest');
 const Conversation = require('./conversation');
 const Message = require('./message');
@@ -53,6 +52,7 @@ const ElderlyDosageGuideline = require('./ElderlyDosageGuideline');
 const FamilyWallet = require('./familyWallet');
 const PushToken = require('./pushToken');
 const Contract = require('./contract');
+const SupportRequest = require('./supportRequest');
 
 module.exports = {
   User,
@@ -81,7 +81,6 @@ module.exports = {
   Invoice,
   Payment,
   Notification,
-  SupportRequest,
   ConsultationRequest,
   Conversation,
   Message,
@@ -110,4 +109,5 @@ module.exports = {
   FamilyWallet,
   PushToken,
   Contract,
+  SupportRequest,
 };

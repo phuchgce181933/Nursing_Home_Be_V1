@@ -13,7 +13,7 @@ const getSchedule = (req, res) => respond(res, svc.getSchedule(req.query.fromDat
 
 const createShift = (req, res) =>
   svc
-    .createShift(req.body, req.user._id)
+    .createShift(req.body, req.user._id, req.user, req)
     .then((result) => res.status(201).json({ success: true, ...result }))
     .catch((err) => sendApiError(res, err));
 
@@ -21,7 +21,7 @@ const checkConflicts = (req, res) => respond(res, svc.previewConflicts(req.query
 
 const publishShift = (req, res) =>
   svc
-    .publishShift(req.params.id, req.user._id)
+    .publishShift(req.params.id, req.user._id, req.user, req)
     .then((result) => res.json({ success: true, ...result }))
     .catch((err) => sendApiError(res, err));
 
@@ -40,7 +40,7 @@ const updateShift = (req, res) => {
 };
 
 const cancelShift = (req, res) => respond(res, svc.cancelShift(req.params.id, req.user, req.body.reason, req));
-const deleteShift = (req, res) => respond(res, svc.deleteShift(req.params.id));
+const deleteShift = (req, res) => respond(res, svc.deleteShift(req.params.id, req.user, req));
 
 module.exports = {
   listShifts,

@@ -21,7 +21,7 @@ const getCareTeam = async (req, res) => {
 
 const createConversation = async (req, res) => {
   try {
-    const conversation = await conversationService.createConversation({ body: req.body, user: req.user });
+    const conversation = await conversationService.createConversation({ body: req.body, user: req.user, req });
     return res.status(201).json({ success: true, data: conversation });
   } catch (err) {
     return sendError(res, err);
@@ -39,7 +39,7 @@ const getStaffDirectory = async (req, res) => {
 
 const createGuestConversation = async (req, res) => {
   try {
-    const { conversation, message } = await conversationService.createGuestConversation({ body: req.body });
+    const { conversation, message } = await conversationService.createGuestConversation({ body: req.body, req });
     try {
       const io = req.app && req.app.get && req.app.get('io');
       if (io) {
@@ -62,6 +62,7 @@ const createGuestMessage = async (req, res) => {
     const { conversation, message } = await conversationService.createGuestMessage({
       conversationId: req.params.conversationId,
       body: req.body,
+      req,
     });
     try {
       const io = req.app && req.app.get && req.app.get('io');
@@ -97,6 +98,7 @@ const createMessage = async (req, res) => {
       conversationId: req.params.conversationId,
       body: req.body,
       user: req.user,
+      req,
     });
     try {
       const io = req.app && req.app.get && req.app.get('io');
@@ -123,7 +125,7 @@ const listConversations = async (req, res) => {
 
 const markMessagesRead = async (req, res) => {
   try {
-    await conversationService.markMessagesRead({ conversationId: req.params.conversationId, user: req.user });
+    await conversationService.markMessagesRead({ conversationId: req.params.conversationId, user: req.user, req });
     return res.json({ success: true });
   } catch (err) {
     return sendError(res, err);
@@ -188,6 +190,7 @@ const deleteConversation = async (req, res) => {
     const conversation = await conversationService.deleteConversation({
       conversationId: req.params.conversationId,
       user: req.user,
+      req,
     });
     try {
       const io = req.app && req.app.get && req.app.get('io');
